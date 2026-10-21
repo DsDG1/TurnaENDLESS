@@ -75,4 +75,16 @@ Duck: Choose.
     const res = checkInk('-> a\n=== a ===\n{ broken\n');
     expect(res.ok).toBe(false);
   });
+
+  it('运行到内容耗尽（缺 -> END）返回校验错误而不是抛异常', () => {
+    // 真实跑批里模型写出这种 ink 时，校验器必须给出 E-INK 并让修复循环接手
+    const src = `-> top
+=== top ===
+Duck: No ending here.
+`;
+    expect(() => checkInk(src)).not.toThrow();
+    const res = checkInk(src);
+    expect(res.ok).toBe(false);
+    expect(res.errors.join(' ')).toMatch(/ran out of content|END/);
+  });
 });

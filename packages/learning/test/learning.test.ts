@@ -163,6 +163,15 @@ describe('规划器', () => {
     expect(b2.review.some((r) => r.item === 'ck:where-is')).toBe(true);
   });
 
+  it('R5：allowed_extra 默认取池前 8 个，可用 allowedExtraCount 放大（种子词库期）', () => {
+    const planner = new Planner(lex());
+    const pool = Array.from({ length: 20 }, (_, i) => `word${i}`);
+    expect(planner.nextBrief(makeInput({ allowedExtraPool: pool }), 1).vocab.allowed_extra).toEqual(pool.slice(0, 8));
+    expect(
+      planner.nextBrief(makeInput({ allowedExtraPool: pool, allowedExtraCount: 15 }), 2).vocab.allowed_extra,
+    ).toEqual(pool.slice(0, 15));
+  });
+
   it('R2：复习上限 3，按优先级排序', () => {
     const planner = new Planner(lex());
     const srs = new SrsStore();

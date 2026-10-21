@@ -397,44 +397,63 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       );
     const channel = pickChannel(card);
     briefs.set(seq, brief);
-    const out = await director.generate({
-      batchId: `b-${String(seq).padStart(4, '0')}`,
-      channel,
-      brief,
-      ledger,
-      vars: buildVars(brief, channel, card),
-    });
-    if (out.batch) {
-      const report = validateBatch(out.batch, buildCtx(brief, channel, card));
+    try {
+      const out = await director.generate({
+        batchId: `b-${String(seq).padStart(4, '0')}`,
+        channel,
+        brief,
+        ledger,
+        vars: buildVars(brief, channel, card),
+      });
+      if (out.batch) {
+        const report = validateBatch(out.batch, buildCtx(brief, channel, card));
+        return {
+          seq,
+          batch: out.batch,
+          report,
+          tropes: out.plan?.tropes ?? [],
+          logline: out.plan?.logline ?? '',
+          calls: out.calls,
+          issues: out.issues,
+          repairRounds: out.repairRounds,
+          droppedScenes: out.droppedScenes,
+          batchFailed: false,
+          firstPass: out.repairRounds === 0 && out.droppedScenes.length === 0,
+          worldVersionAtGen: worldVersion,
+        };
+      }
       return {
         seq,
-        batch: out.batch,
-        report,
-        tropes: out.plan?.tropes ?? [],
-        logline: out.plan?.logline ?? '',
+        batch: null as unknown as Batch,
+        report: null as unknown as ReturnType<typeof validateBatch>,
+        tropes: [],
+        logline: '',
         calls: out.calls,
         issues: out.issues,
         repairRounds: out.repairRounds,
-        droppedScenes: out.droppedScenes,
-        batchFailed: false,
-        firstPass: out.repairRounds === 0 && out.droppedScenes.length === 0,
+        droppedScenes: [],
+        batchFailed: true,
+        firstPass: false,
+        worldVersionAtGen: worldVersion,
+      };
+    } catch (e) {
+      // 单批异常不能带走整轮跑批（真实模型会写出让校验器抛错的 ink 之类）：记成失败批次继续
+      const message = e instanceof Error ? e.message.split('\n')[0]! : String(e);
+      return {
+        seq,
+        batch: null as unknown as Batch,
+        report: null as unknown as ReturnType<typeof validateBatch>,
+        tropes: [],
+        logline: '',
+        calls: [],
+        issues: [{ code: 'E-INTERNAL', level: 'error', message: `生成阶段异常：${message}` }],
+        repairRounds: 0,
+        droppedScenes: [],
+        batchFailed: true,
+        firstPass: false,
         worldVersionAtGen: worldVersion,
       };
     }
-    return {
-      seq,
-      batch: null as unknown as Batch,
-      report: null as unknown as ReturnType<typeof validateBatch>,
-      tropes: [],
-      logline: '',
-      calls: out.calls,
-      issues: out.issues,
-      repairRounds: out.repairRounds,
-      droppedScenes: [],
-      batchFailed: true,
-      firstPass: false,
-      worldVersionAtGen: worldVersion,
-    };
   };
 
   const stateErrorCodes = new Set(['E-CANON', 'E-FACT-CONFLICT', 'E-EFFECT-INVALID', 'E-ENTITY-UNKNOWN']);

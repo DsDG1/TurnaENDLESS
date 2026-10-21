@@ -87,12 +87,20 @@ export function compileAndWalk(source: string): { errors: string[]; paths: InkPa
   if (compiler.errors.length > 0) return { errors: compiler.errors, paths: [] };
 
   const paths: InkPathInfo[] = [];
+  const runtimeErrors: string[] = [];
 
   const drain = (s: Story, effects: string[]): boolean => {
     const tags: string[] = [];
-    while (s.canContinue) {
-      s.Continue();
-      for (const t of s.currentTags ?? []) tags.push(t);
+    try {
+      while (s.canContinue) {
+        s.Continue();
+        for (const t of s.currentTags ?? []) tags.push(t);
+      }
+    } catch (e) {
+      // inkjs 在「内容耗尽但没有 -> END/DONE」这类运行时错误上直接抛异常；
+      // 这是校验问题而不是程序 bug，必须转成 E-INK，不能让整批跑批崩掉。
+      runtimeErrors.push(e instanceof Error ? e.message.split('\n')[0]! : String(e));
+      return false;
     }
     for (const t of tags) {
       const m = t.match(/^effect:([a-z][a-z0-9_]*)$/);
@@ -102,14 +110,15 @@ export function compileAndWalk(source: string): { errors: string[]; paths: InkPa
   };
 
   const walk = (s: Story, choices: string[], effects: string[]) => {
-    if (paths.length >= MAX_PATHS) return;
+    if (paths.length >= MAX_PATHS || runtimeErrors.length > 0) return;
     const reached = drain(s, effects);
+    if (runtimeErrors.length > 0) return;
     if (s.currentChoices.length === 0) {
       paths.push({ choices: [...choices], effects: [...effects], reachesEnd: reached });
       return;
     }
     for (const choice of s.currentChoices) {
-      if (paths.length >= MAX_PATHS) return;
+      if (paths.length >= MAX_PATHS || runtimeErrors.length > 0) return;
       const save = s.state.toJson();
       s.ChooseChoiceIndex(choice.index);
       walk(s, [...choices, choice.text], [...effects]);
@@ -118,6 +127,7 @@ export function compileAndWalk(source: string): { errors: string[]; paths: InkPa
   };
 
   walk(story, [], []);
+  if (runtimeErrors.length > 0) return { errors: runtimeErrors, paths: [] };
   return { errors: [], paths };
 }
 

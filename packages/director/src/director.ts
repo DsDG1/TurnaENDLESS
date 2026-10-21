@@ -151,7 +151,8 @@ export class DirectorService {
     if (this.config.mode === 'two-stage') {
       let lastText = '';
       for (let attempt = 0; attempt <= this.config.maxPrecheckRetries; attempt++) {
-        const retryNote = attempt === 0 ? '' : `\n上一次方案未通过预检，原因：\n${precheckFailures.map((f) => `- ${f}`).join('\n')}\n请换一个方案。`;
+        // 带上重试序号：同一句失败原因重复出现时，请求哈希不能相同，否则会命中上一次的坏方案缓存
+        const retryNote = attempt === 0 ? '' : `\n第 ${attempt} 次重试：上一次方案未通过预检，原因：\n${precheckFailures.map((f) => `- ${f}`).join('\n')}\n请换一个方案。`;
         lastText = await this.complete(
           'showrunner',
           this.deps.templates.showrunner,
