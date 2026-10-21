@@ -5,7 +5,7 @@ import type { LearningBrief } from '@endless/learning';
 import { assembleContext, DEFAULT_BUDGETS } from '../src/context.js';
 import { TropeLedger } from '../src/ledger.js';
 import { precheckPlan, type ShowrunnerPlan } from '../src/showrunner.js';
-import { StubLlmClient } from '../src/llm.js';
+import { StubLlmClient, MemoryLlmCache, CachingLlmClient, requestHash, type LlmClient, type LlmRequest } from '../src/llm.js';
 import { DirectorService, type DirectorConfig, type DirectorDeps } from '../src/director.js';
 import type { PromptTemplates } from '../src/prompts.js';
 
@@ -338,5 +338,85 @@ describe('导演编排（Stub LLM）', () => {
     const out = await svc.generate({ batchId: 'tt-0006', channel: 'duck_detective', brief: BRIEF, ledger: new TropeLedger(), vars: {} });
     expect(out.batch).not.toBeNull();
     expect(out.calls.map((c) => c.stage)).toEqual(['single']);
+  });
+
+  it('按阶段下发输出上限：长输出的分场编剧拿到的 maxTokens 更大', async () => {
+    const { deps, stub } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : GOOD_BATCH));
+    const svc = new DirectorService(deps, {
+      ...config(),
+      maxTokensByStage: { showrunner: 111, writer: 222, repair: 333 },
+    });
+    await svc.generate({ batchId: 'tt-0007', channel: 'duck_detective', brief: BRIEF, ledger: new TropeLedger(), vars: {} });
+    expect(stub.calls.map((c) => [c.stage, c.maxTokens])).toEqual([
+      ['showrunner', 111],
+      ['writer', 222],
+    ]);
+  });
+
+  it('调用记录带上空响应标记（正文被思考 token 吃光时能定位）', async () => {
+    const { deps } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : ''));
+    const svc = new DirectorService(deps, config());
+    const out = await svc.generate({ batchId: 'tt-0008', channel: 'duck_detective', brief: BRIEF, ledger: new TropeLedger(), vars: {} });
+    expect(out.batchFailed).toBe(true);
+    expect(out.calls.find((c) => c.stage === 'writer')?.empty).toBe(true);
+  });
+});
+
+describe('请求缓存', () => {
+  class CountingClient implements LlmClient {
+    calls = 0;
+    constructor(private saltValue = '') {}
+    async modelId(): Promise<string> {
+      return 'm1';
+    }
+    hashSalt(): string {
+      return this.saltValue;
+    }
+    async complete(req: LlmRequest) {
+      this.calls++;
+      return {
+        text: `out-${this.calls}`,
+        usage: { inputTokens: 1, outputTokens: 1 },
+        latencyMs: 1,
+        cacheHit: false,
+        requestHash: requestHash(req, 'm1', this.saltValue),
+        finishReason: 'stop' as const,
+      };
+    }
+  }
+  const req = (over: Partial<LlmRequest> = {}): LlmRequest => ({
+    stage: 'writer',
+    system: 'S',
+    prompt: 'P',
+    modelTier: 'fast',
+    temperature: 0.8,
+    ...over,
+  });
+
+  it('完全相同的请求命中缓存', async () => {
+    const inner = new CountingClient();
+    const client = new CachingLlmClient(inner, new MemoryLlmCache());
+    const first = await client.complete(req({ maxTokens: 4096 }));
+    const second = await client.complete(req({ maxTokens: 4096 }));
+    expect(inner.calls).toBe(1);
+    expect(second.cacheHit).toBe(true);
+    expect(second.text).toBe(first.text);
+  });
+
+  it('输出上限变化不命中旧缓存（改 4096→8192 必须重新生成）', async () => {
+    const inner = new CountingClient();
+    const client = new CachingLlmClient(inner, new MemoryLlmCache());
+    await client.complete(req({ maxTokens: 4096 }));
+    await client.complete(req({ maxTokens: 8192 }));
+    expect(inner.calls).toBe(2);
+  });
+
+  it('客户端级参数（推理强度）进哈希：换档位不串缓存', async () => {
+    const cache = new MemoryLlmCache();
+    const low = new CachingLlmClient(new CountingClient('low'), cache);
+    const high = new CachingLlmClient(new CountingClient('high'), cache);
+    await low.complete(req());
+    const res = await high.complete(req());
+    expect(res.cacheHit).toBe(false);
   });
 });

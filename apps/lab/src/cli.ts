@@ -4,7 +4,7 @@
  * 用户传入或来自配置文件的路径一律经 safePath / safeChild / readValidated / writeValidated 守卫。
  */
 import { mkdir, readFile, rm } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { stringify as yamlStringify } from 'yaml';
 import { compileBatch, parseBatch, validateBatch } from '@endless/esl';
 import { AiSdkLlmClient, StubLlmClient } from '@endless/director';
@@ -38,6 +38,10 @@ function arg(name: string, fallback?: string): string | undefined {
   return v && !v.startsWith('--') ? v : 'true';
 }
 const argInt = (name: string, fallback: number): number => Number(arg(name, String(fallback)));
+
+/** 用户给的路径：绝对路径原样用，相对路径按仓库根解析。
+ * `pnpm -C apps/lab` 会把 cwd 换到 apps/lab，所以不能依赖 cwd（README 里的示例都是仓库根相对路径）。 */
+const repoPath = (p: string): string => (isAbsolute(p) ? p : resolve(REPO_ROOT, p));
 
 async function cmdCheck(): Promise<void> {
   const data = await loadLabData(DATA_DIR);
@@ -86,7 +90,7 @@ async function cmdFreeze(): Promise<void> {
 
 async function cmdSmoke(): Promise<void> {
   const data = await loadLabData(DATA_DIR);
-  const outDir = safePath(arg('out') ?? join(RUNS_DIR, 'smoke'), [RUNS_DIR], '--out');
+  const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'smoke')), [RUNS_DIR], '--out');
   for (const sub of ['batches', 'render']) {
     await mkdir(safeChild(outDir, sub, [RUNS_DIR], 'smoke 子目录'), { recursive: true });
   }
@@ -130,12 +134,16 @@ async function cmdSmoke(): Promise<void> {
   }
 }
 
-async function makeLlm(): Promise<AiSdkLlmClient | StubLlmClient> {
+async function makeLlm(allowMissingKey = false): Promise<AiSdkLlmClient | StubLlmClient> {
   const models = await loadModelsConfig(join(CONFIG_DIR, 'models.yaml'));
   const key = resolveApiKey(models);
-  if (!key) {
+  if (!key && !allowMissingKey) {
     console.error(`缺少环境变量 ${models.provider.api_key_env}（API key 只从环境变量读取）。冒烟请用 lab smoke。`);
     process.exit(1);
+  }
+  if (!key) {
+    // 回放/重算指标只读缓存，不需要 key；缓存未命中时会因缺 key 报错，提示足够明确
+    console.warn(`回放模式：未设置 ${models.provider.api_key_env}，只读缓存；缓存未命中的批次会失败。`);
   }
   return new AiSdkLlmClient({
     baseURL: models.provider.base_url,
@@ -158,7 +166,7 @@ async function executeRun(
   // run_id 来自配置文件，视为不受信输入：解析后必须仍在 runs/ 内
   const outDir = safeChild(runRoot, cfg.run_id, [RUNS_DIR], 'run_id');
   const store = new SqliteWorldStore(safeChild(outDir, 'world.sqlite', [RUNS_DIR], 'world 库'));
-  const llm = cfg.llm === 'stub' ? new StubLlmClient(makeStubScript()) : await makeLlm();
+  const llm = cfg.llm === 'stub' ? new StubLlmClient(makeStubScript()) : await makeLlm(readOnlyCache);
   const cache = new FileLlmCache(safeChild(outDir, 'cache', [RUNS_DIR], 'cache 目录'), readOnlyCache);
   const result = await runExperiment({
     data,
@@ -190,6 +198,18 @@ async function executeRun(
     prices: { inputPerMtok: prices.prices.fast.input_per_mtok, outputPerMtok: prices.prices.fast.output_per_mtok },
     budgetPer100Cards: budget.budget.per_100_cards,
   });
+  if (readOnlyCache) {
+    // 回放全部命中缓存：token 与时延都是 0，不能覆盖首次运行记下的成本/时延
+    const prevText = await readFile(safeChild(outDir, 'metrics.json', [RUNS_DIR], 'metrics'), 'utf8').catch(() => null);
+    if (prevText) {
+      try {
+        const prev = JSON.parse(prevText) as { cost?: unknown };
+        if (prev.cost) Object.assign(metrics, { cost: prev.cost });
+      } catch {
+        // 旧指标文件损坏：保留本次回放结果即可
+      }
+    }
+  }
   await writeValidated(safeChild(outDir, 'metrics.json', [RUNS_DIR], 'metrics'), [RUNS_DIR], 'metrics', JSON.stringify(metrics, null, 2));
   await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'report'), [RUNS_DIR], 'report', metricsMarkdown(metrics));
   store.close();
@@ -202,7 +222,7 @@ async function cmdRun(): Promise<void> {
     console.error('用法：lab run --config <run config yaml> [--batches N]');
     process.exit(1);
   }
-  const safeConfig = safePath(configPath, [REPO_ROOT], '--config');
+  const safeConfig = safePath(repoPath(configPath), [REPO_ROOT], '--config');
   const cfg = await loadRunConfig(safeConfig);
   // 冻结纪律（第 8 节）：提示词漂移时拒绝跑批，否则同一个 run_id 会混入不同提示词
   const frozen = await readFrozen(DATA_DIR);
@@ -241,7 +261,7 @@ async function cmdReplay(): Promise<void> {
     console.error('用法：lab replay <runDir>');
     process.exit(1);
   }
-  const safeRun = safePath(runDir, [RUNS_DIR], 'runDir');
+  const safeRun = safePath(repoPath(runDir), [RUNS_DIR], 'runDir');
   const configPath = safeChild(safeRun, 'config.yaml', [RUNS_DIR], 'run 配置');
   const result = await executeRun(configPath, RUNS_DIR, true);
   console.log(`回放完成：${result.totals.batchesOk}/${result.records.length} 批（全部命中响应缓存）`);
@@ -253,7 +273,7 @@ async function cmdMetrics(): Promise<void> {
     console.error('用法：lab metrics <runDir>（基于缓存回放重算）');
     process.exit(1);
   }
-  const safeRun = safePath(runDir, [RUNS_DIR], 'runDir');
+  const safeRun = safePath(repoPath(runDir), [RUNS_DIR], 'runDir');
   const configPath = safeChild(safeRun, 'config.yaml', [RUNS_DIR], 'run 配置');
   await executeRun(configPath, RUNS_DIR, true);
   console.log(`指标已写入 ${safeChild(safeRun, 'metrics.json', [RUNS_DIR], 'metrics')} 与 report.md`);
@@ -307,7 +327,7 @@ async function cmdSrsSim(): Promise<void> {
     days: argInt('days', 60),
     seeds: argInt('seeds', 2),
   });
-  const outDir = safePath(arg('out') ?? join(RUNS_DIR, 'srs-sim'), [RUNS_DIR], '--out');
+  const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'srs-sim')), [RUNS_DIR], '--out');
   await mkdir(outDir, { recursive: true });
   await writeValidated(safeChild(outDir, 'srs-sim.json', [RUNS_DIR], 'srs-sim 结果'), [RUNS_DIR], 'srs-sim 结果', JSON.stringify({ options: report.options, byStrategy: report.byStrategy }, null, 2));
   await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'srs-sim 报告'), [RUNS_DIR], 'srs-sim 报告', report.markdown);
@@ -321,7 +341,7 @@ async function cmdBufferSim(): Promise<void> {
   const persona = (arg('persona') ?? 'P1') as 'P1' | 'P2' | 'P3';
   const genMedianMs = argInt('gen-ms', 20_000);
   const { markdown } = sweepBuffer({ buffers, prefetched, persona, genMedianMs });
-  const outDir = safePath(arg('out') ?? join(RUNS_DIR, 'buffer-sim'), [RUNS_DIR], '--out');
+  const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'buffer-sim')), [RUNS_DIR], '--out');
   await mkdir(outDir, { recursive: true });
   await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'buffer-sim 报告'), [RUNS_DIR], 'buffer-sim 报告', markdown);
   console.log(markdown);
@@ -334,7 +354,7 @@ async function cmdJudge(): Promise<void> {
     console.error('用法：lab judge <runDir>（LLM 评审，需 API key）');
     process.exit(1);
   }
-  const safeRun = safePath(runDir, [RUNS_DIR], 'runDir');
+  const safeRun = safePath(repoPath(runDir), [RUNS_DIR], 'runDir');
   const verdicts = await runJudge(safeRun, 'premium');
   const parsed = verdicts.filter((v) => !v.parseError);
   const contradictions = parsed.reduce((s, v) => s + (v.contradictions?.length ?? 0), 0);
@@ -352,7 +372,7 @@ async function cmdAssert(): Promise<void> {
   // promptfoo 断言入口：校验一段 ESL 文本（文件或 stdin），通过退出码 0，否则 1
   const file = arg('file');
   const text = file
-    ? await (await import('./safepath.js')).readValidated(file, [REPO_ROOT], '--file')
+    ? await (await import('./safepath.js')).readValidated(repoPath(file), [REPO_ROOT], '--file')
     : await new Promise<string>((resolveStdin) => {
         let buf = '';
         process.stdin.setEncoding('utf8');
