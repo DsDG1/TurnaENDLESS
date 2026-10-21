@@ -1,0 +1,814 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20261021T183323030Z-87396-a6e97f32f022",
+  "run_status": "inconclusive",
+  "errors": [
+    {
+      "stage": "candidate-select",
+      "target": "packages/learning/src/fsrs.ts",
+      "reason": "candidate_limit_exceeded: 38 changed reviewable file(s) were not scanned because the limit is 20"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "pnpm-lock.yaml",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/world/test/reducer.test.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/world/src/index.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/world/src/reducer.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/world/src/retrieve.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/world/src/schema.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/learning/test/learning.test.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/learning/src/bkt.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "packages/learning/src/evidence.ts",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/esl/src/model.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "apps/lab/src/critic/judge.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/world/src/store.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "apps/lab/src/storage/sqlite.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "apps/lab/src/cli.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/world/test/reducer.test.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/world/src/index.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/world/src/reducer.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/world/src/retrieve.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/world/src/schema.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/learning/test/learning.test.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/learning/src/bkt.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "packages/learning/src/evidence.ts",
+      "reason": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "supply-chain-check",
+      "target": ".",
+      "reason": "stop_budget_exhausted: focused supply-chain check was not run before the gate budget"
+    }
+  ],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "partial",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 11,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 11
+    },
+    "change_tracking": {
+      "touched_observed": 11,
+      "touched_retained": 11,
+      "truncated": false,
+      "bash_mutation": true,
+      "bash_discovered": 58,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 58,
+      "selected_files": 20,
+      "limit": 20,
+      "truncated": true
+    },
+    "scanning": {
+      "required_files": 13,
+      "scanned_files": 0,
+      "skipped_files": 0,
+      "failed_files": 13,
+      "project_checks_required": 1,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "candidate_limit_exceeded": 1,
+      "baseline_snapshot_unreadable": 9,
+      "scanner_failed": 13,
+      "stop_budget_exhausted": 1,
+      "project_check_failed": 24
+    },
+    "reasons": [
+      {
+        "code": "candidate_limit_exceeded",
+        "stage": "candidate-select",
+        "target": "packages/learning/src/fsrs.ts",
+        "detail": "38 changed reviewable file(s) were not scanned because the limit is 20",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "pnpm-lock.yaml",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/world/test/reducer.test.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/world/src/index.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/world/src/reducer.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/world/src/retrieve.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/world/src/schema.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/learning/test/learning.test.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/learning/src/bkt.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "packages/learning/src/evidence.ts",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/esl/src/model.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "apps/lab/src/critic/judge.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/world/src/store.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "apps/lab/src/storage/sqlite.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "apps/lab/src/cli.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/world/test/reducer.test.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/world/src/index.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/world/src/reducer.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/world/src/retrieve.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/world/src/schema.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/learning/test/learning.test.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/learning/src/bkt.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "packages/learning/src/evidence.ts",
+        "detail": "spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "stop_budget_exhausted",
+        "stage": "supply-chain-check",
+        "target": ".",
+        "detail": "focused supply-chain check was not run before the gate budget",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "packages/learning/src/fsrs.ts",
+        "detail": "candidate_limit_exceeded: 38 changed reviewable file(s) were not scanned because the limit is 20",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "pnpm-lock.yaml",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/world/test/reducer.test.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/world/src/index.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/world/src/reducer.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/world/src/retrieve.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/world/src/schema.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/learning/test/learning.test.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/learning/src/bkt.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "packages/learning/src/evidence.ts",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/esl/src/model.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "apps/lab/src/critic/judge.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/world/src/store.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "apps/lab/src/storage/sqlite.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "apps/lab/src/cli.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/world/test/reducer.test.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/world/src/index.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/world/src/reducer.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/world/src/retrieve.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/world/src/schema.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/learning/test/learning.test.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/learning/src/bkt.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "packages/learning/src/evidence.ts",
+        "detail": "scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "supply-chain-check",
+        "target": ".",
+        "detail": "stop_budget_exhausted: focused supply-chain check was not run before the gate budget",
+        "affects_completion": true
+      }
+    ],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-10-21T18:33:23.030Z",
+  "session_id": "session_c5bd3035ab14cd766ec0f035a0044046",
+  "target": ".",
+  "revision": "545036e4b3a505802ae051c88f2d2c2378141272",
+  "rules_version": "unavailable",
+  "diff_hash": "452bb2d924baab046caec7bf61789564556be326cd8f0787c3c3aac1dc4a346d",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 20,
+    "changed_files": [
+      {
+        "file": "apps/lab/package.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 26
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "dcf4a5163bcd2ef90034b0efa56f435db5eaeb34364ce989ff3dc4ba30731819"
+      },
+      {
+        "file": "apps/lab/src/cli.ts",
+        "ranges": [
+          {
+            "start": 24,
+            "end": 24
+          },
+          {
+            "start": 274,
+            "end": 330
+          },
+          {
+            "start": 352,
+            "end": 357
+          },
+          {
+            "start": 372,
+            "end": 372
+          }
+        ],
+        "before_hash": "61c1b3420b8f4ed48201e25815f7d1b8089caadffebc7309d3793cc90870c6ed",
+        "after_hash": "e3a0793eaf339289011ccda805ef30e2d67ff695b53f9665d047c093715a0f65"
+      },
+      {
+        "file": "apps/lab/src/critic/judge.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 79
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "c9a6739e95b0431242ce533eb30cecd93d4f62eb1e4e91326802a31d9f9e36d2"
+      },
+      {
+        "file": "apps/lab/src/storage/sqlite.ts",
+        "ranges": [
+          {
+            "start": 100,
+            "end": 103
+          }
+        ],
+        "before_hash": "23ba29e97bd0eed8566c4c891e477a200e05a81a2881613b262754d93f3c0a17",
+        "after_hash": "4e378cfba3fe316d58e6e09b9a36be27ba76a155ba03e20dfb7f33b8f5f543c4"
+      },
+      {
+        "file": "package.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 18
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "1fe3926d0c8b4a2d48e0ad66bfbd9d99d0189713321f39209c9827b7cf655d3d"
+      },
+      {
+        "file": "packages/director/package.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 26
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "610fc3005c210eca27dbc76579e9c4f8534407a90a4707bfdc52cf17f2e2226b"
+      },
+      {
+        "file": "packages/esl/package.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 22
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "511e1bc22dcc93c0d51f8cf9ebea313fd6190764be64375e647bc991f86b1198"
+      },
+      {
+        "file": "packages/esl/src/model.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 280
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "55ee88ea7789d2e7dc5d804e38181ffcd8ba8f0681b77e1c644c4117e18872f6"
+      },
+      {
+        "file": "packages/learning/package.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 23
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "0f4f220df95cf699f5c9e91526807bfa31300bdd8be1fb81468777271314de54"
+      },
+      {
+        "file": "packages/learning/src/bkt.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 68
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "bc2bf801179fa4846ad5f3ddf150ef2da9378093bad2c4a5ec9d60d2f929d1de"
+      },
+      {
+        "file": "packages/learning/src/evidence.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 86
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "50b55240683bcbbb845f9c7fd164c1e4d444d8110139a7c24a2dc1387676b577"
+      },
+      {
+        "file": "packages/learning/test/learning.test.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 203
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "9953878e2f78b56bb7d6c5e031ccdf5d868a37f998e9f7751e81114e42654244"
+      },
+      {
+        "file": "packages/world/package.json",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 22
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "4612003b54e26c45f2aa6bee38782468449fd4efe4a3f208df30d829d359f823"
+      },
+      {
+        "file": "packages/world/src/index.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 4
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "6ef075569ad3303a104e2ba8150b84ba04e063d17a54fe486156109b28fe9cce"
+      },
+      {
+        "file": "packages/world/src/reducer.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 194
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "1c36cd9792ca67489aefc113cf14fca9c68a5a1e060c27e254cfc890934dcd17"
+      },
+      {
+        "file": "packages/world/src/retrieve.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 164
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "bb94135eef0a639d31d4aa72d44d6db233ef3f283e8cebf84e3bc40fa7a33d90"
+      },
+      {
+        "file": "packages/world/src/schema.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 107
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "98485cea1e93c8dd202b9b1bb0eee881337d256e350d75f1c9eb9c1ca409aec5"
+      },
+      {
+        "file": "packages/world/src/store.ts",
+        "ranges": [
+          {
+            "start": 26,
+            "end": 27
+          },
+          {
+            "start": 88,
+            "end": 90
+          }
+        ],
+        "before_hash": "3dde0a56416a77136c810929dc09f85727b4297ce876526d341dab8a578751f9",
+        "after_hash": "a262a0ec3a6cff78805ae27713dce02764c56e91ff468b8d36888bbe23187e8f"
+      },
+      {
+        "file": "packages/world/test/reducer.test.ts",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 177
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "143209ad854585b9d2539b29c2025a5a7a606aaed1f8ede213caf9dc5e58d480"
+      },
+      {
+        "file": "pnpm-lock.yaml",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1321
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "4c537c4c31401ada2b0f827b4b072c93654826de9c442513f882a9029c18cdbd"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-10-21T18:33:20.228Z",
+    "completed_at": "2026-10-21T18:33:23.030Z",
+    "duration_ms": 2802,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "partial/INCONCLUSIVE",
+    "latencyMs": 2802,
+    "peakMemoryBytes": 108875776,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 0,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-session_c5bd3035ab14cd766ec0f035a0044046-20261021T183323030Z-87396-a6e97f32f022.json",
+    "latest_report": ".mimosa/reports/task-review-session_c5bd3035ab14cd766ec0f035a0044046.json",
+    "history_summary": ".mimosa/history/run-20261021T183323030Z-87396-a6e97f32f022.json"
+  }
+}

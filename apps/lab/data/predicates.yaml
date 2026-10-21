@@ -1,0 +1,10 @@
+# 谓词表（第 5.5.2 节）：AI 不能发明谓词。单值谓词写入新值时 reducer 自动结束旧值。
+predicates:
+  - {name: role, cardinality: single, gloss: 身份：detective、president、shop_clerk}
+  - {name: location, cardinality: single, gloss: 当前所在地}
+  - {name: status, cardinality: single, gloss: alive、missing、in_jail}
+  - {name: owes, cardinality: multi, gloss: 欠谁什么}
+  - {name: relationship, cardinality: multi, gloss: friend、rival、ex（带对象）}
+  - {name: suspect_status, cardinality: single, gloss: none、suspect、prime_suspect、cleared}
+  - {name: owns, cardinality: multi, gloss: 拥有物}
+  - {name: is_a, cardinality: single, gloss: 种类事实（通常 canon）}

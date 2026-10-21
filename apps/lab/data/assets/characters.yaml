@@ -1,0 +1,32 @@
+# 角色规格表（第 5.9.3 节）：声明底图 emoji、可用表情、可用配件。
+# @char:duck{expr=suspicious, hat=detective} 的键值必须在这里面。
+duck:
+  base: "@emoji:duck"
+  expr: [neutral, happy, suspicious, smug, nervous, shocked, sad]
+  hat: [none, detective, crown, chef]
+  props_allowed: [magnifying_glass, notebook, coffee]
+cat:
+  base: "@emoji:cat"
+  expr: [neutral, happy, suspicious, nervous, sweating, shocked, sad]
+  hat: [none, crown, cap]
+  props_allowed: [sock, cheese]
+moon:
+  base: "@emoji:moon"
+  expr: [neutral, happy, vain, sad, shocked, suspicious]
+  hat: [none, crown, top]
+  props_allowed: [top_hat, mirror]
+shopkeeper:
+  base: "@emoji:badger"
+  expr: [neutral, happy, polite, suspicious, nervous, shocked]
+  hat: [none, cap]
+  props_allowed: [price_tag, notebook, shopping_cart]
+delivery_mouse:
+  base: "@emoji:mouse"
+  expr: [neutral, tired, nervous, shocked, happy]
+  hat: [none, cap]
+  props_allowed: [box, envelope, watch]
+mayor:
+  base: "@emoji:person"
+  expr: [neutral, smug, angry, shocked, happy]
+  hat: [none, crown, top]
+  props_allowed: [coin, newspaper, watch]

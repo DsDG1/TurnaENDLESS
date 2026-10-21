@@ -1,0 +1,140 @@
+/**
+ * ink 子集检查（第 5.8.4 节第 6 种场景）：
+ * 静态禁则 → inkjs 编译 → 运行时穷举全部选项路径，确认每条路径可达终点并收集 effect。
+ */
+import { Compiler, Story } from 'inkjs/full';
+
+export interface InkPathInfo {
+  /** 依次选择的选项文本 */
+  choices: string[];
+  /** 路径上触发的具名 effect（# effect:名字） */
+  effects: string[];
+  /** 路径走完（内容耗尽且无选项）＝ 到达 END/DONE */
+  reachesEnd: boolean;
+}
+
+export interface InkCheckResult {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  knots: string[];
+  paths: InkPathInfo[];
+}
+
+/** 静态子集禁则（第 5.8.4 节允许/禁止表）。返回错误列表。 */
+export function staticInkChecks(source: string): { errors: string[]; knots: string[] } {
+  const errors: string[] = [];
+  const lines = source.split(/\r?\n/);
+  const knots = new Set<string>();
+  lines.forEach((raw, i) => {
+    const line = raw.trim();
+    const at = (msg: string) => errors.push(`第 ${i + 1} 行：${msg}`);
+    if (/^(VAR|CONST)\s/.test(line)) at('禁止 VAR / CONST 声明');
+    if (/^~/.test(line)) at('禁止 ~ 赋值');
+    if (/^INCLUDE\b/.test(line)) at('禁止 INCLUDE');
+    if (/^EXTERNAL\b/.test(line)) at('禁止 EXTERNAL');
+    if (line.includes('->->')) at('禁止隧道 ->->');
+    if (/<-/.test(line)) at('禁止线程 <-');
+    if (/\{~/.test(line)) at('禁止随机序列 {~ ...}');
+    const knot = line.match(/^===+\s*([A-Za-z_][A-Za-z0-9_]*)\s*===+/);
+    if (knot) knots.add(knot[1]!);
+    const stitch = line.match(/^=\s*([A-Za-z_][A-Za-z0-9_]*)/);
+    if (stitch) knots.add(stitch[1]!);
+  });
+  // 标签白名单与内联条件
+  lines.forEach((raw, i) => {
+    const line = raw;
+    const at = (msg: string) => errors.push(`第 ${i + 1} 行：${msg}`);
+    const tagRe = /#\s*([A-Za-z_]+)\s*:/g;
+    let m: RegExpExecArray | null;
+    while ((m = tagRe.exec(line)) !== null) {
+      const name = m[1]!;
+      if (!['effect', 'expr', 'show', 'sfx'].includes(name)) at(`标签 #${name}: 不在白名单`);
+    }
+    const braceRe = /\{([^{}]*)\}/g;
+    while ((m = braceRe.exec(line)) !== null) {
+      const inner = m[1]!.trim();
+      if (!inner) continue;
+      const cond = inner.split(':')[0]!.trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(cond)) at(`内联条件 {${inner}} 不是访问计数形式`);
+    }
+  });
+  // divert 目标必须指向本场景内的 knot 或 END/DONE
+  lines.forEach((raw, i) => {
+    const divertRe = /->\s*([A-Za-z_][A-Za-z0-9_.]*)/g;
+    let m: RegExpExecArray | null;
+    while ((m = divertRe.exec(raw)) !== null) {
+      const target = m[1]!;
+      if (target === 'END' || target === 'DONE') continue;
+      const root = target.split('.')[0]!;
+      if (!knots.has(root)) errors.push(`第 ${i + 1} 行：divert -> ${target} 指向不存在的 knot（或指向场景之外）`);
+    }
+  });
+  return { errors, knots: [...knots] };
+}
+
+const MAX_PATHS = 512;
+
+/** 编译并穷举全部选项路径。 */
+export function compileAndWalk(source: string): { errors: string[]; paths: InkPathInfo[] } {
+  const compiler = new Compiler(source, { keepNames: true });
+  let story: Story;
+  try {
+    story = compiler.Compile() as unknown as Story;
+  } catch {
+    return { errors: [...compiler.errors, 'inkjs 编译抛出异常'], paths: [] };
+  }
+  if (compiler.errors.length > 0) return { errors: compiler.errors, paths: [] };
+
+  const paths: InkPathInfo[] = [];
+
+  const drain = (s: Story, effects: string[]): boolean => {
+    const tags: string[] = [];
+    while (s.canContinue) {
+      s.Continue();
+      for (const t of s.currentTags ?? []) tags.push(t);
+    }
+    for (const t of tags) {
+      const m = t.match(/^effect:([a-z][a-z0-9_]*)$/);
+      if (m) effects.push(m[1]!);
+    }
+    return (s.state.currentErrors?.length ?? 0) === 0;
+  };
+
+  const walk = (s: Story, choices: string[], effects: string[]) => {
+    if (paths.length >= MAX_PATHS) return;
+    const reached = drain(s, effects);
+    if (s.currentChoices.length === 0) {
+      paths.push({ choices: [...choices], effects: [...effects], reachesEnd: reached });
+      return;
+    }
+    for (const choice of s.currentChoices) {
+      if (paths.length >= MAX_PATHS) return;
+      const save = s.state.toJson();
+      s.ChooseChoiceIndex(choice.index);
+      walk(s, [...choices, choice.text], [...effects]);
+      s.state.LoadJson(save);
+    }
+  };
+
+  walk(story, [], []);
+  return { errors: [], paths };
+}
+
+export function checkInk(source: string): InkCheckResult {
+  const { errors: staticErrors, knots } = staticInkChecks(source);
+  if (staticErrors.length > 0) return { ok: false, errors: staticErrors, warnings: [], knots, paths: [] };
+  const { errors, paths } = compileAndWalk(source);
+  if (errors.length > 0) return { ok: false, errors, warnings: [], knots, paths: [] };
+  const stuck = paths.filter((p) => !p.reachesEnd);
+  if (stuck.length > 0 || paths.length === 0) {
+    return {
+      ok: false,
+      errors: [stuck.length > 0 ? `有 ${stuck.length} 条路径无法到达 END` : '没有可行的路径（入口 knot 不可达）'],
+      warnings: [],
+      knots,
+      paths,
+    };
+  }
+  return { ok: true, errors: [], warnings: [], knots, paths };
+}

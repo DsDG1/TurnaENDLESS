@@ -1,0 +1,20 @@
+# 频道圣经：即兴池（一次性笑话、模拟 App、荒诞短篇；不写世界状态）
+id: improv
+title: Improv Pool
+premise: >
+  One-off jokes, fake apps, and absurd micro-stories.
+  Nothing here is canon. At most, an event can leave a "seed" that a
+  persistent channel may reference later (via story sifting, never invented by the director).
+tone: playful
+humor_rules:
+  - Under 40 words per piece whenever possible.
+  - One idea per piece; no running plots.
+  - Fake apps must look almost useful.
+cast: []
+locations: []
+set_pieces: [one_liner, fake_app, micro_story]
+language_affinity: [present_simple, imperatives, question_forms]
+scene_affinity: {comic: high, swipe: high, chat: medium, pick: medium, hidden_object: low, story: low}
+escalation: null
+canon_locked: []
+taboo: [violence_detail, real_politics, real_brands]

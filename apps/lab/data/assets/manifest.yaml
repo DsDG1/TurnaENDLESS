@@ -1,0 +1,118 @@
+# 素材清单（第 5.9.3 节）：Fluent Emoji Flat 风格选角的种子子集。
+# 正式版从 microsoft/fluentui-emoji 元数据生成约 600 个（oss-reuse 待核实项 1）；
+# 种子版手工收录渲染所需的 Unicode 字形（glyph）与英文标签。
+# backgrounds 声明每个背景标签与它的具名位置表（位置名不显示给用户）。
+emojis:
+  - {name: duck, glyph: "🦆", tags: [duck, bird, animal, character]}
+  - {name: cat, glyph: "🐱", tags: [cat, animal, character, pet]}
+  - {name: moon, glyph: "🌙", tags: [moon, night, sky, character]}
+  - {name: badger, glyph: "🦡", tags: [badger, animal, character, shopkeeper]}
+  - {name: mouse, glyph: "🐭", tags: [mouse, animal, courier]}
+  - {name: person, glyph: "🧑", tags: [person, human, character, adult]}
+  - {name: top_hat, glyph: "🎩", tags: [hat, top_hat, clothes, fancy]}
+  - {name: cap, glyph: "🧢", tags: [hat, cap, clothes]}
+  - {name: crown, glyph: "👑", tags: [hat, crown, royal, fancy]}
+  - {name: sock, glyph: "🧦", tags: [sock, clothes, laundry]}
+  - {name: banana, glyph: "🍌", tags: [banana, fruit, food]}
+  - {name: teapot, glyph: "🫖", tags: [teapot, tea, kitchen]}
+  - {name: key, glyph: "🔑", tags: [key, metal, tool]}
+  - {name: box, glyph: "📦", tags: [box, package, container]}
+  - {name: bag, glyph: "👜", tags: [bag, handbag, container]}
+  - {name: umbrella, glyph: "☂️", tags: [umbrella, rain, weather]}
+  - {name: magnifying_glass, glyph: "🔍", tags: [search, clue, detective, tool]}
+  - {name: notebook, glyph: "📓", tags: [notebook, notes, paper, case_file]}
+  - {name: coffee, glyph: "☕", tags: [coffee, drink, hot, cup]}
+  - {name: detective, glyph: "🕵️", tags: [detective, spy, hat, person]}
+  - {name: button, glyph: "🔘", tags: [button, circle, currency]}
+  - {name: coin, glyph: "🪙", tags: [coin, money, currency, gold]}
+  - {name: money_bag, glyph: "💰", tags: [money, bag, cash]}
+  - {name: jar, glyph: "🫙", tags: [jar, container, glass, empty]}
+  - {name: cheese, glyph: "🧀", tags: [cheese, food, yellow]}
+  - {name: bone, glyph: "🦴", tags: [bone, dog, tool]}
+  - {name: candle, glyph: "🕯️", tags: [candle, light, flame]}
+  - {name: lamp, glyph: "💡", tags: [lamp, light, idea, bulb]}
+  - {name: plant, glyph: "🪴", tags: [plant, pot, green, decor]}
+  - {name: clock, glyph: "⏰", tags: [clock, time, alarm]}
+  - {name: calendar, glyph: "📅", tags: [calendar, date, monday]}
+  - {name: mirror, glyph: "🪞", tags: [mirror, reflection, glass]}
+  - {name: phone, glyph: "📱", tags: [phone, mobile, chat, app]}
+  - {name: envelope, glyph: "✉️", tags: [letter, mail, envelope, clue]}
+  - {name: newspaper, glyph: "📰", tags: [news, paper, article, headline]}
+  - {name: camera, glyph: "📷", tags: [camera, photo, evidence]}
+  - {name: trash, glyph: "🗑️", tags: [bin, trash, waste, clue]}
+  - {name: door, glyph: "🚪", tags: [door, entrance, exit]}
+  - {name: window, glyph: "🪟", tags: [window, glass, shop]}
+  - {name: stairs, glyph: "🪜", tags: [stairs, ladder, up]}
+  - {name: roof, glyph: "🏚️", tags: [roof, house, ruin, top]}
+  - {name: sofa, glyph: "🛋️", tags: [sofa, couch, furniture, living_room]}
+  - {name: table, glyph: "🪑", tags: [table, chair, furniture]}
+  - {name: shelf, glyph: "🗄️", tags: [shelf, cabinet, furniture, drawer]}
+  - {name: counter, glyph: "🏪", tags: [counter, store, shop, kiosk]}
+  - {name: basket, glyph: "🧺", tags: [basket, laundry, container]}
+  - {name: price_tag, glyph: "🏷️", tags: [price, tag, label, shop]}
+  - {name: shopping_cart, glyph: "🛒", tags: [cart, shop, store, buy]}
+  - {name: robot, glyph: "🤖", tags: [robot, machine, assistant]}
+  - {name: alien, glyph: "👽", tags: [alien, space, stranger]}
+  - {name: ghost, glyph: "👻", tags: [ghost, spooky, invisible]}
+  - {name: wizard, glyph: "🧙", tags: [wizard, magic, person]}
+  - {name: snail, glyph: "🐌", tags: [snail, slow, animal]}
+  - {name: bee, glyph: "🐝", tags: [bee, insect, busy]}
+  - {name: fish, glyph: "🐟", tags: [fish, sea, animal]}
+  - {name: bread, glyph: "🍞", tags: [bread, food, bakery]}
+  - {name: cake, glyph: "🍰", tags: [cake, dessert, sweet]}
+  - {name: ice_cream, glyph: "🍦", tags: [ice_cream, dessert, cold]}
+  - {name: glasses, glyph: "👓", tags: [glasses, vision, nerdy]}
+  - {name: scarf, glyph: "🧣", tags: [scarf, clothes, warm]}
+  - {name: shoes, glyph: "👟", tags: [shoes, sneakers, clothes]}
+  - {name: watch, glyph: "⌚", tags: [watch, time, wrist]}
+  - {name: battery, glyph: "🔋", tags: [battery, power, energy]}
+  - {name: flash_light, glyph: "🔦", tags: [flashlight, light, search, clue]}
+  - {name: map, glyph: "🗺️", tags: [map, travel, clue]}
+  - {name: trophy, glyph: "🏆", tags: [trophy, win, prize]}
+  - {name: star, glyph: "⭐", tags: [star, rating, night]}
+  - {name: cloud, glyph: "☁️", tags: [cloud, sky, weather]}
+  - {name: rain, glyph: "🌧️", tags: [rain, weather, sad]}
+  - {name: snowman, glyph: "⛄", tags: [snowman, winter, cold]}
+  - {name: balloon, glyph: "🎈", tags: [balloon, party, float]}
+  - {name: gift, glyph: "🎁", tags: [gift, present, box]}
+  - {name: bell, glyph: "🔔", tags: [bell, ring, alert, shop]}
+  - {name: lock, glyph: "🔒", tags: [lock, secure, closed]}
+  - {name: saw, glyph: "🪚", tags: [saw, tool, cut]}
+  - {name: hammer, glyph: "🔨", tags: [hammer, tool, fix]}
+  - {name: sponge, glyph: "🧽", tags: [sponge, clean, absorb]}
+  - {name: soap, glyph: "🧼", tags: [soap, clean, bubbles]}
+  - {name: pencil, glyph: "✏️", tags: [pencil, write, note]}
+  - {name: bookmark, glyph: "🔖", tags: [bookmark, mark, page, clue]}
+  - {name: question, glyph: "❓", tags: [question, mystery, unknown]}
+  - {name: exclamation, glyph: "❗", tags: [exclamation, alert, important]}
+  - {name: eyes, glyph: "👀", tags: [eyes, look, watch, spy]}
+  - {name: footprints, glyph: "👣", tags: [footprints, clue, track]}
+  - {name: sparkle, glyph: "✨", tags: [sparkle, magic, new, clean]}
+  - {name: tornado, glyph: "🌪️", tags: [tornado, chaos, wind, mess]}
+
+# 背景标签 → 一张背景描述 + 具名位置表（hidden_object 的 spots 白名单）
+backgrounds:
+  - tag: agency_office
+    emoji: door
+    description: 侦探事务所：一张桌子、一扇门、一个柜子和一盆植物
+    spots: [desk_top, door_behind, shelf_top, plant_under, bin_under]
+  - tag: living_room
+    emoji: sofa
+    description: 客厅：沙发、小桌、台灯和置物架
+    spots: [sofa_behind, table_under, lamp_top, shelf_top]
+  - tag: rooftop
+    emoji: roof
+    description: 屋顶：水塔、烟囱和一排盆栽
+    spots: [tank_behind, chimney_top, plant_under, drain_under]
+  - tag: shop_counter
+    emoji: counter
+    description: 商店柜台：柜台、货架、抽屉和橱窗
+    spots: [counter_top, shelf_under, drawer_in, window_top]
+  - tag: stockroom
+    emoji: box
+    description: 库房：成排的箱子和一只高梯子
+    spots: [box_behind, ladder_top, crate_under, shelf_top]
+  - tag: shop_window
+    emoji: window
+    description: 橱窗：玻璃、展示台和价签
+    spots: [glass_front, display_top, tag_under, sill_top]

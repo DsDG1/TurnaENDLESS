@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-10-21T17:39:44.991Z",
+  "sessionId": "session_c5bd3035ab14cd766ec0f035a0044046",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "D:\\program\\Turna\\TurnaENDLESS\\packages\\world\\test\\reducer.test.ts",
+  "outcome": "inconclusive",
+  "coverage": "partial",
+  "findingCount": 0,
+  "durationMs": 30,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

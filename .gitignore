@@ -50,3 +50,8 @@ Thumbs.db
 tmp/
 .tmp/
 *.local
+
+# 实验运行产物（exp-00 方案第 11 节：runs/ 不入库）
+apps/lab/runs/
+promptfoo/.promptfoo/
+

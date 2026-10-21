@@ -1,0 +1,12 @@
+# 模型与供应商配置（第 7.1 节）：不绑定厂商。
+# API key 只从环境变量读取（第 10 节安全要求），变量名写在 api_key_env；
+# 文档、代码与运行文件里都不写任何可用凭据。
+provider:
+  name: openai-compatible
+  base_url: https://api.example.com/v1   # 换成你的供应商
+  api_key_env: ENDLESS_API_KEY
+models:
+  # 快速档：单批 P95 时延要满足 H7（卡顿概率 ≤ 5%）
+  fast: fast-model-id
+  # 高档：R6 的编剧室用（更强构思能力）
+  premium: premium-model-id

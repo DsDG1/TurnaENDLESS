@@ -1,0 +1,18 @@
+{
+  "name": "endless",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.29.2",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "lab": "pnpm -C apps/lab exec tsx src/cli.ts",
+    "lab:assert": "pnpm -C apps/lab exec tsx src/cli.ts assert"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

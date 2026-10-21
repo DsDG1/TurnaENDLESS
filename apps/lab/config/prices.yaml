@@ -1,0 +1,10 @@
+# 单价配置（第 6.5 节 K2）：每百万 token 的价格。
+# 文档和代码里不写死价格；正式跑批前按供应商价目填写。
+# 费用 = 输入量 × input + 输出量 × output（单位：美元 / 百万 token）
+prices:
+  fast:
+    input_per_mtok: 0
+    output_per_mtok: 0
+  premium:
+    input_per_mtok: 0
+    output_per_mtok: 0

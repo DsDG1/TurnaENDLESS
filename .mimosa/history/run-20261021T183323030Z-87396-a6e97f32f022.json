@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20261021T183323030Z-87396-a6e97f32f022",
+  "runStatus": "inconclusive",
+  "errors": [
+    "candidate-select:packages/learning/src/fsrs.ts: candidate_limit_exceeded: 38 changed reviewable file(s) were not scanned because the limit is 20",
+    "baseline-read:pnpm-lock.yaml: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/world/test/reducer.test.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/world/src/index.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/world/src/reducer.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/world/src/retrieve.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/world/src/schema.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/learning/test/learning.test.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/learning/src/bkt.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "baseline-read:packages/learning/src/evidence.ts: baseline_snapshot_unreadable: file is missing from task baseline",
+    "scan:packages/esl/src/model.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:apps/lab/src/critic/judge.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/world/src/store.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:apps/lab/src/storage/sqlite.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:apps/lab/src/cli.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/world/test/reducer.test.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/world/src/index.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/world/src/reducer.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/world/src/retrieve.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/world/src/schema.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/learning/test/learning.test.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/learning/src/bkt.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "scan:packages/learning/src/evidence.ts: scanner_failed: spawnSync E:\\New Folder\\node.exe ETIMEDOUT",
+    "supply-chain-check:.: stop_budget_exhausted: focused supply-chain check was not run before the gate budget"
+  ],
+  "target": ".",
+  "revision": "545036e4b3a505802ae051c88f2d2c2378141272",
+  "diffHash": "452bb2d924baab046caec7bf61789564556be326cd8f0787c3c3aac1dc4a346d",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-10-21T18:33:23.030Z",
+  "timing": {
+    "startedAt": "2026-10-21T18:33:20.228Z",
+    "completedAt": "2026-10-21T18:33:23.030Z",
+    "durationMs": 2802
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "candidate_limit_exceeded": 1,
+      "baseline_snapshot_unreadable": 9,
+      "scanner_failed": 13,
+      "stop_budget_exhausted": 1,
+      "project_check_failed": 24
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-session_c5bd3035ab14cd766ec0f035a0044046-20261021T183323030Z-87396-a6e97f32f022.json"
+}

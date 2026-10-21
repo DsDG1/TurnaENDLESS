@@ -1,0 +1,200 @@
+/**
+ * node:sqlite 驱动（实验 CLI 用；第 11 节：PWA 用 SQLite WASM + OPFS、RN 用 expo-sqlite，
+ * 各自实现 packages/world 的 WorldStore 接口，核心代码不变）。
+ * 全部语句都是字面量 SQL，参数一律绑定；DDL 逐条 prepare 执行。
+ */
+import { DatabaseSync } from 'node:sqlite';
+import {
+  WORLD_DDL_STATEMENTS,
+  type EntityRow,
+  type EpisodeSummaryRow,
+  type EventRow,
+  type FactRow,
+  type ThreadRow,
+  type UserFactRow,
+} from '@endless/world';
+import type { WorldStore } from '@endless/world';
+
+export class SqliteWorldStore implements WorldStore {
+  private db: DatabaseSync;
+  private seq = 0;
+
+  constructor(path: string | ':memory:') {
+    this.db = new DatabaseSync(path);
+    for (const stmt of WORLD_DDL_STATEMENTS) {
+      this.db.prepare(stmt).run();
+    }
+  }
+
+  private nextId(): number {
+    return ++this.seq;
+  }
+
+  upsertEntity(row: EntityRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO entities (id, kind, name, home_channel, created_card, bible_ref) VALUES (?, ?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, name = excluded.name, home_channel = excluded.home_channel',
+      )
+      .run(row.id, row.kind, row.name, row.home_channel, row.created_card, row.bible_ref);
+  }
+  getEntity(id: string): EntityRow | undefined {
+    const r = this.db.prepare('SELECT id, kind, name, home_channel, created_card, bible_ref FROM entities WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return r ? ({ ...r, created_card: Number(r.created_card) } as unknown as EntityRow) : undefined;
+  }
+  listEntities(channel?: string): EntityRow[] {
+    const rows = this.db.prepare('SELECT * FROM entities').all() as Record<string, unknown>[];
+    return rows
+      .map((r) => ({ ...r, created_card: Number(r.created_card) } as unknown as EntityRow))
+      .filter((e) => !channel || e.home_channel === channel);
+  }
+  entityExists(id: string): boolean {
+    return this.db.prepare('SELECT 1 FROM entities WHERE id = ?').get(id) !== undefined;
+  }
+
+  private mapFact(r: Record<string, unknown>): FactRow {
+    return {
+      id: Number(r.id),
+      subject: String(r.subject),
+      predicate: String(r.predicate),
+      object: String(r.object),
+      valid_from_card: Number(r.valid_from_card),
+      valid_to_card: r.valid_to_card === null || r.valid_to_card === undefined ? null : Number(r.valid_to_card),
+      recorded_card: Number(r.recorded_card),
+      source_batch: String(r.source_batch),
+      source_scene: r.source_scene === null || r.source_scene === undefined ? null : String(r.source_scene),
+      standing: String(r.standing) as FactRow['standing'],
+    };
+  }
+
+  insertFact(row: Omit<FactRow, 'id'>): FactRow {
+    const id = this.nextId();
+    this.db
+      .prepare(
+        'INSERT INTO facts (id, subject, predicate, object, valid_from_card, valid_to_card, recorded_card, source_batch, source_scene, standing) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(id, row.subject, row.predicate, row.object, row.valid_from_card, row.valid_to_card, row.recorded_card, row.source_batch, row.source_scene, row.standing);
+    return { ...row, id };
+  }
+  endFact(id: number, atCard: number): void {
+    this.db.prepare('UPDATE facts SET valid_to_card = ? WHERE id = ? AND valid_to_card IS NULL').run(atCard, id);
+  }
+  getFact(id: number): FactRow | undefined {
+    const r = this.db.prepare('SELECT * FROM facts WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return r ? this.mapFact(r) : undefined;
+  }
+  currentFacts(subjects?: string[]): FactRow[] {
+    const rows = this.db.prepare('SELECT * FROM facts WHERE valid_to_card IS NULL ORDER BY id').all() as Record<string, unknown>[];
+    const facts = rows.map((r) => this.mapFact(r));
+    return subjects ? facts.filter((f) => subjects.includes(f.subject)) : facts;
+  }
+  endedFacts(subject: string, limit = 2): FactRow[] {
+    const rows = this.db
+      .prepare('SELECT * FROM facts WHERE subject = ? AND valid_to_card IS NOT NULL ORDER BY valid_to_card DESC LIMIT ?')
+      .all(subject, limit) as Record<string, unknown>[];
+    return rows.map((r) => this.mapFact(r));
+  }
+  factsAbout(subject: string): FactRow[] {
+    const rows = this.db.prepare('SELECT * FROM facts WHERE subject = ? ORDER BY id').all(subject) as Record<string, unknown>[];
+    return rows.map((r) => this.mapFact(r));
+  }
+
+  insertEvent(row: Omit<EventRow, 'id'>): EventRow {
+    const id = this.nextId();
+    this.db
+      .prepare('INSERT INTO events (id, card, batch, channel, type, actors, summary_en, user_choice, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, row.card, row.batch, row.channel, row.type, JSON.stringify(row.actors), row.summary_en, row.user_choice, row.tags ? JSON.stringify(row.tags) : null);
+    return { ...row, id };
+  }
+  private mapEvent(r: Record<string, unknown>): EventRow {
+    return {
+      id: Number(r.id),
+      card: Number(r.card),
+      batch: String(r.batch),
+      channel: String(r.channel),
+      type: String(r.type),
+      actors: JSON.parse(String(r.actors ?? '[]')) as string[],
+      summary_en: String(r.summary_en ?? ''),
+      user_choice: r.user_choice === null || r.user_choice === undefined ? null : String(r.user_choice),
+      tags: r.tags ? (JSON.parse(String(r.tags)) as string[]) : null,
+    };
+  }
+  recentEvents(opts?: { channel?: string; sinceCard?: number; limit?: number }): EventRow[] {
+    const rows = this.db.prepare('SELECT * FROM events ORDER BY card DESC, id DESC').all() as Record<string, unknown>[];
+    const mapped = rows.map((r) => this.mapEvent(r));
+    const filtered = mapped.filter(
+      (e) => (!opts?.channel || e.channel === opts.channel) && (opts?.sinceCard === undefined || e.card >= opts.sinceCard),
+    );
+    return filtered.slice(0, opts?.limit ?? 20);
+  }
+  allEvents(): EventRow[] {
+    const rows = this.db.prepare('SELECT * FROM events ORDER BY card, id').all() as Record<string, unknown>[];
+    return rows.map((r) => this.mapEvent(r));
+  }
+
+  private mapThread(r: Record<string, unknown>): ThreadRow {
+    return {
+      id: String(r.id),
+      title: String(r.title),
+      status: String(r.status) as ThreadRow['status'],
+      owner_channel: String(r.owner_channel),
+      opened_card: Number(r.opened_card),
+      last_touched_card: Number(r.last_touched_card),
+      priority: Number(r.priority),
+      setup: String(r.setup ?? ''),
+      payoff_hint: r.payoff_hint === null || r.payoff_hint === undefined ? null : String(r.payoff_hint),
+      expires_after_cards: r.expires_after_cards === null || r.expires_after_cards === undefined ? null : Number(r.expires_after_cards),
+    };
+  }
+  upsertThread(row: ThreadRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO threads (id, title, status, owner_channel, opened_card, last_touched_card, priority, setup, payoff_hint, expires_after_cards) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, last_touched_card = excluded.last_touched_card, title = excluded.title, priority = excluded.priority, payoff_hint = excluded.payoff_hint',
+      )
+      .run(row.id, row.title, row.status, row.owner_channel, row.opened_card, row.last_touched_card, row.priority, row.setup, row.payoff_hint, row.expires_after_cards);
+  }
+  getThread(id: string): ThreadRow | undefined {
+    const r = this.db.prepare('SELECT * FROM threads WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return r ? this.mapThread(r) : undefined;
+  }
+  openThreads(): ThreadRow[] {
+    const rows = this.db.prepare("SELECT * FROM threads WHERE status = 'open'").all() as Record<string, unknown>[];
+    return rows.map((r) => this.mapThread(r));
+  }
+  allThreads(): ThreadRow[] {
+    const rows = this.db.prepare('SELECT * FROM threads').all() as Record<string, unknown>[];
+    return rows.map((r) => this.mapThread(r));
+  }
+
+  insertUserFact(row: Omit<UserFactRow, 'id'>): UserFactRow {
+    const id = this.nextId();
+    this.db.prepare('INSERT INTO user_facts (id, predicate, object, card, batch) VALUES (?, ?, ?, ?, ?)').run(id, row.predicate, row.object, row.card, row.batch);
+    return { ...row, id };
+  }
+  userFacts(predicate?: string): UserFactRow[] {
+    const rows = this.db.prepare('SELECT * FROM user_facts ORDER BY id').all() as Record<string, unknown>[];
+    return rows
+      .map((r) => ({ id: Number(r.id), predicate: String(r.predicate), object: String(r.object), card: Number(r.card), batch: String(r.batch) }))
+      .filter((u) => !predicate || u.predicate === predicate);
+  }
+
+  insertSummary(row: EpisodeSummaryRow): void {
+    this.db.prepare('INSERT INTO episode_summaries (channel, from_card, to_card, text) VALUES (?, ?, ?, ?)').run(row.channel, row.from_card, row.to_card, row.text);
+  }
+  latestSummary(channel: string): EpisodeSummaryRow | undefined {
+    const r = this.db
+      .prepare('SELECT * FROM episode_summaries WHERE channel = ? ORDER BY to_card DESC LIMIT 1')
+      .get(channel) as Record<string, unknown> | undefined;
+    return r
+      ? { channel: String(r.channel), from_card: Number(r.from_card), to_card: Number(r.to_card), text: String(r.text) }
+      : undefined;
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}

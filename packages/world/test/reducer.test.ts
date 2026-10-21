@@ -1,0 +1,177 @@
+/** reducer 与检索测试（实验方案第 8 节 Day 4 完成标志：
+ * 单值谓词自动失效、canon 拒写、选项 effect 只在被选时执行）。 */
+import { describe, expect, it } from 'vitest';
+import type { Effect } from '@endless/esl';
+import { InMemoryWorldStore } from '../src/store.js';
+import { applyEffects, type ReduceContext } from '../src/reducer.js';
+import { currentFactsFor, pastFactsFor, relevantEvents, sift, threadHygiene, topThreads } from '../src/retrieve.js';
+
+function makeCtx(overrides: Partial<ReduceContext> = {}): ReduceContext {
+  return {
+    card: 10,
+    batch: 'dd-0042',
+    scene: 's4',
+    channel: 'duck_detective',
+    predicates: new Map([
+      ['role', { cardinality: 'single' }],
+      ['location', { cardinality: 'single' }],
+      ['status', { cardinality: 'single' }],
+      ['suspect_status', { cardinality: 'single' }],
+      ['owes', { cardinality: 'multi' }],
+      ['owns', { cardinality: 'multi' }],
+    ]),
+    canonLocked: ['duck is_a duck'],
+    ...overrides,
+  };
+}
+
+const setFact = (subject: string, predicate: string, object: string, standing: 'canon' | 'stated' | 'rumor' = 'stated'): Effect => ({
+  set_fact: { subject, predicate, object, standing },
+});
+
+describe('reducer 写入纪律', () => {
+  it('单值谓词写入新值时自动失效旧值（双时态，失效而不删除）', () => {
+    const store = new InMemoryWorldStore();
+    applyEffects(store, [setFact('duck', 'role', 'president')], makeCtx({ card: 10 }));
+    applyEffects(store, [setFact('duck', 'role', 'shop_clerk')], makeCtx({ card: 40 }));
+    const current = currentFactsFor(store, ['duck']).filter((f) => f.predicate === 'role');
+    expect(current).toHaveLength(1);
+    expect(current[0]!.object).toBe('shop_clerk');
+    expect(current[0]!.valid_from_card).toBe(40);
+    const past = pastFactsFor(store, 'duck');
+    expect(past).toHaveLength(1);
+    expect(past[0]!.object).toBe('president');
+    expect(past[0]!.valid_to_card).toBe(40);
+  });
+
+  it('canon 事实不能被改写，也不能被结束', () => {
+    const store = new InMemoryWorldStore();
+    applyEffects(store, [setFact('duck', 'role', 'detective', 'canon')], makeCtx({ card: 5 }));
+    const r1 = applyEffects(store, [setFact('duck', 'role', 'shop_clerk')], makeCtx({ card: 20 }));
+    expect(r1.violations).toHaveLength(1);
+    const r2 = applyEffects(store, [{ end_fact: { subject: 'duck', predicate: 'role', object: 'detective' } }], makeCtx({ card: 21 }));
+    expect(r2.violations).toHaveLength(1);
+    expect(currentFactsFor(store, ['duck']).find((f) => f.predicate === 'role')?.object).toBe('detective');
+  });
+
+  it('canon_locked 配置同样拒写（即使旧值是 stated）', () => {
+    const store = new InMemoryWorldStore();
+    applyEffects(store, [setFact('duck', 'status', 'alive')], makeCtx({ card: 5 }));
+    const ctx = makeCtx({ card: 20, canonLocked: ['duck status alive'] });
+    const r = applyEffects(store, [setFact('duck', 'status', 'missing')], ctx);
+    expect(r.violations).toHaveLength(1);
+  });
+
+  it('选项 effect 只在被选时执行：未选择的分支不写世界', () => {
+    const store = new InMemoryWorldStore();
+    // s4 的两个具名 effect，模拟用户只选了 accuse_cat
+    const accuseCat: Effect[] = [
+      { open_thread: { id: 'cat_alibi', title: 'Was the cat really asleep?', priority: 2, expires_after_cards: 120 } },
+      setFact('cat', 'suspect_status', 'prime_suspect'),
+    ];
+    const r = applyEffects(store, accuseCat, makeCtx({ card: 12 }));
+    expect(r.violations).toHaveLength(0);
+    expect(store.currentFacts(['cat']).find((f) => f.predicate === 'suspect_status')?.object).toBe('prime_suspect');
+    // moon 分支没有执行
+    expect(store.currentFacts(['moon'])).toHaveLength(0);
+    expect(store.getThread('cat_alibi')?.status).toBe('open');
+  });
+
+  it('事件自动记录，不需要在 ESL 里声明', () => {
+    const store = new InMemoryWorldStore();
+    const r = applyEffects(store, [setFact('cat', 'suspect_status', 'prime_suspect')], makeCtx({ card: 12 }));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0]!.type).toBe('set_fact');
+    expect(r.events[0]!.card).toBe(12);
+    expect(store.allEvents()).toHaveLength(1);
+  });
+
+  it('多值谓词不失效旧值', () => {
+    const store = new InMemoryWorldStore();
+    applyEffects(store, [{ set_fact: { subject: 'moon', predicate: 'owns', object: 'red_hat', standing: 'stated' } }], makeCtx({ card: 5 }));
+    applyEffects(store, [{ set_fact: { subject: 'moon', predicate: 'owns', object: 'blue_hat', standing: 'stated' } }], makeCtx({ card: 9 }));
+    const owns = currentFactsFor(store, ['moon']).filter((f) => f.predicate === 'owns');
+    expect(owns).toHaveLength(2);
+  });
+
+  it('伏笔生命周期：open → advance → resolve，非法迁移被拒', () => {
+    const store = new InMemoryWorldStore();
+    const open: Effect = { open_thread: { id: 't1', title: 'X', priority: 2 } };
+    applyEffects(store, [open], makeCtx({ card: 5 }));
+    expect(applyEffects(store, [open], makeCtx({ card: 6 })).violations).toHaveLength(1);
+    applyEffects(store, [{ advance_thread: { id: 't1' } }], makeCtx({ card: 30 }));
+    applyEffects(store, [{ resolve_thread: { id: 't1' } }], makeCtx({ card: 60 }));
+    expect(store.getThread('t1')?.status).toBe('resolved');
+    expect(applyEffects(store, [{ advance_thread: { id: 't1' } }], makeCtx({ card: 61 })).violations).toHaveLength(1);
+  });
+
+  it('end_fact 结束指定事实', () => {
+    const store = new InMemoryWorldStore();
+    applyEffects(store, [setFact('moon', 'location', 'rooftop')], makeCtx({ card: 5 }));
+    const r = applyEffects(store, [{ end_fact: { subject: 'moon', predicate: 'location' } }], makeCtx({ card: 22 }));
+    expect(r.changes.factsEnded).toHaveLength(1);
+    expect(currentFactsFor(store, ['moon'])).toHaveLength(0);
+    expect(applyEffects(store, [{ end_fact: { subject: 'moon', predicate: 'location' } }], makeCtx({ card: 23 })).violations).toHaveLength(1);
+  });
+});
+
+describe('检索', () => {
+  it('伏笔打分：优先级 × 陈旧度（封顶 1）× 频道匹配，取前 3', () => {
+    const store = new InMemoryWorldStore();
+    const ctx = makeCtx();
+    applyEffects(store, [{ open_thread: { id: 'a', title: 'A', priority: 1 } }], { ...ctx, card: 100 });
+    applyEffects(store, [{ open_thread: { id: 'b', title: 'B', priority: 3 } }], { ...ctx, card: 100 });
+    applyEffects(store, [{ open_thread: { id: 'c', title: 'C', priority: 3 } }], { ...ctx, card: 900 });
+    // 陈旧度封顶 1：b（900 卡未动）3×2×1.2=7.2 > c（100 卡未动，staleness 0.5）3×1.5×1.2=5.4 > a 1×2×1.2=2.4
+    const top = topThreads(store, 1000, 'duck_detective');
+    expect(top.map((t) => t.thread.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('相关事件：新近 + 重要 + 相关', () => {
+    const store = new InMemoryWorldStore();
+    const ctx = makeCtx();
+    applyEffects(store, [setFact('cat', 'location', 'living_room')], { ...ctx, card: 100 });
+    applyEffects(store, [{ open_thread: { id: 't', title: 'hat missing', priority: 2 } }], { ...ctx, card: 200 });
+    applyEffects(store, [setFact('moon', 'owns', 'blue_hat')], { ...ctx, card: 300 });
+    const hits = relevantEvents(store, { card: 310, actors: ['moon'], keywords: ['hat'] });
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]!.event.card).toBeGreaterThanOrEqual(200);
+  });
+
+  it('故事筛选：四种模式各自命中', () => {
+    const store = new InMemoryWorldStore();
+    const ctx = makeCtx();
+    // rejected_returns：cat 被拒（card 10），最后一次出场 card 15
+    applyEffects(store, [{ user_fact: { predicate: 'rejected', object: 'cat' } }], { ...ctx, card: 10 });
+    applyEffects(store, [setFact('cat', 'location', 'living_room')], { ...ctx, card: 15 });
+    // debt_unpaid：card 20 欠债，到 card 105 已 85 卡（阈值 80）
+    applyEffects(store, [{ set_fact: { subject: 'duck', predicate: 'owes', object: 'moon_5_coins', standing: 'stated' } }], { ...ctx, card: 20 });
+    // role_change_echo：card 70 换 role，到 card 105 已 35 卡？——把换 role 放到 card 75，30 卡窗口内
+    applyEffects(store, [setFact('duck', 'role', 'president')], { ...ctx, card: 70 });
+    applyEffects(store, [setFact('duck', 'role', 'shop_clerk')], { ...ctx, card: 75 });
+    const hits = sift(
+      store,
+      [{ id: 'rejected_returns' }, { id: 'debt_unpaid' }, { id: 'missing_object' }, { id: 'role_change_echo' }],
+      105,
+    );
+    const patterns = new Set(hits.map((h) => h.pattern));
+    expect(patterns.has('rejected_returns')).toBe(true); // cat 被拒后 90 卡未出场
+    expect(patterns.has('debt_unpaid')).toBe(true); // 欠债已 85 卡
+    expect(patterns.has('role_change_echo')).toBe(true); // 30 卡前换过 role
+    expect(patterns.has('missing_object')).toBe(false);
+  });
+
+  it('伏笔卫生（C2）：过期与孤儿', () => {
+    const store = new InMemoryWorldStore();
+    const ctx = makeCtx();
+    applyEffects(store, [{ open_thread: { id: 'old', title: 'Old', priority: 1, expires_after_cards: 50 } }], { ...ctx, card: 10 });
+    applyEffects(store, [{ open_thread: { id: 'fresh', title: 'Fresh', priority: 2 } }], { ...ctx, card: 100 });
+    applyEffects(store, [{ open_thread: { id: 'done', title: 'Done', priority: 1 } }], { ...ctx, card: 20 });
+    applyEffects(store, [{ resolve_thread: { id: 'done' } }], { ...ctx, card: 30 });
+    const h = threadHygiene(store, 120);
+    expect(h.total).toBe(3);
+    expect(h.open).toBe(2);
+    expect(h.expiredOpen).toBe(1); // old：开于 10，过期阈值 50，现已 110 卡
+    expect(h.orphans).toBe(1); // old 是孤儿（从未被推进且超过 30 卡）；fresh 才开 20 卡，不算
+  });
+});

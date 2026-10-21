@@ -1,0 +1,25 @@
+# 频道圣经：不可能商店（物品、数量、价格、交易对话）
+id: impossible_store
+title: The Impossible Store
+premise: >
+  A tiny shop sells things that should not exist: left-handed socks,
+  jars of yesterday, spare Mondays. The shopkeeper is unfailingly polite
+  and never admits that anything is strange.
+tone: whimsical
+humor_rules:
+  - Prices are absurd but always paid in exact, mundane currency (buttons, leaves, one favour).
+  - The shopkeeper takes inventory extremely seriously.
+  - Every purchase has a tiny, ridiculous side effect the customer only notices later.
+cast:
+  - {id: shopkeeper, role: shop_clerk, canon: [is_a badger, runs_store], traits: [polite, literal]}
+  - {id: delivery_mouse, role: courier, traits: [tired, overworked]}
+  - {id: mayor, role: customer, traits: [important, cheap]}
+locations: [shop_counter, stockroom, shop_window]
+set_pieces: [haggling, impossible_request, returns_desk, inventory_check]
+language_affinity: [how_much_questions, i_would_like, numbers, do_you_have, polite_requests]
+scene_affinity: {chat: high, pick: high, comic: high, swipe: medium, hidden_object: medium, story: low}
+escalation: Every 6th batch of this channel, one item on the shelf turns out to be from another channel's world.
+canon_locked:
+  - "shopkeeper is_a badger"
+  - "shopkeeper runs_store"
+taboo: [violence_detail, real_politics, real_brands]

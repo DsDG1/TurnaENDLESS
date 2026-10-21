@@ -1,0 +1,21 @@
+# 运行配置模板（复制到 runs/<run_id>/config.yaml 后修改）。
+# 每个运行的随机种子、提示词哈希、模型 ID 都写入本文件（第 7.1 节）。
+run_id: R3-example
+# 实验矩阵因子（R0–R6）
+director: two-stage          # two-stage | single
+world_state: true            # false 时上下文用「最近 3 批摘要」代替（R0）
+trope_ledger: true
+encoding: yaml               # yaml | json（RQ5）
+derive: false                # 派生场景开关（R5+）
+showrunner_tier: fast        # fast | premium（R6 的编剧室用高档）
+# 学习与模拟
+persona: P1                  # P1 快刷 / P2 认真 / P3 偏科
+batches: 60
+seed: 42
+feedback_lag: 2              # 第 4.2 节：导演只能看到 N-2 批及以前的反馈
+strategy: S-B                # 证据策略 S-A / S-B / S-C
+# LLM
+llm: real                    # real | stub（无 key 的端到端冒烟用 stub）
+stub_script: null            # stub 模式下的脚本文件路径
+# 频道权重初始值（第 5.4 节）
+channel_weights: {duck_detective: 0.5, impossible_store: 0.3, improv: 0.2}

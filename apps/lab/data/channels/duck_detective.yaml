@@ -1,0 +1,23 @@
+# 频道圣经：鸭侦探（第 5.4 节，长线频道）
+id: duck_detective
+title: Duck Detective
+premise: >
+  A very serious duck runs a detective agency in Apartment 7.
+  The cases are absurd, but the duck treats every clue with total seriousness.
+tone: deadpan
+humor_rules:
+  - The duck never laughs. Comedy comes from taking nonsense seriously.
+  - Every case has exactly one physical clue the user can find.
+  - Witnesses are unreliable in a specific, consistent way.
+cast:
+  - {id: duck, role: detective, canon: [is_a duck, owns_agency]}
+  - {id: cat, role: neighbour, traits: [nervous, lies_badly]}
+  - {id: moon, role: client, traits: [vain, owns_many_hats]}
+locations: [agency_office, living_room, rooftop]
+set_pieces: [interrogation, clue_search, accusation, false_ending]
+language_affinity: [spatial_prepositions, where_questions, past_simple, because]
+scene_affinity: {comic: high, hidden_object: high, story: high, chat: medium, swipe: low, pick: medium}
+escalation: Every 5th batch of this channel ends with a twist that changes a fact.
+canon_locked:
+  - "duck is_a duck"
+taboo: [violence_detail, real_politics, real_brands]

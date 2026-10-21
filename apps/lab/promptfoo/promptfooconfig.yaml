@@ -1,0 +1,47 @@
+# promptfoo 回归矩阵骨架（实验方案第 8 节 Day 8）：
+# 「提示词 × 模型」小矩阵，每格 20 批；断言直接调用 packages/esl 的校验器
+# （通过 `pnpm lab:assert` 读取模型输出并校验，退出码即判定）。
+#
+# 使用：
+#   1. npm i -g promptfoo（或在仓库内 pnpm add -D -w promptfoo）
+#   2. 设置供应商与模型（config/models.yaml 与环境变量 ENDLESS_API_KEY）
+#   3. cd apps/lab/promptfoo && promptfoo eval
+#
+# 说明：providers 用 OpenAI 兼容端点；prompts 直接引用 data/prompts/single.md 的内容
+# 由 promptfoo 变量注入（vars 提供频道圣经/brief 等占位符的样例）。
+
+description: 'ENDLESS ESL 回归（exp-00 Day 8）'
+
+providers:
+  - id: openai-compatible:{{fast_model}}
+    config:
+      apiBaseUrl: '{{base_url}}'
+      apiKeyEnvar: ENDLESS_API_KEY
+  - id: openai-compatible:{{premium_model}}
+    config:
+      apiBaseUrl: '{{base_url}}'
+      apiKeyEnvar: ENDLESS_API_KEY
+
+prompts: ['../data/prompts/single.md']
+
+defaultTest:
+  assert:
+    - type: exec
+      value: 'pnpm --dir ../.. lab:assert --file ../runs/promptfoo-latest.txt'
+  vars:
+    # 变量样例按 data/prompts/single.md 的占位符提供；正式跑批前替换为真实上下文
+    channel: duck_detective
+
+tests:
+  - description: '基准批次（duck_detective / A1）'
+    vars:
+      brief: |
+        brief: lb-0001
+        level: A1+
+        introduce: []
+        expose: [{item: lx:behind#prep.location, exposures_so_far: 0, need: 2}]
+        review: [{item: ck:where-is, facet: meaning, min_evidence: recognition-4}]
+        vocab: {allowed_extra: [hat, table, door], max_words_per_line: 12, oov_budget: 0.02}
+        avoid_before_test: [where is, where's, where are]
+      cast_facts: 'duck role detective (canon)'
+      allowed_extra: 'hat, table, door'

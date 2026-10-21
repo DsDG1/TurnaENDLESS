@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-10-21T17:46:35.624Z",
+  "sessionId": "session_c5bd3035ab14cd766ec0f035a0044046",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "test/learning.test.ts",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 51,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

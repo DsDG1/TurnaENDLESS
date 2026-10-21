@@ -1,0 +1,18 @@
+# 故事筛选模式（第 5.5.4 节）：确定性查询筛出跨频道回调候选，每批最多取 1 条。
+patterns:
+  - id: rejected_returns
+    enabled: true
+    params: {quiet_cards: 50}
+    usage: 用户拒绝过的角色，在其他频道以新身份重新出场
+  - id: debt_unpaid
+    enabled: true
+    params: {min_age_cards: 80}
+    usage: 债主在别的频道追债
+  - id: missing_object
+    enabled: true
+    params: {}
+    usage: 丢失的物品出现在商店频道的货架上
+  - id: role_change_echo
+    enabled: true
+    params: {window_cards: 30}
+    usage: 角色身份变化被别的频道当作新闻播报
