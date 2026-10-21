@@ -189,6 +189,9 @@ async function executeRun(
     channelOverride: cfg.llm === 'stub' ? 'duck_detective' : undefined,
     briefOverrides: cfg.llm === 'stub' ? Array.from({ length: cfg.batches }, () => smokeBrief()) : undefined,
     verbose: cfg.llm !== 'stub',
+    recordCalls: !readOnlyCache,
+    oovWarn: cfg.oov_warn,
+    oovBlock: cfg.oov_block,
   });
   const prices = await loadPricesConfig(join(CONFIG_DIR, 'prices.yaml'));
   const budget = await loadBudgetConfig(join(CONFIG_DIR, 'budget.yaml'));

@@ -54,8 +54,18 @@ export const ALLOWED_EXTRA_POOL = [
   'drawer', 'window', 'counter', 'bin', 'desk', 'store', 'shop', 'price', 'cheap', 'expensive',
   'button', 'coin', 'money', 'umbrella', 'customer', 'courier', 'mirror', 'search', 'room',
   'strange', 'strangely', 'secret', 'everyone', 'seven', 'becomes', 'official', 'small', 'missing',
-  'seriously', 'different', 'things', 'mystery',
+  'seriously', 'different', 'things', 'mystery', 'check', 'wait', 'open', 'close', 'help', 'ask',
+  'answer', 'look', 'see', 'know', 'want', 'need', 'like', 'good', 'bad', 'big', 'little', 'new',
+  'old', 'happy', 'sad', 'angry', 'tired', 'hungry', 'ready', 'sorry', 'sure', 'maybe', 'really',
+  'very', 'too', 'again', 'still', 'already', 'almost', 'nearly', 'useful', 'helpful', 'app',
+  'phone', 'message', 'picture', 'story', 'idea', 'problem', 'today', 'tomorrow', 'morning',
+  'evening', 'week', 'time', 'place', 'home', 'street', 'city', 'people', 'friend', 'family',
+  'water', 'food', 'bread', 'milk', 'tea', 'cake', 'apple', 'orange', 'egg', 'rice', 'fish',
 ];
+
+/** 初始允许的额外词数量：默认 8（方案 R5），但种子词库只有 62 条，8 个词写不出可读的 A1 内容，
+ * 试跑期放大到 60 并在结果文档记录偏差；词库扩到方案规模后应调回。 */
+const ALLOWED_EXTRA_COUNT = 60;
 
 export interface PipelineOptions {
   data: LabData;
@@ -80,6 +90,11 @@ export interface PipelineOptions {
   smokeSeed?: boolean;
   /** 把每次 LLM 调用的耗时/token 打到 stderr（真实跑批时开，测试不开） */
   verbose?: boolean;
+  /** 是否追加写 calls.jsonl；回放时关掉，避免缓存命中的 0 token 记录混进调用日志 */
+  recordCalls?: boolean;
+  /** OOV 阈值（默认取 buildValidationContext 的 0.02/0.05） */
+  oovWarn?: number;
+  oovBlock?: number;
 }
 
 export interface SceneSim {
@@ -262,6 +277,8 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       recentSceneSequences: ledger.recentSequences(5),
       recentCastCounts: recentCastCountsOf(ledger),
       maxWordsPerLine: brief?.vocab.max_words_per_line,
+      oovWarn: opts.oovWarn,
+      oovBlock: opts.oovBlock,
     });
 
   /** 每个频道上次出场的卡号（频道调度的新近度因子） */
@@ -307,6 +324,8 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       trope_ledger: opts.tropeLedgerOn ? ledger.forbiddenText() : '（梗台账关闭）',
       feedback: visibleFeedback.length ? visibleFeedback.map((f) => f.summary_for_director).join('\n---\n') : '（暂无）',
       allowed_extra: (brief.vocab.allowed_extra ?? []).join(', '),
+      // 校验器的真实允许词表（已知词 ∪ 额外词 ∪ 本批目标条目形式）：直接给模型看，比分头猜省事
+      allowed_words: [...buildCtx(brief, channel, card).vocab.allowedForms].sort().join(', '),
       char_specs: yamlStringify(Object.fromEntries(data.charSpecs)),
       asset_tags: [...data.assetTags].join(', '),
       max_words_per_line: String(brief.vocab.max_words_per_line),
@@ -372,6 +391,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
           exposureCounts,
           introduced,
           allowedExtraPool: ALLOWED_EXTRA_POOL,
+          allowedExtraCount: ALLOWED_EXTRA_COUNT,
         },
         seq,
       );
@@ -463,8 +483,10 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
             2,
           ),
         );
-        for (const c of pending.calls) {
-          await appendFile(join(opts.outDir, 'calls.jsonl'), `${JSON.stringify({ seq, batchId, failed: true, ...c })}\n`);
+        if (opts.recordCalls !== false) {
+          for (const c of pending.calls) {
+            await appendFile(join(opts.outDir, 'calls.jsonl'), `${JSON.stringify({ seq, batchId, failed: true, ...c })}\n`);
+          }
         }
       }
       return;
@@ -662,9 +684,11 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         JSON.stringify({ ...record, calls: undefined, issues: pending.issues, report: { factRefs: pending.report.factRefs, derivedEvidence: pending.report.derivedEvidence } }, null, 2),
       );
       await writeFile(join(opts.outDir, 'render', `${id}.md`), render);
-      await appendFile(join(opts.outDir, 'feedback.jsonl'), `${JSON.stringify(fb)}\n`);
-      for (const c of pending.calls) {
-        await appendFile(join(opts.outDir, 'calls.jsonl'), `${JSON.stringify({ seq, batchId: batch.batch, ...c })}\n`);
+      if (opts.recordCalls !== false) {
+        await appendFile(join(opts.outDir, 'feedback.jsonl'), `${JSON.stringify(fb)}\n`);
+        for (const c of pending.calls) {
+          await appendFile(join(opts.outDir, 'calls.jsonl'), `${JSON.stringify({ seq, batchId: batch.batch, ...c })}\n`);
+        }
       }
     }
   };

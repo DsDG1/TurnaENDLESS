@@ -40,6 +40,8 @@ export interface PlannerInput {
   maxReviews?: number;
   /** 新条目数上限（默认 1；到期复习为空时 2） */
   maxIntroduce?: number;
+  /** 本批允许的额外词数量上限（默认 8）。种子词库远小于方案规模时由调用方放大并记录偏差。 */
+  allowedExtraCount?: number;
 }
 
 export class Planner {
@@ -91,7 +93,7 @@ export class Planner {
     for (const r of review) for (const f of this.lexicon.forms.get(r.item) ?? []) avoid.add(f);
 
     // R5：词汇预算（allowed_extra 按序取池的前几个，实际运行由程序生成并注入）
-    const pool = input.allowedExtraPool.slice(0, 8);
+    const pool = input.allowedExtraPool.slice(0, input.allowedExtraCount ?? 8);
 
     return {
       brief: `lb-${String(seq).padStart(4, '0')}`,

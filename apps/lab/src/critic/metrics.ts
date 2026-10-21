@@ -48,8 +48,10 @@ export interface MetricsJson {
     /** K1：每批 / 每卡 token（按阶段拆分见 calls.jsonl） */
     k1PerBatch: { input: number; output: number };
     k1PerCard: { input: number; output: number };
-    /** K2：每 100 张卡成本（美元，按 prices.yaml；单价未填时为 0） */
+    /** K2：每 100 张卡成本（美元，按 prices.yaml；单价未填时为 0，此时 K2 不可判定） */
     k2Per100Cards: number;
+    /** prices.yaml 是否给出了非零单价；false 时 K2 不参与阈值判定 */
+    pricesConfigured: boolean;
     /** K3：每批时延 P50/P95（毫秒） */
     k3BatchLatency: { p50: number; p95: number };
     /** K5：演绎倍数 = 用户可见卡片数 / LLM 调用次数（不含评审） */
@@ -164,8 +166,11 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
     return r.ok ? [perBatch] : [];
   }).sort((a, b) => a - b);
   const prices = opts.prices ?? { inputPerMtok: 0, outputPerMtok: 0 };
-  const cost =
-    (totals.tokensIn / 1e6) * prices.inputPerMtok + (totals.tokensOut / 1e6) * prices.outputPerMtok;
+  // 单价没填（两个费率都为 0）时算出来的成本恒为 0，K2 会假通过 —— 明确标记为不可判定
+  const pricesConfigured = prices.inputPerMtok > 0 || prices.outputPerMtok > 0;
+  const cost = pricesConfigured
+    ? (totals.tokensIn / 1e6) * prices.inputPerMtok + (totals.tokensOut / 1e6) * prices.outputPerMtok
+    : 0;
   const k2 = totals.cards > 0 ? (cost / totals.cards) * 100 : 0;
 
   const thresholds: MetricsJson['thresholds'] = [];
@@ -183,7 +188,12 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
     thresholds.push({ name: 'N2 梗复用率（第 21 批起）', value: pct(n2Mean), threshold: '≤ 20%', pass: n2Mean <= 0.2 });
   }
   if (opts.budgetPer100Cards !== undefined) {
-    thresholds.push({ name: 'K2 每 100 张卡成本', value: `$${k2.toFixed(4)}`, threshold: `≤ $${opts.budgetPer100Cards}`, pass: k2 <= opts.budgetPer100Cards });
+    thresholds.push({
+      name: 'K2 每 100 张卡成本',
+      value: pricesConfigured ? `$${k2.toFixed(4)}` : '单价未配置',
+      threshold: `≤ $${opts.budgetPer100Cards}`,
+      pass: pricesConfigured ? k2 <= opts.budgetPer100Cards : null,
+    });
   }
   thresholds.push({ name: 'K4 卡顿概率', value: '见 buffer-sim', threshold: '≤ 5%（P1/缓冲2/预制3）', pass: null });
   thresholds.push({ name: 'N5 疲劳差 / 人工评分', value: '人工', threshold: '见 9.1 表', pass: null });
@@ -214,6 +224,7 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
       k1PerBatch: { input: records.length ? totals.tokensIn / records.length : 0, output: records.length ? totals.tokensOut / records.length : 0 },
       k1PerCard: { input: totals.cards ? totals.tokensIn / totals.cards : 0, output: totals.cards ? totals.tokensOut / totals.cards : 0 },
       k2Per100Cards: k2,
+      pricesConfigured,
       k3BatchLatency: { p50: percentile(latencies, 50), p95: percentile(latencies, 95) },
       k5DerivationFactor: totals.calls > 0 ? totals.cards / totals.calls : 0,
     },
@@ -263,7 +274,7 @@ export function metricsMarkdown(m: MetricsJson): string {
   lines.push('');
   lines.push('### 成本与延迟（K1/K2/K3/K5）');
   lines.push(`- K1 每批：输入 ${m.cost.k1PerBatch.input.toFixed(0)} / 输出 ${m.cost.k1PerBatch.output.toFixed(0)} token；每卡：输入 ${m.cost.k1PerCard.input.toFixed(0)} / 输出 ${m.cost.k1PerCard.output.toFixed(0)}`);
-  lines.push(`- K2 每 100 张卡成本：$${m.cost.k2Per100Cards.toFixed(4)}（单价来自 config/prices.yaml）`);
+  lines.push(`- K2 每 100 张卡成本：${m.cost.pricesConfigured ? `$${m.cost.k2Per100Cards.toFixed(4)}（单价来自 config/prices.yaml）` : '不可判定（config/prices.yaml 单价未配置，K2 记 —）'}`);
   lines.push(`- K3 批时延：P50 ${(m.cost.k3BatchLatency.p50 / 1000).toFixed(1)}s / P95 ${(m.cost.k3BatchLatency.p95 / 1000).toFixed(1)}s`);
   lines.push(`- K5 演绎倍数：${m.cost.k5DerivationFactor.toFixed(2)} 卡/调用`);
   lines.push('');

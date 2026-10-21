@@ -163,6 +163,9 @@ export interface BuildContextOptions {
   recentSceneSequences?: string[][];
   recentCastCounts?: Map<string, number>;
   maxWordsPerLine?: number;
+  /** OOV 告警/阻断阈值；种子词库阶段由运行配置放宽（默认 0.02 / 0.05） */
+  oovWarn?: number;
+  oovBlock?: number;
 }
 
 /** 组装校验器上下文（词表 = 已知词 ∪ 额外词 ∪ 本批目标条目形式）。 */
@@ -180,7 +183,7 @@ export function buildValidationContext(data: LabData, opts: BuildContextOptions)
     }
   }
   return {
-    vocab: { allowedForms, oovWarn: 0.02, oovBlock: 0.05, maxWordsPerLine: opts.maxWordsPerLine ?? 12 },
+    vocab: { allowedForms, oovWarn: opts.oovWarn ?? 0.02, oovBlock: opts.oovBlock ?? 0.05, maxWordsPerLine: opts.maxWordsPerLine ?? 12 },
     brief: opts.brief,
     lexicon: {
       formsOf: (item) => data.lexicon.forms.get(item),

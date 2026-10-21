@@ -1,5 +1,5 @@
-# 真实模型连通性探针：只跑 1 批，验证「一次完整导演循环」在真实供应商下能走通。
-# 通过后再跑 run-smoke20.yaml（20 批）；本配置保留为排障用。
+# 单批连通性探针（Day 8 试跑）：只验证「供应商 + 提示词 + 校验器」这条链路能跑通。
+# 产物写到 runs/<run_id>/，反复试跑前先删掉该目录。
 run_id: smoke-real-01
 director: two-stage
 world_state: true
@@ -14,4 +14,11 @@ feedback_lag: 2
 strategy: S-B
 llm: real
 stub_script: null
-channel_weights: {duck_detective: 0.5, impossible_store: 0.3, improv: 0.2}
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+# OOV 阈值：种子词库只有 62 条，学习者「已知词」集合很小，方案默认的 2%/5% 会让任何
+# 自然文本都被阻断。试跑期放宽，正式 R0–R6 前按词库规模重新标定（见结果文档偏差表）。
+oov_warn: 0.08
+oov_block: 0.25

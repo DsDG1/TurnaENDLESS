@@ -67,6 +67,9 @@ export interface RunConfig {
   llm: 'real' | 'stub';
   stub_script: string | null;
   channel_weights: Record<string, number>;
+  /** OOV 告警/阻断阈值（种子词库阶段放大，见结果文档偏差表） */
+  oov_warn: number;
+  oov_block: number;
 }
 
 export async function loadRunConfig(path: string): Promise<RunConfig> {
@@ -88,4 +91,6 @@ const RunConfigSchema = z.object({
   llm: z.enum(['real', 'stub']).default('real'),
   stub_script: z.string().nullable().default(null),
   channel_weights: z.record(z.string(), z.number()).default({ duck_detective: 0.5, impossible_store: 0.3, improv: 0.2 }),
+  oov_warn: z.number().min(0).max(1).default(0.05),
+  oov_block: z.number().min(0).max(1).default(0.2),
 });
