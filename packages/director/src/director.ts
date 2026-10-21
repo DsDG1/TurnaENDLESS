@@ -23,6 +23,8 @@ export interface DirectorConfig {
   maxTokensByStage?: Partial<Record<'showrunner' | 'writer' | 'single' | 'repair', number>>;
   /** 输出解析失败时「带着错误重写」的次数（默认 1）。修复循环处理不了解析级失败。 */
   maxParseRetries?: number;
+  /** 批次级问题（定位不到场景）时整批重写的次数（默认 1）。 */
+  maxRewrites?: number;
 }
 
 export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
@@ -32,6 +34,7 @@ export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
   maxPrecheckRetries: 2,
   maxRepairRounds: 2,
   maxParseRetries: 1,
+  maxRewrites: 1,
   maxTokensByStage: { showrunner: 2048, writer: 8192, single: 8192, repair: 4096 },
 };
 
@@ -234,16 +237,29 @@ export class DirectorService {
     let repairRounds = 0;
 
     // ---------- 修复循环（第 5.9.4 节） ----------
+    let rewrites = 0;
     while (!validated.ok && repairRounds < this.config.maxRepairRounds) {
       repairRounds++;
       const blocking = validated.issues.filter((i) => i.level === 'error');
       const badSceneIds = [...new Set(blocking.map((i) => i.scene).filter((s): s is string => s !== undefined))];
       const current = validated.batch;
-      if (!current || badSceneIds.length === 0) break; // 批次级问题（如 brief 覆盖缺口）局部修复救不了
-      const badScenes = current.scenes.filter((s) => badSceneIds.includes(s.id));
       const problems = blocking
         .map((i) => `- ${i.scene ?? '(batch)'} ${i.code}: ${i.message}`)
         .join('\n');
+      if (!current) break; // 解析不出批次：上面的解析重写已经试过，再整批重写只是重复烧钱
+      if (badSceneIds.length === 0) {
+        // 批次级问题（brief 覆盖缺口、新条目提前检测、OOV）定位不到场景，逐场修复救不了；
+        // 整批重写一次，把问题单原样回填给分场编剧。
+        if (rewrites >= (this.config.maxRewrites ?? 1)) break;
+        rewrites++;
+        text = await this.complete(stage, genTemplate, {
+          ...baseVars,
+          retry_note: `\n上一批未通过校验，问题如下，请整批重写并逐条避免：\n${problems}`,
+        });
+        validated = this.deps.validateEs(text, enc);
+        continue;
+      }
+      const badScenes = current.scenes.filter((s) => badSceneIds.includes(s.id));
       const repairedText = await this.complete(
         'repair',
         this.deps.templates.repair,

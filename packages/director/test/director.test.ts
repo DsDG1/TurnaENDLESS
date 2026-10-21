@@ -379,6 +379,38 @@ describe('导演编排（Stub LLM）', () => {
     expect(stub.calls.filter((c) => c.stage === 'writer')[1]!.prompt).toContain('无法解析');
   });
 
+  it('批次级问题（定位不到场景）整批重写一次', async () => {
+    const missingUses = GOOD_BATCH.replace('    uses: [lx:behind#prep.location]\n', '');
+    const { deps, stub } = makeDeps((stage, counters) => {
+      if (stage === 'showrunner') return PLAN_YAML;
+      return (counters.writer ?? 1) === 1 ? missingUses : GOOD_BATCH;
+    });
+    const out = await new DirectorService(deps, config()).generate({
+      batchId: 'tt-0011',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: {},
+    });
+    expect(out.batchFailed).toBe(false);
+    expect(stub.calls.filter((c) => c.stage === 'writer')).toHaveLength(2);
+    expect(stub.calls.filter((c) => c.stage === 'writer')[1]!.prompt).toContain('整批重写');
+  });
+
+  it('整批重写次数用尽仍不通过，才判整批失败', async () => {
+    const missingUses = GOOD_BATCH.replace('    uses: [lx:behind#prep.location]\n', '');
+    const { deps, stub } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : missingUses));
+    const out = await new DirectorService(deps, config()).generate({
+      batchId: 'tt-0012',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: {},
+    });
+    expect(out.batchFailed).toBe(true);
+    expect(stub.calls.filter((c) => c.stage === 'writer')).toHaveLength(2);
+  });
+
   it('重写次数用尽仍解析失败才整批失败', async () => {
     const { deps } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : ':::'));
     const out = await new DirectorService(deps, config({ maxParseRetries: 1 })).generate({
