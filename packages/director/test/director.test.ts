@@ -240,6 +240,31 @@ describe('导演编排（Stub LLM）', () => {
     ...over,
   });
 
+  it('derive 关闭时校验前剔掉派生场景（R5 消融开关）', async () => {
+    const withDerive = GOOD_BATCH.replace(
+      '  - id: s3',
+      `  - id: s4
+    type: derive
+    from: s1.panels[0].bubbles[0]
+    kind: cloze_pick
+    item: lx:behind#prep.location
+  - id: s3`,
+    );
+    const { deps } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : withDerive));
+    const run = (derive: boolean) =>
+      new DirectorService(deps, config({ derive })).generate({
+        batchId: 'tt-0013',
+        channel: 'duck_detective',
+        brief: BRIEF,
+        ledger: new TropeLedger(),
+        vars: {},
+      });
+    const off = await run(false);
+    expect(off.batch?.scenes.map((s) => s.type)).not.toContain('derive');
+    const on = await run(true);
+    expect(on.batch?.scenes.map((s) => s.type)).toContain('derive');
+  });
+
   it('两段式顺利路径：编剧室 → 分场 → 校验通过', async () => {
     const { deps } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : GOOD_BATCH));
     const svc = new DirectorService(deps, config());

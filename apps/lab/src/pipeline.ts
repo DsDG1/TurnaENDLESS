@@ -80,6 +80,8 @@ export interface PipelineOptions {
   director: 'two-stage' | 'single';
   encoding: 'yaml' | 'json';
   derive: boolean;
+  /** 编剧室用的模型档位（R6：高档编剧室 + 快速档分场） */
+  showrunnerTier?: 'fast' | 'premium';
   worldState: boolean;
   tropeLedgerOn: boolean;
   strategy: Strategy;
@@ -372,7 +374,8 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
     {
       mode: opts.director,
       encoding: opts.encoding,
-      showrunnerTier: 'fast',
+      showrunnerTier: opts.showrunnerTier ?? 'fast',
+      derive: opts.derive,
       maxPrecheckRetries: 2,
       maxRepairRounds: 2,
     },

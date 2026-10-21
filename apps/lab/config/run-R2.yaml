@@ -1,0 +1,23 @@
+# R2：两段式 + 世界状态（RQ1：两段式的作用）（第 7.1 节）
+# 60 批 × 3 画像：pnpm lab run --config apps/lab/config/run-R2.yaml --persona P1
+run_id: r2-60-p1
+director: two-stage
+world_state: true
+trope_ledger: false
+encoding: yaml
+derive: false
+showrunner_tier: fast
+persona: P1
+batches: 60
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+# 词库扩到约 300 条后调回方案默认值（2%/5%），见结果文档偏差 #6
+oov_warn: 0.08
+oov_block: 0.25

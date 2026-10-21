@@ -185,6 +185,7 @@ async function executeRun(
     director: cfg.director,
     encoding: cfg.encoding,
     derive: cfg.derive,
+    showrunnerTier: cfg.showrunner_tier,
     worldState: cfg.world_state,
     tropeLedgerOn: cfg.trope_ledger,
     strategy: cfg.strategy,
@@ -248,7 +249,16 @@ async function cmdRun(): Promise<void> {
   for (const sub of ['batches', 'render', 'cache']) {
     await mkdir(safeChild(outDir, sub, [RUNS_DIR], 'run 子目录'), { recursive: true });
   }
-  const overrides = { batches: argInt('batches', cfg.batches) };
+  // --persona / --batches 覆盖配置文件：R0–R6 每个配置 × 3 个画像共用一份配置
+  const persona = arg('persona');
+  const overrides: Partial<RunConfig> = {
+    batches: argInt('batches', cfg.batches),
+    ...(persona ? { persona: persona as RunConfig['persona'] } : {}),
+  };
+  if (persona && !['P1', 'P2', 'P3'].includes(persona)) {
+    console.error(`--persona 只能是 P1/P2/P3，收到 ${persona}`);
+    process.exit(1);
+  }
   const cfgCopy = { ...cfg, ...overrides };
   await writeValidated(safeChild(outDir, 'config.yaml', [RUNS_DIR], 'config 副本'), [RUNS_DIR], 'config 副本', yamlStringify(cfgCopy));
   await writeValidated(

@@ -166,8 +166,20 @@ pnpm lab judge   apps/lab/runs/smoke-real-20d
 
 ## 7. 后续工作（按优先级）
 
-1. **把「生成后自检」补进导演**：V2 卡在 70%，剩余失败几乎都是「只差一项」的语义错误（气泡超限、新条目提前检测、effect 未引用、pick 缺 feedback）。与其继续加提示词规则，不如在分场编剧后加一次程序化自检 + 定点重写：把校验问题按场景/字段回填给 writer，只重写问题场景。这一步做完再谈 97% 的阈值。
+1. ~~**把「生成后自检」补进导演**~~（提示词 v8 已做）：逐场修复只能定位带 `scene` 的问题；brief 覆盖缺口、新条目提前检测这类批次级问题以前直接放弃。v8 起批次级问题整批重写一次（问题单回填给分场编剧，`maxRewrites` 默认 1），`repair.md` 补上五条硬规则（气泡上限、feedback/reply 必填、evidence 只标检测、effect 必须被引用、新条目只曝光不检测）。
 2. **词库扩到约 300 条**，然后把 `oov_warn`/`oov_block`/`allowedExtraCount` 调回方案值重跑，L3 才有可比性。
 3. **填 `prices.yaml`**，让 K2 从「不可判定」变成真数字；目前 20 批的 token 量（输入 6 895/批、输出 3 083/批）已经足够按单价直接算。
 4. **跑 promptfoo 矩阵**（2 模型 × 5 条样例已配好），把提示词迭代从「一次改一处」变成可对比的实验。
-5. **R0–R6 全量**（7 × 3 × 60 批）：按当前 P50 56s/批估算，单运行 60 批约 1 小时，全量约 20 小时 API 时间，需要分批跑并复用 `runs/<id>/cache` 回放。
+5. **R0–R6 全量**（7 × 3 × 60 批）：配置已就位（`apps/lab/config/run-R0.yaml` … `run-R6.yaml`，60 批、P1），画像用 `--persona P2/P3` 覆盖同一个配置。按当前 P50 56s/批估算，单运行 60 批约 1 小时，全量约 20 小时 API 时间，需要分批跑并复用 `runs/<id>/cache` 回放：
+
+   ```bash
+   for r in R0 R1 R2 R3 R4 R5 R6; do
+     for p in P1 P2 P3; do
+       pnpm lab run --config apps/lab/config/run-$r.yaml --persona $p
+       pnpm lab metrics apps/lab/runs/$(echo $r | tr 'A-Z' 'a-z')-60-$p
+     done
+   done
+   ```
+
+   已核对的开关语义：`world_state: false` 关掉事实/伏笔/摘要/回调四块上下文与 canon 锁定；`trope_ledger: false` 把台账换成「（梗台账关闭）」；`encoding: json` 走 JSON 批次；`showrunner_tier: premium` 只把编剧室换高档、分场仍是快速档；`derive: false` 在校验前剔掉 derive 场景（提示词目前不要求模型写 derive，所以这一项开与关的差别要等提示词加上派生规则后才显现——R5 暂时只有「不剔除」的含义）。
+

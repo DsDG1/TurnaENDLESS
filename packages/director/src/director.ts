@@ -25,6 +25,8 @@ export interface DirectorConfig {
   maxParseRetries?: number;
   /** 批次级问题（定位不到场景）时整批重写的次数（默认 1）。 */
   maxRewrites?: number;
+  /** 是否保留 derive（派生）场景；关闭时校验前剔掉（R5 消融对照）。 */
+  derive?: boolean;
 }
 
 export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
@@ -150,6 +152,17 @@ export class DirectorService {
     return extra;
   }
 
+  /**
+   * 校验入口。derive 关闭时先把 derive 场景剔掉再校验：派生卡是「一稿多卡」的额外产物，
+   * 关掉这个开关的消融运行（R5 对照）不该把它们的证据算进 brief 覆盖。
+   */
+  private validate(text: string, enc: 'yaml' | 'json') {
+    const first = this.deps.validateEs(text, enc);
+    if (this.config.derive || !first.batch || !first.batch.scenes.some((s) => s.type === 'derive')) return first;
+    const stripped = { ...first.batch, scenes: first.batch.scenes.filter((s) => s.type !== 'derive') };
+    return this.deps.validateEs(serializeBatch(stripped, enc), enc);
+  }
+
   private async complete(stage: string, template: string, vars: Record<string, string>, tier: 'fast' | 'premium' = 'fast'): Promise<string> {
     const stageKey = stage as 'showrunner' | 'writer' | 'single' | 'repair';
     const maxTokens = this.config.maxTokensByStage?.[stageKey];
@@ -216,7 +229,7 @@ export class DirectorService {
       learning_checklist: learningChecklist(plan, brief),
     };
     let text = '';
-    let validated = this.deps.validateEs('', enc);
+    let validated = this.validate('', enc);
     let parseRetries = 0;
     // 解析不出批次时，修复循环拿不到场景（badSceneIds 为空），只能整批失败；
     // 给它一次「带着解析错误重写」的机会，能把单个 schema 错误救回来。
@@ -230,7 +243,7 @@ export class DirectorService {
               .map((i) => `- ${i.path ?? ''} ${i.message}`)
               .join('\n')}`;
       text = await this.complete(stage, genTemplate, { ...baseVars, retry_note: note });
-      validated = this.deps.validateEs(text, enc);
+      validated = this.validate(text, enc);
       if (validated.batch || parseRetries >= (this.config.maxParseRetries ?? 1)) break;
       parseRetries++;
     }
@@ -256,7 +269,7 @@ export class DirectorService {
           ...baseVars,
           retry_note: `\n上一批未通过校验，问题如下，请整批重写并逐条避免：\n${problems}`,
         });
-        validated = this.deps.validateEs(text, enc);
+        validated = this.validate(text, enc);
         continue;
       }
       const badScenes = current.scenes.filter((s) => badSceneIds.includes(s.id));
@@ -274,7 +287,7 @@ export class DirectorService {
       const patched = applyScenePatches(current, repairedText);
       if (patched === null) continue; // 修复输出无法解析，进入下一轮
       text = serializeBatch(patched, enc);
-      validated = this.deps.validateEs(text, enc);
+      validated = this.validate(text, enc);
     }
 
     // ---------- 场景丢弃（V4）或整批失败 ----------
