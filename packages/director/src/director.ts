@@ -21,6 +21,8 @@ export interface DirectorConfig {
   maxRepairRounds: number;
   /** 每阶段输出 token 上限。推理模型的思考 token 也计入，写死 4096 会把长输出挤成空串。 */
   maxTokensByStage?: Partial<Record<'showrunner' | 'writer' | 'single' | 'repair', number>>;
+  /** 输出解析失败时「带着错误重写」的次数（默认 1）。修复循环处理不了解析级失败。 */
+  maxParseRetries?: number;
 }
 
 export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
@@ -29,6 +31,7 @@ export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
   showrunnerTier: 'fast',
   maxPrecheckRetries: 2,
   maxRepairRounds: 2,
+  maxParseRetries: 1,
   maxTokensByStage: { showrunner: 2048, writer: 8192, single: 8192, repair: 4096 },
 };
 
@@ -200,20 +203,34 @@ export class DirectorService {
 
     // ---------- 第二步：分场编剧 / 单段 ----------
     const genTemplate = this.config.mode === 'two-stage' ? this.deps.templates.writer : this.deps.templates.single;
-    let text = await this.complete(
-      this.config.mode === 'two-stage' ? 'writer' : 'single',
-      genTemplate,
-      {
-        ...input.vars,
-        batch_id: batchId,
-        channel,
-        brief: briefYaml(brief),
-        plan: plan ? planYaml(plan) : '',
-        learning_checklist: learningChecklist(plan, brief),
-      },
-    );
-
-    let validated = this.deps.validateEs(text, enc);
+    const stage = this.config.mode === 'two-stage' ? 'writer' : 'single';
+    const baseVars = {
+      ...input.vars,
+      batch_id: batchId,
+      channel,
+      brief: briefYaml(brief),
+      plan: plan ? planYaml(plan) : '',
+      learning_checklist: learningChecklist(plan, brief),
+    };
+    let text = '';
+    let validated = this.deps.validateEs('', enc);
+    let parseRetries = 0;
+    // 解析不出批次时，修复循环拿不到场景（badSceneIds 为空），只能整批失败；
+    // 给它一次「带着解析错误重写」的机会，能把单个 schema 错误救回来。
+    for (;;) {
+      const note =
+        parseRetries === 0
+          ? ''
+          : `\n上一次输出无法解析成合法批次，错误如下，请逐条修正后重新输出完整批次：\n${validated.issues
+              .filter((i) => i.level === 'error')
+              .slice(0, 6)
+              .map((i) => `- ${i.path ?? ''} ${i.message}`)
+              .join('\n')}`;
+      text = await this.complete(stage, genTemplate, { ...baseVars, retry_note: note });
+      validated = this.deps.validateEs(text, enc);
+      if (validated.batch || parseRetries >= (this.config.maxParseRetries ?? 1)) break;
+      parseRetries++;
+    }
     let repairRounds = 0;
 
     // ---------- 修复循环（第 5.9.4 节） ----------

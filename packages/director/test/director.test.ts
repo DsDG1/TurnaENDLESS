@@ -119,8 +119,8 @@ function makeValidateEs() {
 const TEMPLATES: PromptTemplates = {
   system: 'SYS',
   showrunner: 'SHOWRUNNER {{brief}} {{retry_note}}',
-  writer: 'WRITER {{plan}}',
-  single: 'SINGLE {{brief}}',
+  writer: 'WRITER {{plan}} {{retry_note}}',
+  single: 'SINGLE {{brief}} {{retry_note}}',
   repair: 'REPAIR {{problems}} {{scenes}}',
   judge: 'JUDGE',
 };
@@ -359,6 +359,37 @@ describe('导演编排（Stub LLM）', () => {
     const out = await svc.generate({ batchId: 'tt-0008', channel: 'duck_detective', brief: BRIEF, ledger: new TropeLedger(), vars: {} });
     expect(out.batchFailed).toBe(true);
     expect(out.calls.find((c) => c.stage === 'writer')?.empty).toBe(true);
+  });
+
+  it('解析失败时带着错误重写一次，而不是直接整批失败', async () => {
+    const { deps, stub } = makeDeps((stage, counters) => {
+      if (stage === 'showrunner') return PLAN_YAML;
+      return (counters.writer ?? 1) === 1 ? '这不是批次：:::' : GOOD_BATCH;
+    });
+    const out = await new DirectorService(deps, config()).generate({
+      batchId: 'tt-0009',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: {},
+    });
+    expect(out.batchFailed).toBe(false);
+    expect(out.calls.filter((c) => c.stage === 'writer')).toHaveLength(2);
+    // 第二次的提示词里要带上一次的解析错误
+    expect(stub.calls.filter((c) => c.stage === 'writer')[1]!.prompt).toContain('无法解析');
+  });
+
+  it('重写次数用尽仍解析失败才整批失败', async () => {
+    const { deps } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : ':::'));
+    const out = await new DirectorService(deps, config({ maxParseRetries: 1 })).generate({
+      batchId: 'tt-0010',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: {},
+    });
+    expect(out.batchFailed).toBe(true);
+    expect(out.calls.filter((c) => c.stage === 'writer')).toHaveLength(2);
   });
 });
 

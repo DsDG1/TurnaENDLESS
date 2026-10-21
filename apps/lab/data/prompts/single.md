@@ -101,6 +101,7 @@ scenes:
 - 台词里的故意矛盾必须对应一个 open_thread；世界状态的改变写进 effects，不要只写在台词里。
 - story 的 ink 只用：knot/stitch、选项、gather、-> 跳转、-> END、访问计数；禁止 VAR、~ 赋值、INCLUDE、隧道、线程、随机 {~ ...}；标签白名单 effect/expr/show/sfx。
 - 每个可检测交互写 `evidence: {item, type}`；有对错的选项恰好一个 correct；声明不得高于推导值。
+- comic 每格最多 2 个气泡（bubbles 超过 2 个是 schema 错误）；每批 3–4 场，不要更多。
 - 场景必填字段一个都不能省：pick 必须有 `feedback: {on_correct, on_wrong}`；hidden_object 必须有 `instruction`、`background`、`spots`；swipe 必须有 `mode` 与 `cards`；comic 必须有 `setting` 与 `panels`。
 - 新条目在本批只能曝光（写进 uses），不得检测。
 - 每句台词不超过 {{max_words_per_line}} 个词；**优先用 [允许词表] 与 brief 里的词**，OOV 超过 5% 会整批阻断。
@@ -108,6 +109,7 @@ scenes:
 - 学习任务必须覆盖 [LearningBrief] 的每个 review 和 expose。
 
 只输出一个 YAML 批次，不要解释，不要用 markdown 代码围栏。
+{{retry_note}}
 
 [频道圣经]
 {{channel_bible}}
