@@ -6,7 +6,15 @@ import type { Strategy } from '@endless/learning';
 import type { PersonaId } from './sim/learner.js';
 
 export interface ModelsConfig {
-  provider: { name: string; base_url: string; api_key_env: string };
+  provider: {
+    name: string;
+    base_url: string;
+    api_key_env: string;
+    /** 推理强度（部分供应商支持 low/medium/high）。推理 token 计入输出上限，长输出任务建议调低。 */
+    reasoning_effort?: string;
+    /** 单次调用超时（毫秒），默认 300000 */
+    timeout_ms?: number;
+  };
   models: { fast: string; premium: string };
 }
 
@@ -14,7 +22,13 @@ export async function loadModelsConfig(path: string): Promise<ModelsConfig> {
   return ModelsConfigSchema.parse(parseYaml(await readFile(path, 'utf8')));
 }
 const ModelsConfigSchema = z.object({
-  provider: z.object({ name: z.string(), base_url: z.string(), api_key_env: z.string() }),
+  provider: z.object({
+    name: z.string(),
+    base_url: z.string(),
+    api_key_env: z.string(),
+    reasoning_effort: z.string().optional(),
+    timeout_ms: z.number().int().positive().max(1_800_000).optional(),
+  }),
   models: z.object({ fast: z.string(), premium: z.string() }),
 });
 

@@ -78,6 +78,8 @@ export interface PipelineOptions {
   briefOverrides?: LearningBrief[];
   /** 冒烟：把 8 个种子条目预置成到期复习 */
   smokeSeed?: boolean;
+  /** 把每次 LLM 调用的耗时/token 打到 stderr（真实跑批时开，测试不开） */
+  verbose?: boolean;
 }
 
 export interface SceneSim {
@@ -331,6 +333,20 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       },
       entityExists: (id) => store.entityExists(id),
       formsOf: (item) => data.lexicon.forms.get(item) ?? [],
+      onCall: opts.verbose
+        ? (rec) => {
+            const secs = (rec.latencyMs / 1000).toFixed(1).padStart(5);
+            const extra = [
+              rec.reasoningTokens ? `think=${rec.reasoningTokens}` : '',
+              rec.finishReason ? `finish=${rec.finishReason}` : '',
+              rec.empty ? '⚠ 空响应' : '',
+              rec.cacheHit ? 'cache' : '',
+            ]
+              .filter(Boolean)
+              .join(' ');
+            process.stderr.write(`[llm] ${rec.stage.padEnd(10)} ${secs}s in=${rec.inputTokens} out=${rec.outputTokens} ${extra}\n`);
+          }
+        : undefined,
     },
     {
       mode: opts.director,
@@ -428,6 +444,29 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         tokensIn: 0,
         tokensOut: 0,
       });
+      // 失败批次也要留证据：没有产物时无法判断是校验太严还是模型输出为空/被截断
+      if (opts.outDir) {
+        const id = String(seq).padStart(4, '0');
+        const batchId = `b-${String(seq).padStart(4, '0')}`;
+        await writeFile(
+          join(opts.outDir, 'batches', `${id}.failed.json`),
+          JSON.stringify(
+            {
+              seq,
+              batchId,
+              batchFailed: true,
+              repairRounds: pending.repairRounds,
+              issues: pending.issues,
+              calls: pending.calls,
+            },
+            null,
+            2,
+          ),
+        );
+        for (const c of pending.calls) {
+          await appendFile(join(opts.outDir, 'calls.jsonl'), `${JSON.stringify({ seq, batchId, failed: true, ...c })}\n`);
+        }
+      }
       return;
     }
     const batch = pending.batch;

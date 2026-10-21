@@ -19,6 +19,8 @@ export interface DirectorConfig {
   showrunnerTier: 'fast' | 'premium';
   maxPrecheckRetries: number;
   maxRepairRounds: number;
+  /** 每阶段输出 token 上限。推理模型的思考 token 也计入，写死 4096 会把长输出挤成空串。 */
+  maxTokensByStage?: Partial<Record<'showrunner' | 'writer' | 'single' | 'repair', number>>;
 }
 
 export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
@@ -27,6 +29,7 @@ export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
   showrunnerTier: 'fast',
   maxPrecheckRetries: 2,
   maxRepairRounds: 2,
+  maxTokensByStage: { showrunner: 2048, writer: 8192, single: 8192, repair: 4096 },
 };
 
 export interface CallRecord {
@@ -36,6 +39,12 @@ export interface CallRecord {
   outputTokens: number;
   cacheHit: boolean;
   requestHash: string;
+  /** 供应商结束原因；缓存命中或未提供时不填 */
+  finishReason?: string;
+  /** 推理模型花在思考上的 token */
+  reasoningTokens?: number;
+  /** 正文为空（少见但会发生：输出上限被思考 token 吃光） */
+  empty?: boolean;
 }
 
 export interface DirectorDeps {
@@ -45,6 +54,8 @@ export interface DirectorDeps {
   validateEs: (text: string, encoding: 'yaml' | 'json') => { ok: boolean; batch?: Batch; issues: ValidationIssue[] };
   entityExists: (id: string) => boolean;
   formsOf: (item: string) => string[];
+  /** 每次 LLM 调用后的回调（进度输出用；不得把 prompt 或 key 写进日志） */
+  onCall?: (rec: CallRecord) => void;
 }
 
 export interface GenerateInput {
@@ -94,14 +105,19 @@ export class DirectorService {
 
   private callLog: CallRecord[] = [];
   private record(stage: string, res: LlmResponse): void {
-    this.callLog.push({
+    const rec: CallRecord = {
       stage,
       latencyMs: res.latencyMs,
       inputTokens: res.usage.inputTokens,
       outputTokens: res.usage.outputTokens,
       cacheHit: res.cacheHit,
       requestHash: res.requestHash,
-    });
+      finishReason: res.finishReason,
+      reasoningTokens: res.reasoningTokens,
+      empty: res.text.trim() === '',
+    };
+    this.callLog.push(rec);
+    this.deps.onCall?.(rec);
   }
 
   private vars(extra: Record<string, string>): Record<string, string> {
@@ -109,12 +125,15 @@ export class DirectorService {
   }
 
   private async complete(stage: string, template: string, vars: Record<string, string>, tier: 'fast' | 'premium' = 'fast'): Promise<string> {
+    const stageKey = stage as 'showrunner' | 'writer' | 'single' | 'repair';
+    const maxTokens = this.config.maxTokensByStage?.[stageKey];
     const res = await this.deps.llm.complete({
       stage,
       system: this.deps.templates.system,
       prompt: renderTemplate(template, this.vars(vars)),
       modelTier: tier,
       temperature: stage === 'showrunner' ? 1.0 : 0.8,
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
     });
     this.record(stage, res);
     return res.text;
