@@ -37,7 +37,9 @@ export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
   maxRepairRounds: 2,
   maxParseRetries: 1,
   maxRewrites: 1,
-  maxTokensByStage: { showrunner: 2048, writer: 8192, single: 8192, repair: 4096 },
+  // 编剧室输出是计划（logline/节拍/卡司），正文不长，但思考 token 也计入：
+  // 2048 时实测出现过 think=2047 finish=length 的空响应（20g 第 9 批，靠重试救回）。
+  maxTokensByStage: { showrunner: 4096, writer: 8192, single: 8192, repair: 4096 },
 };
 
 export interface CallRecord {
@@ -126,10 +128,21 @@ function learningChecklist(plan: Plan | undefined, brief: LearningBrief): string
 }
 
 export class DirectorService {
-  constructor(
-    private deps: DirectorDeps,
-    private config: DirectorConfig = DEFAULT_DIRECTOR_CONFIG,
-  ) {}
+  private readonly config: DirectorConfig;
+
+  /**
+   * 只传部分字段时用默认值补齐（深合并 maxTokensByStage）。
+   * 之前直接把调用方传的对象当配置用，导致 lab 侧不传 maxTokensByStage 时
+   * 每阶段上限全落回 LLM 客户端的 4096：推理模型的思考 token 一多，长批次就被截断成
+   * finish=length（20 批冒烟里 2 批整批失败即此因）。
+   */
+  constructor(private deps: DirectorDeps, config: Partial<DirectorConfig> = {}) {
+    this.config = {
+      ...DEFAULT_DIRECTOR_CONFIG,
+      ...config,
+      maxTokensByStage: { ...DEFAULT_DIRECTOR_CONFIG.maxTokensByStage, ...config.maxTokensByStage },
+    };
+  }
 
   private callLog: CallRecord[] = [];
   private record(stage: string, res: LlmResponse): void {

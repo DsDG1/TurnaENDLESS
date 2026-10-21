@@ -18,21 +18,31 @@ description: 'ENDLESS ESL 回归（exp-00 Day 8：提示词 × 模型）'
 prompts:
   - file://../data/prompts/single.md
 
+# providers 走自定义 provider（provider.js）：直连 MiniMax 的 OpenAI 兼容端点，按 lab 的
+# 方式带 reasoning_effort: low。0.124 的 `openai:chat:` provider 不透传该参数，8192 的
+# 上限会被思考 token 吃光（10 条用例全 finish=length），适配差异挡在矩阵之外。
+# 若换回官方 OpenAI 端点，把 id 改回 `openai:chat:<model>` 并删掉 reasoning_effort 即可。
 providers:
-  - id: openai-compatible:MiniMax-M3.1-Flash
+  - id: file://provider.js
     label: fast/MiniMax-M3.1-Flash
     config:
-      apiBaseUrl: https://api.minimax.cn/v1
-      apiKeyEnvar: ENDLESS_API_KEY
+      model: MiniMax-M3.1-Flash
+      base_url: https://api.minimax.cn/v1
+      api_key_env: ENDLESS_API_KEY
       temperature: 0.8
       max_tokens: 8192
-  - id: openai-compatible:MiniMax-M3
+      reasoning_effort: low
+  - id: file://provider.js
     label: premium/MiniMax-M3
     config:
-      apiBaseUrl: https://api.minimax.cn/v1
-      apiKeyEnvar: ENDLESS_API_KEY
+      model: MiniMax-M3
+      base_url: https://api.minimax.cn/v1
+      api_key_env: ENDLESS_API_KEY
       temperature: 0.8
       max_tokens: 8192
+      reasoning_effort: low
+      # M3 把思考内联进 content，只能整段关掉，否则 5/5 条都是 E-PARSE
+      thinking: disabled
 
 defaultTest:
   assert:
@@ -48,9 +58,16 @@ defaultTest:
     open_threads: '（无）'
     recent_summary: '（暂无摘要）'
     char_specs: |
-      duck: {role: 侦探, tone: 冷面, sentence: 短句}
-      cat: {role: 助手, tone: 话多, sentence: 中句}
-    asset_tags: 'duck, cat, moon, shopkeeper, hat, sofa, table, key, box, door, cafe, office, street'
+      duck: {role: 侦探, tone: 冷面, sentence: 短句, base: '@emoji:duck', expr: [neutral, happy, suspicious, smug, nervous, shocked, sad], hat: [none, detective, crown, chef], props_allowed: [magnifying_glass, notebook, coffee]}
+      cat: {role: 邻居, tone: 话多, sentence: 中句, base: '@emoji:cat', expr: [neutral, happy, suspicious, nervous, sweating, shocked, sad], hat: [none, crown, cap], props_allowed: [sock, cheese]}
+      moon: {role: 委托人, tone: 自恋, sentence: 中句, base: '@emoji:moon', expr: [neutral, happy, vain, sad, shocked, suspicious], hat: [none, crown, top], props_allowed: [top_hat, mirror]}
+      shopkeeper: {role: 店主, tone: 面无表情, sentence: 短句, base: '@emoji:badger', expr: [neutral, happy, polite, suspicious, nervous, shocked], hat: [none, cap], props_allowed: [price_tag, notebook, shopping_cart]}
+      delivery_mouse: {role: 送货员, tone: 慌张, sentence: 短句, base: '@emoji:mouse', expr: [neutral, tired, nervous, shocked, happy], hat: [none, cap], props_allowed: [box, envelope, watch]}
+    # 必须是 data/assets/manifest.yaml 里真实存在的背景标签与 emoji 名：
+    # 背景只有 6 个（agency_office/living_room/rooftop/shop_counter/stockroom/shop_window），
+    # `@tag:street` 这种写不存在的标签会直接 E-ASSET-MISSING；`hat` 是 tag 不是 emoji 名，
+    # 要用 top_hat / cap / crown。
+    asset_tags: 'agency_office, living_room, rooftop, shop_counter, stockroom, shop_window, duck, cat, moon, badger, mouse, person, top_hat, cap, crown, sock, key, box, bag, umbrella, magnifying_glass, notebook, coffee, coin, money_bag, cheese, price_tag, shopping_cart, door, sofa, table, lamp, mirror, newspaper, envelope, watch, plant, clock'
     max_words_per_line: '9'
 
 tests:
@@ -59,7 +76,7 @@ tests:
       channel: duck_detective
       channel_bible: |
         频道：鸭子侦探社（duck_detective）。单元剧，每批一个小案子，结尾留一个钩子。
-        固定角色：duck（侦探）、cat（助手）。常驻地点：agency 办公室、street。
+        固定角色：duck（侦探）、cat（邻居）、moon（委托人）。常驻地点：agency_office、living_room、rooftop。
         语气：冷面幽默，台词短。禁止血腥与说教。
       brief: |
         brief: lb-0001
@@ -78,7 +95,7 @@ tests:
       channel: duck_detective
       channel_bible: |
         频道：鸭子侦探社（duck_detective）。单元剧，每批一个小案子，结尾留一个钩子。
-        固定角色：duck（侦探）、cat（助手）。常驻地点：agency 办公室、street。
+        固定角色：duck（侦探）、cat（邻居）、moon（委托人）。常驻地点：agency_office、living_room、rooftop。
         语气：冷面幽默，台词短。禁止血腥与说教。
       brief: |
         brief: lb-0002
@@ -96,7 +113,7 @@ tests:
       channel: impossible_store
       channel_bible: |
         频道：不可能商店（impossible_store）。每批一个「卖不可能之物」的顾客。
-        固定角色：shopkeeper（店主）、delivery_mouse（送货鼠）。地点：store。
+        固定角色：shopkeeper（店主）、delivery_mouse（送货鼠）。地点：shop_counter、stockroom、shop_window。
         语气：荒诞、礼貌、面无表情。价格永远离谱。
       brief: |
         brief: lb-0003
@@ -115,7 +132,7 @@ tests:
       channel: impossible_store
       channel_bible: |
         频道：不可能商店（impossible_store）。每批一个「卖不可能之物」的顾客。
-        固定角色：shopkeeper（店主）、delivery_mouse（送货鼠）。地点：store。
+        固定角色：shopkeeper（店主）、delivery_mouse（送货鼠）。地点：shop_counter、stockroom、shop_window。
         语气：荒诞、礼貌、面无表情。价格永远离谱。
       brief: |
         brief: lb-0004
@@ -131,7 +148,7 @@ tests:
     vars:
       channel: improv
       channel_bible: |
-        频道：即兴（improv）。没有固定角色，每批换一个日常场景（咖啡馆、地铁、睡前）。
+        频道：即兴（improv）。没有固定角色，每批换一个日常场景（living_room、rooftop、shop_window）。
         语气：生活化、轻喜剧。画面用 emoji 与素材标签表达。
       brief: |
         brief: lb-0005

@@ -14,13 +14,13 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 - 导演：上下文组装器（分块 token 预算）、梗台账、两段式/单段编排、修复循环、LLM 接入（AI SDK）+ 请求哈希缓存 + Stub 模式（Day 6）
 - 实验 CLI：run / render / metrics / replay / judge / srs-sim / buffer-sim / check / smoke / assert / freeze；学习者模拟器三画像；缓冲模拟；Critic 程序指标；5 批端到端冒烟通过（Day 7）
 - 提示词冻结纪律落地：`lab freeze` 写 `data/prompts/FROZEN`，`lab check` 与 `lab run` 检测漂移（Day 8）
-- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟 14/20 通过（V2 70%），数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
+- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟 18/20 通过（V2 90%，v8 + 生成后自检），数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
 
 ## 快速开始
 
 ```bash
 pnpm install
-pnpm test            # 全部 132 个测试（esl 61 / world 12 / learning 18 / director 19 / lab 22）
+pnpm test            # 全部 141 个测试（esl 66 / world 12 / learning 18 / director 23 / lab 22）
 pnpm lab check       # 校验全部数据文件 + 提示词冻结漂移（Day 1–2 完成标志）
 pnpm lab smoke       # Stub 导演 5 批端到端冒烟（无需 API key）
 pnpm lab freeze      # 冻结当前提示词（默认 v1，之后版本自动递增）

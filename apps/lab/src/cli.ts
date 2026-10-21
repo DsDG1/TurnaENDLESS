@@ -386,8 +386,17 @@ async function cmdJudge(): Promise<void> {
 }
 
 async function cmdAssert(): Promise<void> {
-  // promptfoo 断言入口：校验一段 ESL 文本（文件或 stdin），通过退出码 0，否则 1
+  // promptfoo 断言入口：校验一段 ESL 文本（文件或 stdin），通过退出码 0，否则 1。
+  // 阈值与 allowed_extra 可用参数覆盖：矩阵要按运行配置（run-*.yaml 的 oov_warn/oov_block）
+  // 判，否则默认 2%/5% 会把「批本身合规、只是词表比流水线窄」的批次误判成失败。
   const file = arg('file');
+  const oovWarn = Number(arg('oov-warn', '0.02'));
+  const oovBlock = Number(arg('oov-block', '0.05'));
+  const maxWords = Number(arg('max-words', '12'));
+  const allowedExtra = (arg('allowed-extra', '') ?? '')
+    .split(',')
+    .map((w) => w.trim().toLowerCase())
+    .filter(Boolean);
   const text = file
     ? await (await import('./safepath.js')).readValidated(repoPath(file), [REPO_ROOT], '--file')
     : await new Promise<string>((resolveStdin) => {
@@ -405,8 +414,9 @@ async function cmdAssert(): Promise<void> {
   const properNouns = [...data.channels.values()].flatMap((b) => [...b.cast.map((c) => c.id), ...b.locations]);
   const allowed = new Set<string>([...data.lexicon.functionWords, ...properNouns.map((n) => n.toLowerCase())]);
   for (const forms of data.lexicon.forms.values()) for (const f of forms) allowed.add(f);
+  for (const w of allowedExtra) allowed.add(w);
   const report = validateBatch(parsed.batch, {
-    vocab: { allowedForms: allowed, oovWarn: 0.02, oovBlock: 0.05, maxWordsPerLine: 12 },
+    vocab: { allowedForms: allowed, oovWarn, oovBlock, maxWordsPerLine: maxWords },
     lexicon: { formsOf: (i) => data.lexicon.forms.get(i), confusables: (i) => data.lexicon.entries.get(i)?.confusables ?? [] },
     assets: data.assetCatalog,
     entities: { exists: () => true },

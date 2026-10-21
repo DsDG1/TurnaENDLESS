@@ -9,6 +9,7 @@ import { mkdir, appendFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { stringify as yamlStringify } from 'yaml';
 import {
+  autoFixBatch,
   compileBatch,
   parseBatch,
   validateBatch,
@@ -351,8 +352,14 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         // 必须用「本批」的 brief：briefFor 只覆盖 stub 的固定 brief，真实跑批的 brief 在 generateSlot 里
         // 由规划器生成并放进 briefs；漏掉它会让 OOV/覆盖率/防启动都按错误的词表判定
         const brief = briefs.get(seqCounter);
-        const report = validateBatch(parsed.batch, buildCtx(brief, parsed.batch.channel, cardsConsumed));
-        return { ok: report.ok, batch: parsed.batch, issues: report.issues };
+        const ctx = buildCtx(brief, parsed.batch.channel, cardsConsumed);
+        // 程序化自检：先做「删声明」的机械修复，再校验。修完还错才进修复循环。
+        const fixed = autoFixBatch(parsed.batch, ctx);
+        if (fixed.fixes.length > 0) {
+          for (const f of fixed.fixes) process.stderr.write(`[autofix] ${f}\n`);
+        }
+        const report = validateBatch(fixed.batch, ctx);
+        return { ok: report.ok, batch: fixed.batch, issues: report.issues };
       },
       entityExists: (id) => store.entityExists(id),
       formsOf: (item) => data.lexicon.forms.get(item) ?? [],

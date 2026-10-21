@@ -378,6 +378,16 @@ describe('导演编排（Stub LLM）', () => {
     ]);
   });
 
+  it('只传部分配置时按阶段上限补默认值（不传 maxTokensByStage 也要拿到 8192 的分场上限）', async () => {
+    const { deps, stub } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : GOOD_BATCH));
+    const svc = new DirectorService(deps, { mode: 'two-stage', encoding: 'yaml', maxPrecheckRetries: 2, maxRepairRounds: 2 });
+    await svc.generate({ batchId: 'tt-0007b', channel: 'duck_detective', brief: BRIEF, ledger: new TropeLedger(), vars: {} });
+    expect(stub.calls.map((c) => [c.stage, c.maxTokens])).toEqual([
+      ['showrunner', 4096],
+      ['writer', 8192],
+    ]);
+  });
+
   it('调用记录带上空响应标记（正文被思考 token 吃光时能定位）', async () => {
     const { deps } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : ''));
     const svc = new DirectorService(deps, config());
