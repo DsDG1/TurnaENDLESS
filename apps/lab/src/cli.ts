@@ -160,7 +160,7 @@ async function executeRun(
   runRoot: string,
   readOnlyCache: boolean,
   overrides: Partial<RunConfig> = {},
-): Promise<RunResult> {
+): Promise<RunResult & { metricsWritten: boolean }> {
   const cfg = { ...(await loadRunConfig(configPath)), ...overrides };
   const data = await loadLabData(DATA_DIR);
   // run_id 来自配置文件，视为不受信输入：解析后必须仍在 runs/ 内
@@ -211,8 +211,18 @@ async function executeRun(
     const prevText = await readFile(safeChild(outDir, 'metrics.json', [RUNS_DIR], 'metrics'), 'utf8').catch(() => null);
     if (prevText) {
       try {
-        const prev = JSON.parse(prevText) as { cost?: unknown };
+        const prev = JSON.parse(prevText) as { cost?: unknown; batches?: number };
         if (prev.cost) Object.assign(metrics, { cost: prev.cost });
+        // 代码改动会改变请求哈希（例如分阶段输出上限），缓存不再命中 → 回放整批失败。
+        // 这种情况绝不能把原来那份真实指标覆盖成 0，否则一次 `lab metrics` 就抹掉整轮数据。
+        if (result.totals.batchesOk === 0 && (prev.batches ?? 0) > 0) {
+          console.error(
+            `回放没有通过任何批次（代码已改动，请求哈希与缓存不再匹配）：保留原 metrics.json（${prev.batches} 批）不覆盖。`,
+          );
+          console.error('需要重算指标时请用产生该运行的代码版本回放，或重跑一次。');
+          store.close();
+          return { ...result, metricsWritten: false };
+        }
       } catch {
         // 旧指标文件损坏：保留本次回放结果即可
       }
@@ -221,7 +231,7 @@ async function executeRun(
   await writeValidated(safeChild(outDir, 'metrics.json', [RUNS_DIR], 'metrics'), [RUNS_DIR], 'metrics', JSON.stringify(metrics, null, 2));
   await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'report'), [RUNS_DIR], 'report', metricsMarkdown(metrics));
   store.close();
-  return result;
+  return { ...result, metricsWritten: true };
 }
 
 async function cmdRun(): Promise<void> {
@@ -281,6 +291,11 @@ async function cmdReplay(): Promise<void> {
   const safeRun = safePath(repoPath(runDir), [RUNS_DIR], 'runDir');
   const configPath = safeChild(safeRun, 'config.yaml', [RUNS_DIR], 'run 配置');
   const result = await executeRun(configPath, RUNS_DIR, true);
+  if (result.totals.batchesOk === 0) {
+    console.error(`回放没有通过任何批次（0/${result.records.length}）：当前代码的请求哈希与该次运行的缓存不匹配。`);
+    process.exitCode = 1;
+    return;
+  }
   console.log(`回放完成：${result.totals.batchesOk}/${result.records.length} 批（全部命中响应缓存）`);
 }
 
@@ -292,7 +307,12 @@ async function cmdMetrics(): Promise<void> {
   }
   const safeRun = safePath(repoPath(runDir), [RUNS_DIR], 'runDir');
   const configPath = safeChild(safeRun, 'config.yaml', [RUNS_DIR], 'run 配置');
-  await executeRun(configPath, RUNS_DIR, true);
+  const result = await executeRun(configPath, RUNS_DIR, true);
+  if (!result.metricsWritten) {
+    console.error('回放未通过任何批次：已保留原 metrics.json 与 report.md（原因见上）。');
+    process.exitCode = 1;
+    return;
+  }
   console.log(`指标已写入 ${safeChild(safeRun, 'metrics.json', [RUNS_DIR], 'metrics')} 与 report.md`);
 }
 

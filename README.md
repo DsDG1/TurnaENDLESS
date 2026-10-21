@@ -14,7 +14,9 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 - 导演：上下文组装器（分块 token 预算）、梗台账、两段式/单段编排、修复循环、LLM 接入（AI SDK）+ 请求哈希缓存 + Stub 模式（Day 6）
 - 实验 CLI：run / render / metrics / replay / judge / srs-sim / buffer-sim / check / smoke / assert / freeze；学习者模拟器三画像；缓冲模拟；Critic 程序指标；5 批端到端冒烟通过（Day 7）
 - 提示词冻结纪律落地：`lab freeze` 写 `data/prompts/FROZEN`，`lab check` 与 `lab run` 检测漂移（Day 8）
-- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟 18/20 通过（V2 90%，v8 + 生成后自检），数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
+- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟最佳 19/20 通过（V2 95%，v8 + autofix + 分阶段输出上限），首轮合规率 35% → 修复后 95%，数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
+- 机械修正层 `autoFixBatch`：校验前先修三类「声明与实际不符」（`uses` 不在文本、无人引用的 `effect`、曝光不足就检测），20 批里救回 3 批（15/20 → 18/20）（Day 8）
+- promptfoo 回归矩阵：2 模型 × 5 条样例，首轮单次生成合规率 3/10，适配层两个坑（`reasoning_effort` 不透传、M3 把思考内联进 `content`）已固化进自定义 provider（Day 8）
 
 ## 快速开始
 
