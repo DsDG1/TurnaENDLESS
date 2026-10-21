@@ -1,47 +1,147 @@
-# promptfoo 回归矩阵骨架（实验方案第 8 节 Day 8）：
-# 「提示词 × 模型」小矩阵，每格 20 批；断言直接调用 packages/esl 的校验器
-# （通过 `pnpm lab:assert` 读取模型输出并校验，退出码即判定）。
+# promptfoo 回归矩阵（实验方案第 8 节 Day 8）：「提示词 × 模型」小矩阵。
+#
+# 断言不重写规则，直接调用 packages/esl 的校验器：assertions/esl-assert.js 把模型输出
+# 通过 stdin 交给 `pnpm lab assert`，退出码非 0 即判失败（见该文件顶部说明）。
 #
 # 使用：
-#   1. npm i -g promptfoo（或在仓库内 pnpm add -D -w promptfoo）
-#   2. 设置供应商与模型（config/models.yaml 与环境变量 ENDLESS_API_KEY）
+#   1. npm i -g promptfoo
+#   2. $env:ENDLESS_API_KEY = "..."   # 变量名与 config/models.yaml 的 api_key_env 一致
 #   3. cd apps/lab/promptfoo && promptfoo eval
+#   4. promptfoo view
 #
-# 说明：providers 用 OpenAI 兼容端点；prompts 直接引用 data/prompts/single.md 的内容
-# 由 promptfoo 变量注入（vars 提供频道圣经/brief 等占位符的样例）。
+# 矩阵扩法：往 prompts 里加提示词文件、往 providers 里加模型（同一模型要不同 label 时
+# 用 `label:` 区分），tests 里的每条 = 一批的上下文样例。正式矩阵「每格 20 批」时把
+# tests 扩到 20 条（或从 runs/<run_id>/batches 里抽真实上下文回填 vars）。
 
-description: 'ENDLESS ESL 回归（exp-00 Day 8）'
+description: 'ENDLESS ESL 回归（exp-00 Day 8：提示词 × 模型）'
+
+prompts:
+  - file://../data/prompts/single.md
 
 providers:
-  - id: openai-compatible:{{fast_model}}
+  - id: openai-compatible:MiniMax-M3.1-Flash
+    label: fast/MiniMax-M3.1-Flash
     config:
-      apiBaseUrl: '{{base_url}}'
+      apiBaseUrl: https://api.minimax.cn/v1
       apiKeyEnvar: ENDLESS_API_KEY
-  - id: openai-compatible:{{premium_model}}
+      temperature: 0.8
+      max_tokens: 8192
+  - id: openai-compatible:MiniMax-M3
+    label: premium/MiniMax-M3
     config:
-      apiBaseUrl: '{{base_url}}'
+      apiBaseUrl: https://api.minimax.cn/v1
       apiKeyEnvar: ENDLESS_API_KEY
-
-prompts: ['../data/prompts/single.md']
+      temperature: 0.8
+      max_tokens: 8192
 
 defaultTest:
   assert:
-    - type: exec
-      value: 'pnpm --dir ../.. lab:assert --file ../runs/promptfoo-latest.txt'
+    - type: javascript
+      value: file://esl-assert.js
   vars:
-    # 变量样例按 data/prompts/single.md 的占位符提供；正式跑批前替换为真实上下文
-    channel: duck_detective
+    # single.md 的占位符：全部要给值，否则模型会照着占位符抄
+    learner_profile: |
+      P1「通勤刷手机」：A1，喜欢悬疑和冷幽默，讨厌说教；每天 12 分钟，一次连续刷 8–12 张。
+    trope_ledger: '（空：本次是冷启动，没有任何梗用过）'
+    feedback: '（暂无：第一批）'
+    callback: 'null（本批是第一频道的第一批，没有可回调的候选）'
+    open_threads: '（无）'
+    recent_summary: '（暂无摘要）'
+    char_specs: |
+      duck: {role: 侦探, tone: 冷面, sentence: 短句}
+      cat: {role: 助手, tone: 话多, sentence: 中句}
+    asset_tags: 'duck, cat, moon, shopkeeper, hat, sofa, table, key, box, door, cafe, office, street'
+    max_words_per_line: '9'
 
 tests:
-  - description: '基准批次（duck_detective / A1）'
+  - description: 'duck_detective / A1 / 位置介词暴露'
     vars:
+      channel: duck_detective
+      channel_bible: |
+        频道：鸭子侦探社（duck_detective）。单元剧，每批一个小案子，结尾留一个钩子。
+        固定角色：duck（侦探）、cat（助手）。常驻地点：agency 办公室、street。
+        语气：冷面幽默，台词短。禁止血腥与说教。
       brief: |
         brief: lb-0001
-        level: A1+
+        level: A1
         introduce: []
-        expose: [{item: lx:behind#prep.location, exposures_so_far: 0, need: 2}]
-        review: [{item: ck:where-is, facet: meaning, min_evidence: recognition-4}]
-        vocab: {allowed_extra: [hat, table, door], max_words_per_line: 12, oov_budget: 0.02}
+        expose:
+          - {item: 'lx:behind#prep.location', exposures_so_far: 0, need: 2}
+          - {item: 'lx:under#prep.location', exposures_so_far: 0, need: 2}
+        review: []
+        vocab: {allowed_extra: [hat, table, door, clue], max_words_per_line: 9, oov_budget: 0.02}
+        avoid_before_test: []
+      cast_facts: 'duck role detective (canon)；cat role assistant (canon)'
+      allowed_extra: 'hat, table, door, clue'
+  - description: 'duck_detective / A1 / 到期复习（ck:where-is）'
+    vars:
+      channel: duck_detective
+      channel_bible: |
+        频道：鸭子侦探社（duck_detective）。单元剧，每批一个小案子，结尾留一个钩子。
+        固定角色：duck（侦探）、cat（助手）。常驻地点：agency 办公室、street。
+        语气：冷面幽默，台词短。禁止血腥与说教。
+      brief: |
+        brief: lb-0002
+        level: A1
+        introduce: []
+        expose: [{item: 'lx:key#n.opener', exposures_so_far: 1, need: 2}]
+        review: [{item: 'ck:where-is', facet: meaning, min_evidence: recognition-4}]
+        vocab: {allowed_extra: [hat, table, door, key], max_words_per_line: 9, oov_budget: 0.02}
         avoid_before_test: [where is, where's, where are]
-      cast_facts: 'duck role detective (canon)'
-      allowed_extra: 'hat, table, door'
+      cast_facts: 'duck role detective (canon)；cat role assistant (canon)'
+      allowed_extra: 'hat, table, door, key'
+      open_threads: 't-clue：谁拿走了钥匙（优先级 2）'
+  - description: 'impossible_store / A1 / 价格词块'
+    vars:
+      channel: impossible_store
+      channel_bible: |
+        频道：不可能商店（impossible_store）。每批一个「卖不可能之物」的顾客。
+        固定角色：shopkeeper（店主）、delivery_mouse（送货鼠）。地点：store。
+        语气：荒诞、礼貌、面无表情。价格永远离谱。
+      brief: |
+        brief: lb-0003
+        level: A1
+        introduce: []
+        expose:
+          - {item: 'ck:how-much', exposures_so_far: 0, need: 2}
+          - {item: 'lx:expensive#adj.costly', exposures_so_far: 0, need: 2}
+        review: []
+        vocab: {allowed_extra: [price, money, coin, hat], max_words_per_line: 9, oov_budget: 0.02}
+        avoid_before_test: []
+      cast_facts: 'shopkeeper role owner (canon)；delivery_mouse role courier (canon)'
+      allowed_extra: 'price, money, coin, hat'
+  - description: 'impossible_store / A2 / 到期复习（ck:how-much）'
+    vars:
+      channel: impossible_store
+      channel_bible: |
+        频道：不可能商店（impossible_store）。每批一个「卖不可能之物」的顾客。
+        固定角色：shopkeeper（店主）、delivery_mouse（送货鼠）。地点：store。
+        语气：荒诞、礼貌、面无表情。价格永远离谱。
+      brief: |
+        brief: lb-0004
+        level: A2
+        introduce: [{item: 'lx:borrow#v.take-temporarily'}]
+        expose: [{item: 'lx:cheap#adj.inexpensive', exposures_so_far: 1, need: 2}]
+        review: [{item: 'ck:how-much', facet: meaning, min_evidence: recognition-4}]
+        vocab: {allowed_extra: [price, money, umbrella, box], max_words_per_line: 10, oov_budget: 0.02}
+        avoid_before_test: [how much, how many]
+      cast_facts: 'shopkeeper role owner (canon)；delivery_mouse role courier (canon)'
+      allowed_extra: 'price, money, umbrella, box'
+  - description: 'improv / A1 / 纯暴露（无检测）'
+    vars:
+      channel: improv
+      channel_bible: |
+        频道：即兴（improv）。没有固定角色，每批换一个日常场景（咖啡馆、地铁、睡前）。
+        语气：生活化、轻喜剧。画面用 emoji 与素材标签表达。
+      brief: |
+        brief: lb-0005
+        level: A1
+        introduce: []
+        expose:
+          - {item: 'ck:can-you', exposures_so_far: 0, need: 2}
+          - {item: 'ck:do-you-have', exposures_so_far: 0, need: 2}
+        review: []
+        vocab: {allowed_extra: [hat, sofa, table, moon], max_words_per_line: 9, oov_budget: 0.02}
+        avoid_before_test: []
+      cast_facts: '（无固定角色：本频道每批自选日常场景）'
+      allowed_extra: 'hat, sofa, table, moon'

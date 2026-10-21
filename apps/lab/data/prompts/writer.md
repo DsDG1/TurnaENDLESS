@@ -106,6 +106,7 @@ scenes:
 - 台词里的故意矛盾必须对应一个 open_thread；世界状态的改变写进 effects，不要只写在台词里。
 - story 的 ink 只用：knot/stitch、选项、gather、-> 跳转、-> END、访问计数；禁止 VAR、~ 赋值、INCLUDE、隧道、线程、随机 {~ ...}；标签白名单 effect/expr/show/sfx。
 - 每个可检测交互写 `evidence: {item, type}`；有对错的选项恰好一个 correct；声明的证据类型不得高于推导值（production > recognition-4 = listening-4 > recognition-2）。
+- 场景必填字段一个都不能省：pick 必须有 `feedback: {on_correct, on_wrong}`；hidden_object 必须有 `instruction`、`background`、`spots`；swipe 必须有 `mode` 与 `cards`；comic 必须有 `setting` 与 `panels`。
 - 新条目在本批只能曝光（写进 uses），不得检测。
 - 每句台词不超过 {{max_words_per_line}} 个词；**优先用 [允许词表] 与 brief 里的词**，OOV 超过 5% 会整批阻断。
 - 到期复习条目在检测场景之前不得出现（avoid_before_test）。
@@ -114,6 +115,9 @@ scenes:
 
 [编剧室方案]
 {{plan}}
+
+[本批学习任务（逐条落实，缺一条整批不通过）]
+{{learning_checklist}}
 
 [本批角色事实]
 {{cast_facts}}

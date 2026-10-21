@@ -97,6 +97,26 @@ const briefCoverageOk = (batch: Batch, brief: LearningBrief): boolean => {
   return true;
 };
 
+/** 把学习任务变成逐条可执行的清单：编剧室方案里的 learning_placement 常被分场编剧忽略。 */
+function learningChecklist(plan: Plan | undefined, brief: LearningBrief): string {
+  const lines: string[] = [];
+  if (plan && plan.learning_placement.length > 0) {
+    for (const p of plan.learning_placement) {
+      const beat = plan.beats.find((b) => b.n === p.beat);
+      const where = `第 ${p.beat} 场${beat ? `（${beat.scene}）` : ''}`;
+      lines.push(
+        p.as === 'exposure'
+          ? `- ${p.item}：${where} 只曝光 → 把 ${p.item} 写进该场景的 uses，不要写 evidence`
+          : `- ${p.item}：${where} 检测 → 写 evidence: {item: ${p.item}, type: ${p.as}}`,
+      );
+    }
+    return lines.join('\n');
+  }
+  for (const e of brief.expose) lines.push(`- ${e.item}：曝光 → 写进某个场景的 uses，不要写 evidence`);
+  for (const r of brief.review) lines.push(`- ${r.item}：检测 → 写 evidence: {item: ${r.item}, type: ${r.min_evidence}}`);
+  return lines.length > 0 ? lines.join('\n') : '（本批没有学习任务）';
+}
+
 export class DirectorService {
   constructor(
     private deps: DirectorDeps,
@@ -189,6 +209,7 @@ export class DirectorService {
         channel,
         brief: briefYaml(brief),
         plan: plan ? planYaml(plan) : '',
+        learning_checklist: learningChecklist(plan, brief),
       },
     );
 

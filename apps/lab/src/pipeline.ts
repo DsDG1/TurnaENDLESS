@@ -346,7 +346,9 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       validateEs: (text, encoding) => {
         const parsed = parseBatch(text, encoding);
         if (!parsed.ok) return { ok: false, issues: parsed.issues };
-        const brief = briefFor(seqCounter);
+        // 必须用「本批」的 brief：briefFor 只覆盖 stub 的固定 brief，真实跑批的 brief 在 generateSlot 里
+        // 由规划器生成并放进 briefs；漏掉它会让 OOV/覆盖率/防启动都按错误的词表判定
+        const brief = briefs.get(seqCounter);
         const report = validateBatch(parsed.batch, buildCtx(brief, parsed.batch.channel, cardsConsumed));
         return { ok: report.ok, batch: parsed.batch, issues: report.issues };
       },
@@ -511,7 +513,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       return;
     }
     const batch = pending.batch;
-    const brief = opts.briefOverrides?.[seq - 1];
+    const brief = briefs.get(seq);
     const day = studyDayOf(cardsConsumed);
     const now = new Date(BASE_DATE.getTime() + day * 86_400_000);
 
@@ -725,7 +727,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
     // 第 4.2 节：已生成的批次与新世界状态冲突 → 重校验；只有状态检查失败才重生成
     let v5Regenerated = false;
     if (opts.worldState && !pending.batchFailed && pending.worldVersionAtGen !== worldVersion) {
-      const brief = opts.briefOverrides?.[pending.seq - 1];
+      const brief = briefs.get(pending.seq);
       const recheck = validateBatch(pending.batch, buildCtx(brief, pending.batch.channel, cardsConsumed));
       const stateFail = recheck.issues.some((x) => x.level === 'error' && stateErrorCodes.has(x.code));
       if (stateFail) {
