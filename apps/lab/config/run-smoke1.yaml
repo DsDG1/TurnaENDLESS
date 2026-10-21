@@ -1,0 +1,17 @@
+# 真实模型连通性探针：只跑 1 批，验证「一次完整导演循环」在真实供应商下能走通。
+# 通过后再跑 run-smoke20.yaml（20 批）；本配置保留为排障用。
+run_id: smoke-real-01
+director: two-stage
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast
+persona: P1
+batches: 1
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights: {duck_detective: 0.5, impossible_store: 0.3, improv: 0.2}

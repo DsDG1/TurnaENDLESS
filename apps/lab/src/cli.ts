@@ -3,14 +3,14 @@
  * 子命令：check / smoke / run / render / metrics / replay / srs-sim / buffer-sim
  * 用户传入或来自配置文件的路径一律经 safePath / safeChild / readValidated / writeValidated 守卫。
  */
-import { mkdir, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { mkdir, readFile, rm } from 'node:fs/promises';
+import { join, relative, resolve } from 'node:path';
 import { stringify as yamlStringify } from 'yaml';
 import { compileBatch, parseBatch, validateBatch } from '@endless/esl';
 import { AiSdkLlmClient, StubLlmClient } from '@endless/director';
 import type { LearningBrief } from '@endless/learning';
 import { loadLabData } from './data.js';
-import { loadBudgetConfig, loadModelsConfig, loadPricesConfig, loadRunConfig, resolveApiKey } from './config.js';
+import { loadBudgetConfig, loadModelsConfig, loadPricesConfig, loadRunConfig, resolveApiKey, type RunConfig } from './config.js';
 import { runExperiment, type RunResult } from './pipeline.js';
 import { renderBatch } from './render.js';
 import { SqliteWorldStore } from './storage/sqlite.js';
@@ -22,6 +22,7 @@ import { FileLlmCache } from './filecache.js';
 import { safeChild, safePath, writeValidated } from './safepath.js';
 import { smokeBrief } from './smokebrief.js';
 import { runJudge } from './critic/judge.js';
+import { diffFrozen, driftReport, hashPrompts, manifestPath, nextVersion, readFrozen, writeFrozen } from './freeze.js';
 
 const HERE = import.meta.dirname; // apps/lab/src
 const LAB_ROOT = resolve(HERE, '..');
@@ -52,7 +53,35 @@ async function cmdCheck(): Promise<void> {
   console.log(`角色规格：${[...data.charSpecs.keys()].join(' / ')} ✅`);
   console.log(`谓词 ${data.predicates.size} 个；梗分类 ${data.tropes.length} 项；故事筛选 ${data.sifting.length} 模式 ✅`);
   console.log(`提示词：${Object.keys(data.prompts).join(' / ')} ✅`);
+  // 冻结纪律（第 8 节）：check 是 CI 入口，提示词漂移必须让检查失败，否则冻结形同虚设
+  const frozen = await readFrozen(DATA_DIR);
+  if (!frozen) {
+    console.warn('提示词尚未冻结（缺 data/prompts/FROZEN）；试跑前先 `lab freeze` 建立基线。');
+  } else {
+    const drift = diffFrozen(frozen, await hashPrompts(DATA_DIR));
+    if (!drift.same) {
+      for (const line of driftReport(frozen, drift)) console.error(line);
+      console.error('先 `lab freeze`（版本递增）再跑批，旧 run_id 不可覆盖。');
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`提示词与冻结版本 ${frozen.version} 一致 ✅`);
+  }
   console.log('全部数据文件通过格式校验 ✅');
+}
+
+/** 冻结当前提示词内容（第 8 节）：写 data/prompts/FROZEN，版本号默认自动递增。 */
+async function cmdFreeze(): Promise<void> {
+  const label = arg('label');
+  const version = label ?? (await nextVersion(DATA_DIR));
+  const manifest = await writeFrozen(DATA_DIR, version);
+  console.log(`提示词已冻结：${version}（${manifest.frozen_at}）`);
+  console.log(`  清单：${relative(REPO_ROOT, manifestPath(DATA_DIR))}`);
+  for (const [name, hash] of Object.entries(manifest.files)) {
+    console.log(`  ${name.padEnd(10)} ${hash === 'missing' ? '⚠ 文件缺失' : hash.slice(0, 16)}`);
+  }
+  console.log(`  合并哈希 ${manifest.combined.slice(0, 16)}`);
+  console.log('提示：此后改任何提示词都要重新 freeze 并换新 run_id。');
 }
 
 async function cmdSmoke(): Promise<void> {
@@ -113,11 +142,18 @@ async function makeLlm(): Promise<AiSdkLlmClient | StubLlmClient> {
     apiKey: key,
     providerName: models.provider.name,
     models: models.models,
+    reasoningEffort: models.provider.reasoning_effort,
+    timeoutMs: models.provider.timeout_ms,
   });
 }
 
-async function executeRun(configPath: string, runRoot: string, readOnlyCache: boolean): Promise<RunResult> {
-  const cfg = await loadRunConfig(configPath);
+async function executeRun(
+  configPath: string,
+  runRoot: string,
+  readOnlyCache: boolean,
+  overrides: Partial<RunConfig> = {},
+): Promise<RunResult> {
+  const cfg = { ...(await loadRunConfig(configPath)), ...overrides };
   const data = await loadLabData(DATA_DIR);
   // run_id 来自配置文件，视为不受信输入：解析后必须仍在 runs/ 内
   const outDir = safeChild(runRoot, cfg.run_id, [RUNS_DIR], 'run_id');
@@ -144,6 +180,7 @@ async function executeRun(configPath: string, runRoot: string, readOnlyCache: bo
     smokeSeed: cfg.llm === 'stub',
     channelOverride: cfg.llm === 'stub' ? 'duck_detective' : undefined,
     briefOverrides: cfg.llm === 'stub' ? Array.from({ length: cfg.batches }, () => smokeBrief()) : undefined,
+    verbose: cfg.llm !== 'stub',
   });
   const prices = await loadPricesConfig(join(CONFIG_DIR, 'prices.yaml'));
   const budget = await loadBudgetConfig(join(CONFIG_DIR, 'budget.yaml'));
@@ -167,13 +204,33 @@ async function cmdRun(): Promise<void> {
   }
   const safeConfig = safePath(configPath, [REPO_ROOT], '--config');
   const cfg = await loadRunConfig(safeConfig);
+  // 冻结纪律（第 8 节）：提示词漂移时拒绝跑批，否则同一个 run_id 会混入不同提示词
+  const frozen = await readFrozen(DATA_DIR);
+  const promptHashes = await hashPrompts(DATA_DIR);
+  if (frozen) {
+    const drift = diffFrozen(frozen, promptHashes);
+    if (!drift.same) {
+      for (const line of driftReport(frozen, drift)) console.error(line);
+      console.error('确认要改提示词：先 `lab freeze`（版本递增）并换新的 run_id。');
+      process.exit(1);
+    }
+  } else {
+    console.warn('提示词尚未冻结（无 data/prompts/FROZEN）：本次运行记录当前哈希，但后续改动无法追溯。建议先 `lab freeze`。');
+  }
   const outDir = safeChild(RUNS_DIR, cfg.run_id, [RUNS_DIR], 'run_id');
   for (const sub of ['batches', 'render', 'cache']) {
     await mkdir(safeChild(outDir, sub, [RUNS_DIR], 'run 子目录'), { recursive: true });
   }
-  const cfgCopy = { ...cfg, batches: argInt('batches', cfg.batches) };
+  const overrides = { batches: argInt('batches', cfg.batches) };
+  const cfgCopy = { ...cfg, ...overrides };
   await writeValidated(safeChild(outDir, 'config.yaml', [RUNS_DIR], 'config 副本'), [RUNS_DIR], 'config 副本', yamlStringify(cfgCopy));
-  const result = await executeRun(safeConfig, RUNS_DIR, false);
+  await writeValidated(
+    safeChild(outDir, 'prompts.json', [RUNS_DIR], '提示词哈希'),
+    [RUNS_DIR],
+    '提示词哈希',
+    JSON.stringify({ frozenVersion: frozen?.version ?? null, frozenAt: frozen?.frozen_at ?? null, ...promptHashes }, null, 2),
+  );
+  const result = await executeRun(safeConfig, RUNS_DIR, false, overrides);
   console.log(`运行 ${cfg.run_id}：${result.totals.batchesOk}/${result.records.length} 批通过，${result.totals.cards} 卡，${result.totals.calls} 次 LLM 调用`);
   console.log(`产物：${outDir}`);
 }
@@ -334,6 +391,9 @@ async function main(): Promise<void> {
     case 'check':
       await cmdCheck();
       break;
+    case 'freeze':
+      await cmdFreeze();
+      break;
     case 'smoke':
       await cmdSmoke();
       break;
@@ -363,7 +423,8 @@ async function main(): Promise<void> {
       break;
     default:
       console.log('ENDLESS 实验 CLI（exp-00）');
-      console.log('  lab check                     校验全部数据文件');
+      console.log('  lab check                     校验全部数据文件（含提示词冻结漂移）');
+      console.log('  lab freeze [--label vN]       冻结当前提示词内容为 vN（默认自动递增）');
       console.log('  lab smoke [--out DIR]         Stub 导演 5 批端到端冒烟（无需 API key）');
       console.log('  lab run --config FILE         按运行配置跑批（需 API key；config/run-example.yaml 为模板）');
       console.log('  lab render FILE [-o OUT]      渲染一个 ESL 批次为 Markdown');

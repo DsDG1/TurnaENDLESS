@@ -1,0 +1,18 @@
+# Day 8 第 1 步：真实生成冒烟（20 批，单画像）。
+# 目的：验证真实模型下「导演 → 编译校验 → 修复」能跑通，并给出 K1/K3/K5 的初值。
+# 注意：run_id 独立，不覆盖任何既有运行；产物写入 runs/smoke-real-20/。
+run_id: smoke-real-20
+director: two-stage          # 与 R3 主实验一致
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast        # 冒烟优先时延/成本；R6 再切 premium
+persona: P1                  # 快刷画像：词汇最窄，最容易暴露覆盖问题
+batches: 20
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights: {duck_detective: 0.5, impossible_store: 0.3, improv: 0.2}
