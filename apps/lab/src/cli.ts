@@ -165,7 +165,11 @@ async function executeRun(
   const data = await loadLabData(DATA_DIR);
   // run_id 来自配置文件，视为不受信输入：解析后必须仍在 runs/ 内
   const outDir = safeChild(runRoot, cfg.run_id, [RUNS_DIR], 'run_id');
-  const store = new SqliteWorldStore(safeChild(outDir, 'world.sqlite', [RUNS_DIR], 'world 库'));
+  // 回放要从空世界重放：直接打开运行目录里的 world.sqlite 会带着原始运行结束时的状态，
+  // 事实与伏笔全都在，校验必然大面积冲突（实测 20 批只剩 1 批通过）
+  const store = new SqliteWorldStore(
+    readOnlyCache ? ':memory:' : safeChild(outDir, 'world.sqlite', [RUNS_DIR], 'world 库'),
+  );
   const llm = cfg.llm === 'stub' ? new StubLlmClient(makeStubScript()) : await makeLlm(readOnlyCache);
   const cache = new FileLlmCache(safeChild(outDir, 'cache', [RUNS_DIR], 'cache 目录'), readOnlyCache);
   const result = await runExperiment({
