@@ -1,0 +1,27 @@
+# 真实生成冒烟（Day 8 第 3 步）：20 批，两段式导演，快速档模型，P1 画像。
+# 提示词 v10：修掉示例里的错误证据等级（3 选项却标 recognition-4），并补一条「等级由场景形态决定」的硬规则。
+# 产物：runs/smoke-real-20m/
+run_id: smoke-real-20m
+director: two-stage
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast
+persona: P1
+batches: 20
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+# OOV 阈值：种子词库 62 条时放宽（方案默认 2%/5%）；词库扩到 ~300 条后调回。
+oov_warn: 0.08
+oov_block: 0.25
+
+
+

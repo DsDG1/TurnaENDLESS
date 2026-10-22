@@ -129,6 +129,8 @@ export interface BatchRecord {
   cards: number;
   ok: boolean;
   firstPass: boolean;
+  /** 首轮模型原始输出是否零错误（未经机械修复）。用于区分「模型写对了」与「修好了」 */
+  rawFirstPass: boolean;
   repairRounds: number;
   droppedScenes: string[];
   batchFailed: boolean;
@@ -166,6 +168,7 @@ export interface RunResult {
     tokensOut: number;
     calls: number;
     firstPass: number;
+    rawFirstPass: number;
   };
 }
 
@@ -193,6 +196,7 @@ interface PendingBatch {
   droppedScenes: string[];
   batchFailed: boolean;
   firstPass: boolean;
+  rawFirstPass: boolean;
   worldVersionAtGen: number;
 }
 
@@ -331,6 +335,11 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       allowed_words: [...buildCtx(brief, channel, card).vocab.allowedForms].sort().join(', '),
       char_specs: yamlStringify(Object.fromEntries(data.charSpecs)),
       asset_tags: [...data.assetTags].join(', '),
+      // 背景单独列出来：asset_tags 有两百多个名字，6 个背景混在里面模型看不见，
+      // 20g 就自造过 @tag:apartment。这里连位置表一起给，hidden_object 的 spots 也就不用猜了。
+      backgrounds: [...data.backgrounds.values()]
+        .map((bg) => `@tag:${bg.tag}（${bg.description}；spots: ${bg.spots.join(' / ')}）`)
+        .join('\n'),
       max_words_per_line: String(brief.vocab.max_words_per_line),
     };
   };
@@ -338,6 +347,13 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
   let seqCounter = 0;
   let cardsConsumed = 0;
   const channelBatchCount = new Map<string, number>();
+  /**
+   * 每个批次「模型原始首轮输出」是否零阻断错误，键是批次 id。
+   * 机械修复会把「素材名写错」这类错误直接改掉，所以 V1 已经不能代表模型的原始合规率；
+   * 这里在修复前额外校验一次（纯本地、不花 token），得到 V0。
+   * 用批次 id 而不是 seq 作键：生成是流水线式的，validateEs 回来时 seqCounter 可能已经前进。
+   */
+  const rawCleanByBatch = new Map<string, boolean>();
 
   const briefFor = (seq: number): LearningBrief | undefined =>
     opts.briefOverrides ? opts.briefOverrides[(seq - 1) % opts.briefOverrides.length] : undefined;
@@ -353,6 +369,10 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         // 由规划器生成并放进 briefs；漏掉它会让 OOV/覆盖率/防启动都按错误的词表判定
         const brief = briefs.get(seqCounter);
         const ctx = buildCtx(brief, parsed.batch.channel, cardsConsumed);
+        // 修复前先按原样判一次，只记第一次（首轮）：这是「模型自己写对了吗」的唯一来源
+        if (!rawCleanByBatch.has(parsed.batch.batch)) {
+          rawCleanByBatch.set(parsed.batch.batch, validateBatch(parsed.batch, ctx).ok);
+        }
         // 程序化自检：先做「删声明」的机械修复，再校验。修完还错才进修复循环。
         const fixed = autoFixBatch(parsed.batch, ctx);
         if (fixed.fixes.length > 0) {
@@ -431,6 +451,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
           droppedScenes: out.droppedScenes,
           batchFailed: false,
           firstPass: out.repairRounds === 0 && out.droppedScenes.length === 0,
+          rawFirstPass: rawCleanByBatch.get(out.batch.batch) ?? false,
           worldVersionAtGen: worldVersion,
         };
       }
@@ -446,6 +467,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         droppedScenes: [],
         batchFailed: true,
         firstPass: false,
+        rawFirstPass: false,
         worldVersionAtGen: worldVersion,
       };
     } catch (e) {
@@ -463,6 +485,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         droppedScenes: [],
         batchFailed: true,
         firstPass: false,
+        rawFirstPass: false,
         worldVersionAtGen: worldVersion,
       };
     }
@@ -481,6 +504,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         cards: 0,
         ok: false,
         firstPass: false,
+        rawFirstPass: false,
         repairRounds: pending.repairRounds,
         droppedScenes: [],
         batchFailed: true,
@@ -688,6 +712,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       cards,
       ok: true,
       firstPass: pending.firstPass,
+      rawFirstPass: pending.rawFirstPass,
       repairRounds: pending.repairRounds,
       droppedScenes: pending.droppedScenes,
       batchFailed: false,
@@ -760,6 +785,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
     tokensOut: records.reduce((s, r) => s + r.tokensOut, 0),
     calls: records.reduce((s, r) => s + r.calls.length, 0),
     firstPass: records.filter((r) => r.firstPass && r.ok).length,
+    rawFirstPass: records.filter((r) => r.rawFirstPass && r.ok).length,
   };
   return {
     runId: opts.runId,

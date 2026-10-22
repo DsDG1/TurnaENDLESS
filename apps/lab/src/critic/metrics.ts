@@ -39,6 +39,8 @@ export interface MetricsJson {
   };
   executability: {
     v1FirstPassRate: number;
+    /** 模型原始首轮零错误（未经机械修复） */
+    v0RawFirstPassRate: number;
     v2AfterRepairRate: number;
     v3AvgRepairRounds: number;
     v4SceneDropRate: number;
@@ -215,6 +217,11 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
     },
     executability: {
       v1FirstPassRate: records.length ? records.filter((r) => r.firstPass).length / records.length : 0,
+    /**
+     * V0：模型原始首轮零错误率（未经机械修复）。
+     * V1/V2 都是在 autoFixBatch 之后算的，看不出机械修复贡献了多少；V0 才代表「模型自己写对了」。
+     */
+    v0RawFirstPassRate: records.length ? records.filter((r) => r.rawFirstPass).length / records.length : 0,
       v2AfterRepairRate: okCount / batchesPlayed,
       v3AvgRepairRounds: records.reduce((s, r) => s + r.repairRounds, 0) / batchesPlayed,
       v4SceneDropRate: played.length ? totals.droppedScenes / played.reduce((s, p) => s + p.batch.scenes.length, 0) : 0,
@@ -269,6 +276,7 @@ export function metricsMarkdown(m: MetricsJson): string {
   lines.push('');
   lines.push('### 可执行性（V1–V5）');
   lines.push(`- V1 首次通过率：${pct(m.executability.v1FirstPassRate)}；V2 修复后通过率：${pct(m.executability.v2AfterRepairRate)}`);
+  lines.push(`- V0 模型原始首轮零错误率：${pct(m.executability.v0RawFirstPassRate)}（机械修复前；V1 与它的差就是程序化自检的贡献）`);
   lines.push(`- V3 平均修复轮数：${m.executability.v3AvgRepairRounds.toFixed(2)}；V4 场景丢弃率：${pct(m.executability.v4SceneDropRate)}`);
   lines.push(`- V5 状态失效重校验：检查 ${m.executability.v5Revalidation.checked} 批，重生成 ${m.executability.v5Revalidation.regenerated} 批`);
   lines.push('');

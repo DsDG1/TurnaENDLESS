@@ -67,7 +67,7 @@ describe('metrics', () => {
         ability: undefined as never,
         exposureCounts: new Map(),
         introduced: new Set(),
-        totals: { batchesOk: 0, batchFailed: 0, droppedScenes: 0, cards: 0, tokensIn: 0, tokensOut: 0, calls: 0, firstPass: 0 },
+        totals: { batchesOk: 0, batchFailed: 0, droppedScenes: 0, cards: 0, tokensIn: 0, tokensOut: 0, calls: 0, firstPass: 0, rawFirstPass: 0 },
       },
       {},
     );

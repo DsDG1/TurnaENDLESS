@@ -95,4 +95,59 @@ describe('autoFixBatch', () => {
     expect(fixed).toEqual(batch);
     expect(validateBatch(fixed, ctx).issues.map((i) => i.code)).toContain('E-ENTITY-UNKNOWN');
   });
+
+  it('角色属性不在规格表时改成合法值或删掉（E-CHAR-ATTR）', () => {
+    const yaml = BASE_BATCH_YAML.replace(
+      'actors: ["@char:cat{expr=sweating}"]',
+      'actors: ["@char:cat{expr=shock, hat=crown, holding=key}"]',
+    );
+    const ctx = makeCtx();
+    const batch = parse(yaml);
+    const codes = validateBatch(batch, ctx).issues.map((i) => i.code);
+    expect(codes.filter((c) => c === 'E-CHAR-ATTR')).toHaveLength(3);
+
+    const { batch: fixed, fixes } = autoFixBatch(batch, ctx);
+    expect(fixes).toHaveLength(3);
+    expect(fixes[0]).toContain('expr「shock」');
+    expect(fixes[0]).toContain('「neutral」');
+    const actors = (fixed.scenes.find((s) => s.id === 's1') as { panels: { actors: string[] }[] }).panels[1]!
+      .actors;
+    expect(actors).toEqual(['@char:cat{expr=neutral}']);
+    expect(validateBatch(fixed, ctx).ok).toBe(true);
+  });
+
+  it('删掉装饰位里不存在的 emoji（E-ASSET-MISSING），必需位不动', () => {
+    // 装饰位：comic 的 props、pick 选项的图案
+    let yaml = BASE_BATCH_YAML.replace(
+      "        actors: [\"@char:cat{expr=sweating}\"]",
+      "        actors: [\"@char:cat{expr=sweating}\"]\n        props: [\"@emoji:crate\", \"@emoji:teapot\"]",
+    );
+    // 必需位：swipe 卡片的图案（删了卡片就没有图案，只能报错）
+    yaml += `
+  - id: s9
+    type: swipe
+    uses: [lx:under#prep.location]
+    evidence: {item: lx:under#prep.location, type: recognition-2}
+    mode: judge
+    prompt: "Is the hat under the table?"
+    cards:
+      - {asset: "@emoji:crate", caption: "Under the table", side: left}
+      - {asset: "@emoji:teapot", caption: "On the table", side: right}
+`;
+    const ctx = makeCtx();
+    const batch = parse(yaml);
+    const missing = validateBatch(batch, ctx)
+      .issues.filter((i) => i.code === 'E-ASSET-MISSING' && i.message.includes('crate'));
+    expect(missing.length).toBe(2); // props + swipe card
+
+    const { batch: fixed, fixes } = autoFixBatch(batch, ctx);
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0]).toContain('@emoji:crate');
+    const comic = fixed.scenes.find((s) => s.id === 's1') as { panels: { props: string[] }[] };
+    expect(comic.panels[1]!.props).toEqual(['@emoji:teapot']);
+    const swipe = fixed.scenes.find((s) => s.id === 's9') as { cards: { asset: string }[] };
+    expect(swipe.cards[0]!.asset).toBe('@emoji:crate'); // 留给校验器
+    const left = validateBatch(fixed, ctx).issues.filter((i) => i.code === 'E-ASSET-MISSING');
+    expect(left).toHaveLength(1);
+  });
 });

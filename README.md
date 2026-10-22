@@ -14,15 +14,15 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 - 导演：上下文组装器（分块 token 预算）、梗台账、两段式/单段编排、修复循环、LLM 接入（AI SDK）+ 请求哈希缓存 + Stub 模式（Day 6）
 - 实验 CLI：run / render / metrics / replay / judge / srs-sim / buffer-sim / check / smoke / assert / freeze；学习者模拟器三画像；缓冲模拟；Critic 程序指标；5 批端到端冒烟通过（Day 7）
 - 提示词冻结纪律落地：`lab freeze` 写 `data/prompts/FROZEN`，`lab check` 与 `lab run` 检测漂移（Day 8）
-- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟最佳 19/20 通过（V2 95%，v8 + autofix + 分阶段输出上限），首轮合规率 35% → 修复后 95%，数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
-- 机械修正层 `autoFixBatch`：校验前先修三类「声明与实际不符」（`uses` 不在文本、无人引用的 `effect`、曝光不足就检测），20 批里救回 3 批（15/20 → 18/20）（Day 8）
-- promptfoo 回归矩阵：2 模型 × 5 条样例，首轮单次生成合规率 3/10，适配层两个坑（`reasoning_effort` 不透传、M3 把思考内联进 `content`）已固化进自定义 provider（Day 8）
+- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟 v10/v11 各一次（19/20、17/20，V2 合计 36/40 = 90%，阈值 97% 未达标），**模型原始首轮合规率从 0/20 提到 3/20**（V0），数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
+- 机械修正层 `autoFixBatch`：校验前先修五类「声明与实际不符」（`uses` 不在文本、无人引用的 `effect`、曝光不足就检测、角色属性越界、装饰位素材不存在），每次修正都打 `[autofix]` 日志；20k 触发 44 次、20l 33 次、20m 36 次、20n 38 次（Day 8）
+- promptfoo 回归矩阵：2 模型 × 5 条样例，首轮单次生成合规率 1/10（变量补齐后重测），适配层两个坑（`reasoning_effort` 不透传、M3 把思考内联进 `content`）已固化进自定义 provider；`render-vars.ts` 是矩阵变量的唯一来源（Day 8）
 
 ## 快速开始
 
 ```bash
 pnpm install
-pnpm test            # 全部 141 个测试（esl 66 / world 12 / learning 18 / director 23 / lab 22）
+pnpm test            # 全部 143 个测试（esl 68 / world 12 / learning 18 / director 23 / lab 22）
 pnpm lab check       # 校验全部数据文件 + 提示词冻结漂移（Day 1–2 完成标志）
 pnpm lab smoke       # Stub 导演 5 批端到端冒烟（无需 API key）
 pnpm lab freeze      # 冻结当前提示词（默认 v1，之后版本自动递增）
@@ -36,13 +36,16 @@ pnpm lab render apps/lab/runs/smoke/batches/0001.esl.yaml   # 渲染一个批次
 ```bash
 # 1. 在 apps/lab/config/models.yaml 配置供应商与模型（base_url + 环境变量名）
 # 2. 在 apps/lab/config/prices.yaml 填单价（未填时 K2 显示「单价未配置」，判为不可判定）
-# 3. 准备运行配置（模板：apps/lab/config/run-example.yaml；冒烟：run-smoke1/20.yaml）
+# 3. 准备运行配置（模板：apps/lab/config/run-example.yaml；真实冒烟：run-smoke20n.yaml = 20 批 v11）
 $env:ENDLESS_API_KEY = "..."        # 变量名以 models.yaml 的 api_key_env 为准
 pnpm lab freeze                     # 跑批前先冻结提示词，否则 run 会记录哈希并警告
-pnpm lab run --config apps/lab/config/run-smoke20.yaml
-pnpm lab metrics apps/lab/runs/<run_id>   # 重算指标
+pnpm lab run --config apps/lab/config/run-smoke20n.yaml
 pnpm lab judge  apps/lab/runs/<run_id>    # LLM 评审（先校准，见方案 5.12）
 ```
+
+> `metrics.json` / `report.md` 由 `lab run` 在结束的同一进程里算出，与当次运行必然一致。
+> `lab metrics <run_id>` 是**重跑一遍流水线读响应缓存**，只有当前代码产生的请求哈希与该次运行完全一致时才命中；
+> 改过提示词或输出上限后再回放会全部未命中，指标归零（CLI 已加保护，不会覆盖已有的 `metrics.json`）。
 
 `lab run` 会在 `runs/<run_id>/` 写 `config.yaml`（本次参数）、`prompts.json`（提示词哈希与冻结版本）、
 `calls.jsonl`（每次 LLM 调用的阶段、token、时延）与 `cache/`（按请求哈希存原始响应，可回放）。
@@ -77,8 +80,16 @@ docs/                # 实验方案与开源调研（唯一的规范来源）
 
 ## 下一步（Day 8 起）
 
-1. 填 `config/models.yaml` 与 `prices.yaml`，冒烟一次 20 批真实生成（试跑）
-2. promptfoo 小矩阵（提示词 × 模型 × 温度，每格 20 批），冻结提示词 v2（`prompts/FROZEN`）
-3. 跑 R0–R6（每个运行 × 3 画像 × 60 批），S-R 回放
+1. ~~填 `config/models.yaml`，冒烟 20 批真实生成~~（已做：20d–20n，见结果文档 §4.2）；`prices.yaml` 单价待供应商提供，K2 暂不可判定
+2. ~~promptfoo 小矩阵~~（已做，结果 1/10，见 §4.4）；扩表入口在 `promptfoo/promptfooconfig.yaml`，变量由 `promptfoo/render-vars.ts` 生成
+3. 跑 R0–R6（每个运行 × 3 画像 × 60 批），S-R 回放——配置已就位，等 API 预算（约 20–30 小时）
 4. Critic：程序指标 + LLM 评审 + 评审校准；人工盲评与连续阅读（第 7.4 节）
-5. 按第 9 节判定标准写 `docs/experiments/exp-00-results.md`
+5. ~~按第 9 节判定标准写结果文档~~（骨架与试跑数据已填，正式判定待 R0–R6）
+
+## 当前已知短板
+
+- **V2 90%（v10+v11 合计），离 97% 阈值差 1–2 批**，且 n=20 上分不清版本差异（同一配置两次采样 20/20 vs 17/20）。
+- **剩余失败都是「模型编名字」**：不存在的素材标签、词库条目 id、物体位置冲突。提示词教不动；列反例反而会把非法名字喂给模型（结果文档 §5 第 11 条）。
+- **L3 OOV 中位 13%**（方案阈值 8%，已按偏差 #6 放宽并在配置里记录），根因是词库只有 62 条。
+- **`prices.yaml` 空**：K2 成本项不可判定。
+- **只跑过快速档 20 批单样本**；编剧室高档（R6）与三画像（P1/P2/P3）都还没跑。

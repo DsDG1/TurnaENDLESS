@@ -38,10 +38,11 @@ scenes:
       - {from: cat, text: "The key is not here."}
       - {from: duck, text: "Where is it?"}
     reply:
-      options:
+      options:                                   # 4 个选项才是 recognition-4；2–3 个只能写 recognition-2
         - {label: "under the box", correct: true}
         - {label: "behind the door"}
         - {label: "on the table"}
+        - {label: "on the shelf"}
       on_correct: {from: cat, text: "Yes! Under the box."}
       on_wrong: {from: cat, text: "No. Look again."}
   - id: s3
@@ -97,10 +98,16 @@ scenes:
 - **chat 写了 `evidence` 就必须有 `reply`**（选项 + on_correct + on_wrong）。
 - **`effects` 里每个名字都必须被引用**（选项的 `effect: 名字` 或 ink 标签 `# effect:名字`），没被引用就删掉，否则整批被阻断。
 - `effects` 是**具名映射**（名字 → effect 列表），不是数组；effect 只有 set_fact / end_fact / open_thread / advance_thread / resolve_thread / user_fact 六种。
+- `effects` 里每个名字的值是一个**列表**，列表里每一项只能是上面六种之一、且只带一个键。下面这三种写法会被校验器直接拒绝（真实失败案例）：`- {id: bell}`、`- "advance_thread"`、`- - advance_thread: {id: bell}`（多套一层列表）。
+- 六种 effect 各自的字段（写错就是 `E-SCHEMA`，整批失败）：`set_fact: {subject, predicate, object, standing}`、`end_fact: {subject, predicate, object}`、`open_thread: {id, title, priority?, payoff_hint?}`、`advance_thread: {id}`、`resolve_thread: {id}`、`user_fact: {predicate, object}`。**`open_thread` 的必填字段是 `id`（新伏笔的小写蛇形名）与 `title`（一句话说明），它没有 subject / predicate / object**——这三种是 `set_fact` 的字段，混用会整批失败。
+- `background` 只能写下面 6 个之一（`@tag:apartment`、`@tag:street` 这类不存在的标签会让整批失败）；`spots` 只能从该背景括号里的位置名选，3–6 个：
+{{backgrounds}}
+- `hidden_object` 的 `objects` **至少 2 个**，每个的 `spot` 必须在 `spots` 里；`target: true` 最多一个。
 - 素材引用只能写 `@emoji:<name>`、`@tag:<tag>`、`@char:<id>{k=v,...}`；名字必须存在于素材清单与角色规格表。
 - 台词里的故意矛盾必须对应一个 open_thread；世界状态的改变写进 effects，不要只写在台词里。
 - story 的 ink 只用：knot/stitch、选项、gather、-> 跳转、-> END、访问计数；禁止 VAR、~ 赋值、INCLUDE、隧道、线程、随机 {~ ...}；标签白名单 effect/expr/show/sfx。
 - 每个可检测交互写 `evidence: {item, type}`；有对错的选项恰好一个 correct；声明不得高于推导值。
+- **`evidence.type` 由场景形态决定，不是自选**：只有 pick 或 chat 恰好 4 个选项时才写 `recognition-4`；选项只有 2–3 个、swipe（mode=judge）、story 的选项、hidden_object（spots 少于 4 个时）都只能写 `recognition-2`。写高了整批失败（`E-EVIDENCE-OVERCLAIM`）。
 - comic 每格最多 2 个气泡（bubbles 超过 2 个是 schema 错误）；每批 3–4 场，不要更多。
 - 场景必填字段一个都不能省：pick 必须有 `feedback: {on_correct, on_wrong}`；hidden_object 必须有 `instruction`、`background`、`spots`；swipe 必须有 `mode` 与 `cards`；comic 必须有 `setting` 与 `panels`。
 - 新条目在本批只能曝光（写进 uses），不得检测。

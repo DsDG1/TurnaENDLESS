@@ -68,6 +68,20 @@ defaultTest:
     # `@tag:street` 这种写不存在的标签会直接 E-ASSET-MISSING；`hat` 是 tag 不是 emoji 名，
     # 要用 top_hat / cap / crown。
     asset_tags: 'agency_office, living_room, rooftop, shop_counter, stockroom, shop_window, duck, cat, moon, badger, mouse, person, top_hat, cap, crown, sock, key, box, bag, umbrella, magnifying_glass, notebook, coffee, coin, money_bag, cheese, price_tag, shopping_cart, door, sofa, table, lamp, mirror, newspaper, envelope, watch, plant, clock'
+    # v9 起 single.md 有 {{backgrounds}}：6 个背景标签 + 位置白名单（与 manifest 一致）
+    backgrounds: |
+      @tag:agency_office（侦探事务所：一张桌子、一扇门、一个柜子和一盆植物；spots: desk_top / door_behind / shelf_top / plant_under / bin_under）
+      @tag:living_room（客厅：沙发、小桌、台灯和置物架；spots: sofa_behind / table_under / lamp_top / shelf_top）
+      @tag:rooftop（屋顶：水塔、烟囱和一排盆栽；spots: tank_behind / chimney_top / plant_under / drain_under）
+      @tag:shop_counter（商店柜台：柜台、货架、抽屉和橱窗；spots: counter_top / shelf_under / drawer_in / window_top）
+      @tag:stockroom（库房：成排的箱子和一只高梯子；spots: box_behind / ladder_top / crate_under / shelf_top）
+      @tag:shop_window（橱窗：玻璃、展示台和价签；spots: glass_front / display_top / tag_under / sill_top）
+    # 首轮没有上一批的问题单；空串而不是省略，否则模型会看到字面量 {{retry_note}}
+    retry_note: ''
+    # 冷启动 A1 的真实允许词表由 promptfoo/render-vars.ts 算出；这里放的是五条样例的并集
+    # （每格多几十个对它的 brief 而言是 OOV 的词，OOV 判定因此略宽松，结构类断言不受影响）
+    allowed_words: |-
+      a, about, again, ah, all, also, always, am, an, and, any, are, aren't, at, back, bad, be, because, been, behind, being, big, box, but, by, came, can, can you, can't, cheap, cheaper, cheapest, clue, coin, come, comes, coming, could, could you, day, days, did, didn't, different, do, do you have, does, does he have, does she have, doesn't, doing, don't, door, down, everything, expensive, few, first, five, for, four, friday, from, go, goes, going, good, had, has, hat, have, having, he, he's, hello, help, helped, helps, her, here, hey, hi, him, his, hmm, how, how many, how much, i, i'm, i've, if, in, into, is, isn't, it, it's, its, just, key, keys, knew, know, knows, last, let's, like, liked, likes, little, long, look, looked, looks, lot, many, may, me, might, mine, monday, money, moon, more, more expensive, morning, most, most expensive, much, must, my, myself, need, needed, needs, never, new, night, no, not, nothing, now, off, oh, ok, okay, old, on, one, only, onto, or, other, our, out, over, please, price, really, said, same, sat, saturday, saw, say, says, see, seen, sees, shall, she, she's, short, should, sit, sits, small, so, sofa, some, something, sunday, table, than, thanks, that, that's, the, their, them, then, there, these, they, they're, they've, thing, things, think, thinks, this, those, thought, three, thursday, to, today, tomorrow, tonight, too, tuesday, two, umbrella, under, up, us, very, want, wanted, wants, was, wasn't, we, we're, we've, wednesday, week, well, went, were, weren't, what, what's, when, where, where are, where is, where was, where were, where's, which, who, who's, whom, whose, why, will, with, won't, would, yes, yesterday, you, you're, you've, your, yours, yourself
     max_words_per_line: '9'
 
 tests:
@@ -88,6 +102,10 @@ tests:
         review: []
         vocab: {allowed_extra: [hat, table, door, clue], max_words_per_line: 9, oov_budget: 0.02}
         avoid_before_test: []
+      # 学习任务清单：与流水线给的分场清单同规则（曝光写 uses、检测写 evidence）
+      learning_checklist: |
+        - lx:behind#prep.location：曝光 → 写进某个场景的 uses，不要写 evidence
+        - lx:under#prep.location：曝光 → 写进某个场景的 uses，不要写 evidence
       cast_facts: 'duck role detective (canon)；cat role assistant (canon)'
       allowed_extra: 'hat, table, door, clue'
   - description: 'duck_detective / A1 / 到期复习（ck:where-is）'
@@ -105,6 +123,10 @@ tests:
         review: [{item: 'ck:where-is', facet: meaning, min_evidence: recognition-4}]
         vocab: {allowed_extra: [hat, table, door, key], max_words_per_line: 9, oov_budget: 0.02}
         avoid_before_test: [where is, where's, where are]
+      # 学习任务清单：与流水线给的分场清单同规则（曝光写 uses、检测写 evidence）
+      learning_checklist: |
+        - lx:key#n.opener：曝光 → 写进某个场景的 uses，不要写 evidence
+        - ck:where-is：检测 → 写 evidence: {item: ck:where-is, type: recognition-4}
       cast_facts: 'duck role detective (canon)；cat role assistant (canon)'
       allowed_extra: 'hat, table, door, key'
       open_threads: 't-clue：谁拿走了钥匙（优先级 2）'
@@ -125,6 +147,10 @@ tests:
         review: []
         vocab: {allowed_extra: [price, money, coin, hat], max_words_per_line: 9, oov_budget: 0.02}
         avoid_before_test: []
+      # 学习任务清单：与流水线给的分场清单同规则（曝光写 uses、检测写 evidence）
+      learning_checklist: |
+        - ck:how-much：曝光 → 写进某个场景的 uses，不要写 evidence
+        - lx:expensive#adj.costly：曝光 → 写进某个场景的 uses，不要写 evidence
       cast_facts: 'shopkeeper role owner (canon)；delivery_mouse role courier (canon)'
       allowed_extra: 'price, money, coin, hat'
   - description: 'impossible_store / A2 / 到期复习（ck:how-much）'
@@ -142,6 +168,10 @@ tests:
         review: [{item: 'ck:how-much', facet: meaning, min_evidence: recognition-4}]
         vocab: {allowed_extra: [price, money, umbrella, box], max_words_per_line: 10, oov_budget: 0.02}
         avoid_before_test: [how much, how many]
+      # 学习任务清单：与流水线给的分场清单同规则（曝光写 uses、检测写 evidence）
+      learning_checklist: |
+        - lx:cheap#adj.inexpensive：曝光 → 写进某个场景的 uses，不要写 evidence
+        - ck:how-much：检测 → 写 evidence: {item: ck:how-much, type: recognition-4}
       cast_facts: 'shopkeeper role owner (canon)；delivery_mouse role courier (canon)'
       allowed_extra: 'price, money, umbrella, box'
   - description: 'improv / A1 / 纯暴露（无检测）'
@@ -160,5 +190,9 @@ tests:
         review: []
         vocab: {allowed_extra: [hat, sofa, table, moon], max_words_per_line: 9, oov_budget: 0.02}
         avoid_before_test: []
+      # 学习任务清单：与流水线给的分场清单同规则（曝光写 uses、检测写 evidence）
+      learning_checklist: |
+        - ck:can-you：曝光 → 写进某个场景的 uses，不要写 evidence
+        - ck:do-you-have：曝光 → 写进某个场景的 uses，不要写 evidence
       cast_facts: '（无固定角色：本频道每批自选日常场景）'
       allowed_extra: 'hat, sofa, table, moon'
