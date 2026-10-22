@@ -212,4 +212,38 @@ describe('端到端冒烟（Stub 导演 5 批）', () => {
     // 台账记录了 5 批
     expect(result.ledgerEntries).toHaveLength(5);
   }, 60_000);
+
+  it('失败批次也把首版问题单落盘（否则分不清「没救回」和「被重写改坏」）', async () => {
+    const data = await loadLabData(DATA_DIR);
+    const outDir = await mkdtemp(join(tmpdir(), 'endless-failed-'));
+    const ok = makeStubScript();
+    const broken = 'scenes: []\n';
+    const result = await runExperiment({
+      data,
+      store: new SqliteWorldStore(':memory:'),
+      // writer/repair 一律返回空批次，保证首轮就带阻塞错误、且重写也救不回来
+      llm: new StubLlmClient((req, i) => (req.stage === 'writer' || req.stage === 'repair' ? broken : ok(req, i))),
+      outDir,
+      runId: 'failed-test',
+      batches: 1,
+      persona: 'P1',
+      seed: 42,
+      director: 'two-stage',
+      encoding: 'yaml',
+      derive: false,
+      worldState: true,
+      tropeLedgerOn: true,
+      strategy: 'S-B',
+      feedbackLag: 2,
+      channelOverride: 'duck_detective',
+      briefOverrides: [smokeBrief()],
+      smokeSeed: true,
+    });
+    expect(result.records[0]!.batchFailed).toBe(true);
+    const failed = JSON.parse(await readFile(join(outDir, 'batches', '0001.failed.json'), 'utf8')) as {
+      firstDraftIssues?: { code: string; level: string }[];
+    };
+    expect(failed.firstDraftIssues?.length).toBeGreaterThan(0);
+    expect(failed.firstDraftIssues?.some((i) => i.level === 'error')).toBe(true);
+  }, 60_000);
 });

@@ -14,15 +14,15 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 - 导演：上下文组装器（分块 token 预算）、梗台账、两段式/单段编排、修复循环、LLM 接入（AI SDK）+ 请求哈希缓存 + Stub 模式（Day 6）
 - 实验 CLI：run / render / metrics / replay / judge / srs-sim / buffer-sim / check / smoke / assert / freeze；学习者模拟器三画像；缓冲模拟；Critic 程序指标；5 批端到端冒烟通过（Day 7）
 - 提示词冻结纪律落地：`lab freeze` 写 `data/prompts/FROZEN`，`lab check` 与 `lab run` 检测漂移（Day 8）
-- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟 v10/v11 各一次（19/20、17/20，V2 合计 36/40 = 90%，阈值 97% 未达标），**模型原始首轮合规率从 0/20 提到 3/20**（V0），数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
-- 机械修正层 `autoFixBatch`：校验前先修五类「声明与实际不符」（`uses` 不在文本、无人引用的 `effect`、曝光不足就检测、角色属性越界、装饰位素材不存在），每次修正都打 `[autofix]` 日志；20k 触发 44 次、20l 33 次、20m 36 次、20n 38 次（Day 8）
-- promptfoo 回归矩阵：2 模型 × 5 条样例，单次生成合规率 5/10（提示词 v11 重跑，见结果文档 §4.4；首轮 1/10 的根因是规范示例自身把 3 选项写成了 `recognition-4`），适配层两个坑（`reasoning_effort` 不透传、M3 把思考内联进 `content`）已固化进自定义 provider；`render-vars.ts` 是矩阵变量的唯一来源（Day 8）
+- 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟 v10/v11/v12 各一次（19/20、17/20、18/20，V2 合计 54/60 = 90%，阈值 97% 未达标），**模型原始首轮合规率从 0/20 提到 3/20**（V0），数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
+- 机械修正层 `autoFixBatch`：校验前先修五类「声明与实际不符」（`uses` 不在文本、无人引用的 `effect`、曝光不足就检测、角色属性越界、装饰位素材不存在），每次修正都打 `[autofix]` 日志；20k 触发 44 次、20l 33 次、20m 36 次、20n 38 次、20o 38 次（Day 8）
+- promptfoo 回归矩阵：2 模型 × 5 条样例，单次生成合规率 8/10（提示词 v12 重跑，见结果文档 §4.4；首轮 1/10 的根因是规范示例自身把 3 选项写成了 `recognition-4`），适配层两个坑（`reasoning_effort` 不透传、M3 把思考内联进 `content`）已固化进自定义 provider；`render-vars.ts` 是矩阵变量的唯一来源（Day 8）
 
 ## 快速开始
 
 ```bash
 pnpm install
-pnpm test            # 全部 148 个测试（esl 71 / world 12 / learning 18 / director 24 / lab 23）
+pnpm test            # 全部 149 个测试（esl 71 / world 12 / learning 18 / director 24 / lab 24）
 pnpm lab check       # 校验全部数据文件 + 提示词冻结漂移（Day 1–2 完成标志）
 pnpm lab smoke       # Stub 导演 5 批端到端冒烟（无需 API key）
 pnpm lab freeze      # 冻结当前提示词（默认 v1，之后版本自动递增）
@@ -36,10 +36,10 @@ pnpm lab render apps/lab/runs/smoke/batches/0001.esl.yaml   # 渲染一个批次
 ```bash
 # 1. 在 apps/lab/config/models.yaml 配置供应商与模型（base_url + 环境变量名）
 # 2. 在 apps/lab/config/prices.yaml 填单价（未填时 K2 显示「单价未配置」，判为不可判定）
-# 3. 准备运行配置（模板：apps/lab/config/run-example.yaml；真实冒烟：run-smoke20n.yaml = 20 批 v11）
+# 3. 准备运行配置（模板：apps/lab/config/run-example.yaml；真实冒烟：run-smoke20o.yaml = 20 批 v12 + 143 条词库）
 $env:ENDLESS_API_KEY = "..."        # 变量名以 models.yaml 的 api_key_env 为准
 pnpm lab freeze                     # 跑批前先冻结提示词，否则 run 会记录哈希并警告
-pnpm lab run --config apps/lab/config/run-smoke20n.yaml
+pnpm lab run --config apps/lab/config/run-smoke20o.yaml
 pnpm lab judge  apps/lab/runs/<run_id>    # LLM 评审（先校准，见方案 5.12）
 ```
 
@@ -80,17 +80,17 @@ docs/                # 实验方案与开源调研（唯一的规范来源）
 
 ## 下一步（Day 8 起）
 
-1. ~~填 `config/models.yaml`，冒烟 20 批真实生成~~（已做：20d–20n，见结果文档 §4.2）；`prices.yaml` 单价待供应商提供，K2 暂不可判定
-2. ~~promptfoo 小矩阵~~（已做，v11 重跑 5/10，见 §4.4；其中一格丢在服务端 HTTP 529）；扩表入口在 `promptfoo/promptfooconfig.yaml`，变量由 `promptfoo/render-vars.ts` 生成
+1. ~~填 `config/models.yaml`，冒烟 20 批真实生成~~（已做：20d–20o，见结果文档 §4.2）；`prices.yaml` 单价待供应商提供，K2 暂不可判定
+2. ~~promptfoo 小矩阵~~（已做，v12 重跑 8/10，见 §4.4）；扩表入口在 `promptfoo/promptfooconfig.yaml`，变量由 `promptfoo/render-vars.ts` 生成
 3. 跑 R0–R6（每个运行 × 3 画像 × 60 批），S-R 回放——配置已就位，等 API 预算（约 20–30 小时）
 4. Critic：程序指标 + LLM 评审 + 评审校准；人工盲评与连续阅读（第 7.4 节）
 5. ~~按第 9 节判定标准写结果文档~~（骨架与试跑数据已填，正式判定待 R0–R6）
 
 ## 当前已知短板
 
-- **V2 90%（v10+v11 合计），离 97% 阈值差 1–2 批**，且 n=20 上分不清版本差异（同一配置两次采样 20/20 vs 17/20）。
-- **剩余失败都是「模型编名字」**：不存在的素材标签、词库条目 id、物体位置冲突。提示词教不动；列反例反而会把非法名字喂给模型（结果文档 §5 第 11 条）。
-- **L3 OOV 中位 9.8%（6 批探针；方案阈值 8%，已按偏差 #6 放宽并在配置里记录），瓶颈是能力门与写手对允许词表的遵守度，不是词库长度**：词库从 62 条扩到 143 条几乎没动中位数（13.5% → 9.8%，含口径修正），逐词回查见结果文档 §4.6。
+- **V2 90%（v10+v11+v12 合计 54/60），离 97% 阈值差 1–2 批**，且 n=20 上分不清版本差异（同一配置两次采样 20/20 vs 17/20）。
+- **剩余失败都是「模型编名字」**：不存在的素材标签、词库条目 id、物体位置冲突。提示词教不动；列反例反而会把非法名字喂给模型（结果文档 §5 第 11 条）。20o 已经验证过这一点：把 `@tag:apartment` 从提示词里删掉之后，模型照样写出了它。名字类要根治只能靠解码期约束（`json_schema` + enum），见结果文档 §7 第 9 条。
+- **L3 OOV 中位 9.7%（20 批，修正口径）/ 9.8%（6 批探针；方案阈值 8%，已按偏差 #6 放宽并在配置里记录），瓶颈是能力门与写手对允许词表的遵守度，不是词库长度**：词库从 62 条扩到 143 条几乎没动中位数（13.5% → 约 10%，含口径修正），逐词回查见结果文档 §4.6。
 - **`prices.yaml` 空**：K2 成本项不可判定。
 - **只跑过快速档 20 批单样本**；编剧室高档（R6）与三画像（P1/P2/P3）都还没跑。
-- **「重写是净收益还是净损失」只有探针级答案**：首版带阻塞错误的批次多数能救回，但也有把本来能救的批次改坏（`fd-probe6` 2/2/0、`lex6` 5/4/1、`lex6b` 1/0/1，即「首版带错 / 救回 / 丢掉」），要等 60 批才有统计意义。
+- **「重写是净收益还是净损失」只有 40 批的答案**：20o 首次出现「改坏 0」（首版带阻塞错误 7 批 → 救回 5 / 丢掉 2 / 改坏 0；`fd-probe6` 2/2/0、`lex6` 5/4/1、`lex6b` 1/0/1），丢掉的两批都是重写也修不了的名字错误，要等 60 批才有统计意义。

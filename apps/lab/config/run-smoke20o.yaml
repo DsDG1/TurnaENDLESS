@@ -1,0 +1,25 @@
+# 真实生成冒烟（20 批，两段式导演，快速档，P1 画像）。
+# 提示词 v12：删掉背景规则里两个字面量非法标签（`@tag:apartment` / `@tag:street`，正是
+# 「反例会把非法名字喂给模型」那条发现的源头），换成一张「常用道具的合法名字」正例清单。
+# 与 20n 同配置，唯一变量是提示词 v11 → v12。
+# 产物：runs/smoke-real-20o/
+run_id: smoke-real-20o
+director: two-stage
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast
+persona: P1
+batches: 20
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+oov_warn: 0.08
+oov_block: 0.25

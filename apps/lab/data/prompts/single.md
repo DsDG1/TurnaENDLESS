@@ -100,8 +100,9 @@ scenes:
 - `effects` 是**具名映射**（名字 → effect 列表），不是数组；effect 只有 set_fact / end_fact / open_thread / advance_thread / resolve_thread / user_fact 六种。
 - `effects` 里每个名字的值是一个**列表**，列表里每一项只能是上面六种之一、且只带一个键。下面这三种写法会被校验器直接拒绝（真实失败案例）：`- {id: bell}`、`- "advance_thread"`、`- - advance_thread: {id: bell}`（多套一层列表）。
 - 六种 effect 各自的字段（写错就是 `E-SCHEMA`，整批失败）：`set_fact: {subject, predicate, object, standing}`、`end_fact: {subject, predicate, object}`、`open_thread: {id, title, priority?, payoff_hint?}`、`advance_thread: {id}`、`resolve_thread: {id}`、`user_fact: {predicate, object}`。**`open_thread` 的必填字段是 `id`（新伏笔的小写蛇形名）与 `title`（一句话说明），它没有 subject / predicate / object**——这三种是 `set_fact` 的字段，混用会整批失败。
-- `background` 只能写下面 6 个之一（`@tag:apartment`、`@tag:street` 这类不存在的标签会让整批失败）；`spots` 只能从该背景括号里的位置名选，3–6 个：
+- `background` 只能写下面 6 个之一（写清单外的标签会让整批失败）；`spots` 只能从该背景括号里的位置名选，3–6 个：
 {{backgrounds}}
+- 常用道具的合法名字（清单外的一律不要写）：帽子 → `@emoji:top_hat`；卷宗/笔记本/便签 → `@emoji:notebook`；放大镜 → `@emoji:magnifying_glass`；信封/信件 → `@emoji:envelope`；手电 → `@emoji:flash_light`。
 - `hidden_object` 的 `objects` **至少 2 个**，每个的 `spot` 必须在 `spots` 里；`target: true` 最多一个。
 - 素材引用只能写 `@emoji:<name>`、`@tag:<tag>`、`@char:<id>{k=v,...}`；名字必须存在于素材清单与角色规格表。
 - 台词里的故意矛盾必须对应一个 open_thread；世界状态的改变写进 effects，不要只写在台词里。

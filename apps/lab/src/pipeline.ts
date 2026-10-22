@@ -538,6 +538,9 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
               batchId,
               batchFailed: true,
               repairRounds: pending.repairRounds,
+              // 失败批次的首版问题单也要落盘：否则事后无法区分「首版就有问题但没救回」
+              // 与「首版干净、被重写改坏」——后者是重写路径唯一的硬证据。
+              firstDraftIssues: pending.firstDraftIssues,
               issues: pending.issues,
               calls: pending.calls,
             },
