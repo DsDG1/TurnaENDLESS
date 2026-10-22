@@ -442,7 +442,16 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
       totalTokens++;
       const t = tokens[i]!;
       const next = i + 1 < tokens.length ? tokens[i + 1]! : null;
-      if (singleForms.has(t) || t === "n't" || t === "'s") continue;
+      // 所有格：`moon's hat` 里该查的是 moon；"'s" 本身永远不算生词。
+      const possessiveBase = t.endsWith("'s") && t.length > 2 ? t.slice(0, -2) : null;
+      if (
+        singleForms.has(t) ||
+        (possessiveBase !== null && singleForms.has(possessiveBase)) ||
+        t === "n't" ||
+        t === "'s"
+      ) {
+        continue;
+      }
       if (next && multiForms.has(`${t} ${next}`)) {
         i++; // 多词形式占两个 token
         continue;

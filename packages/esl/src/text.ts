@@ -97,9 +97,18 @@ export function inkTextUnits(ink: string): { path: string; role: TextRole; text:
 
 const WORD_RE = /[a-z']+/g;
 
+/**
+ * 弯撇号归一化：模型输出里 `don’t` / `moon’s` 用的是 U+2019，而分词正则只认 ASCII 撇号，
+ * 不归一化就会把 `don’t` 拆成 `don` + `t` 两个 token —— 既是两个假 OOV，也把词数算多。
+ * locateForm 早就做了同样的归一化，分词漏了。
+ */
+export function normalizeApostrophes(text: string): string {
+  return text.replace(/[\u2018\u2019]/g, "'");
+}
+
 /** 小写分词：保留撇号（where's、I'd）。 */
 export function tokenize(text: string): string[] {
-  return text.toLowerCase().match(WORD_RE) ?? [];
+  return normalizeApostrophes(text).toLowerCase().match(WORD_RE) ?? [];
 }
 
 export function wordCount(text: string): number {

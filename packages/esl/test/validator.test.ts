@@ -137,6 +137,24 @@ describe('正例', () => {
     expect(codes(b).res.ok).toBe(true);
   });
 
+  it('W-OOV：弯撇号与所有格不算生词', () => {
+    // 模型输出常用 U+2019 写 `don’t` / `moon’s`；分词不归一化会拆成 don + t、moon + s，全是假 OOV。
+    // 所有格 `moon's` 该查的是 moon 这个专名本身。
+    const b = mutate((x) => {
+      const s1 = sceneOf(x, 's1', 'comic');
+      s1.panels[0]!.bubbles.push({ speaker: 'moon', text: 'Don’t put the moon’s hat there.' });
+      s1.panels[1]!.bubbles.push({ speaker: 'duck', text: "The cat's hat isn't here." });
+    });
+    const ctx = makeCtx({ vocab: { ...makeCtx().vocab, oovWarn: 0, oovBlock: 1 } });
+    const res = validateBatch(b, ctx);
+    const oov = res.issues.find((i) => i.code === 'W-OOV');
+    const detail = oov?.message ?? '';
+    for (const bad of ['"s"', '"don"', '"t"', '"moon\'s"', '"cat\'s"', '"isn"']) {
+      expect(detail).not.toContain(bad);
+    }
+    expect(res.ok).toBe(true);
+  });
+
   it('W-LINE-LONG：超长句只给建议级', () => {
     const ctx = makeCtx();
     for (const w of ['anything', 'today', 'dear', 'friend', 'sir']) ctx.vocab.allowedForms.add(w);
