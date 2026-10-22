@@ -1,9 +1,12 @@
 # A1–A2 学习词库（实验 0 种子版，第 5.1 节）
 #
 # 规模说明：方案目标是约 300 条（220 词义 + 50 词块 + 30 句型）。
-# 本文件是「实验建设」阶段的种子版：58 条（33 词义 + 15 词块 + 10 句型），
-# 覆盖文档示例（behind / under / where-is / past-regular 等）、方位介词 confusables 链、
-# 以及两个频道（duck_detective / impossible_store）的语言亲和方向。
+# 本文件是「实验建设」阶段的种子版，扩过一轮后共 143 条（106 词义 + 22 词块 + 15 句型）。
+# 第一版只有 62 条，20k–20n 的 W-OOV 明细（411 个生词）暴露了覆盖缺口，这一轮按跑批数据补：
+# 商店/侦探线真实高频出现的名词（coin / jar / label / parcel / counter / courier…）、
+# 高频动词（ask / wait / try / check / hide / arrive…）、高频形容词（right / wrong / quiet / strange…），
+# 外加 8 个词块与 5 个句型（现在进行时 / be going to / 比较级 / 所有格 / because 从句）。
+# 离 300 条还有距离：剩下的是低频词，继续按 OOV 数据补，不再凭感觉堆。
 # 扩到 300 条的流程见 docs/experiments/exp-00-director-loop.md 第 8 节 Day 1–2：
 # CEFR-J A1–A2 底表 + compromise 生成 forms + 人工复核 + 补 confusables 与中文释义。
 #
@@ -51,7 +54,82 @@ entries:
   - {id: lx:floor#n.surface, kind: sense, lemma: floor, pos: n, forms: [floor, floors], gloss_zh: 地板, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The sock is on the floor.}
   - {id: lx:wall#n.surface, kind: sense, lemma: wall, pos: n, forms: [wall, walls], gloss_zh: 墙, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The hat is on the wall.}
   - {id: lx:clue#n.evidence, kind: sense, lemma: clue, pos: n, forms: [clue, clues], gloss_zh: 线索, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [], example: The duck found one clue.}
-  - {id: lx:customer#n.buyer, kind: sense, lemma: customer, pos: n, forms: [customer, customers], gloss_zh: 顾客, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: A new customer is here.}
+  - {id: lx:customer#n.buyer, kind: sense, lemma: customer, pos: n, forms: [customer, customers], gloss_zh: 顾客, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [lx:client#n.customer], example: A new customer is here.}
+
+  # ---- 商店 / 侦探线的高频名词（来源：20k–20n 的 W-OOV 明细，不是拍脑袋列的）----
+  - {id: lx:coin#n.money-piece, kind: sense, lemma: coin, pos: n, forms: [coin, coins], gloss_zh: 硬币, cefr: A1, freq_band: 3, facets: [meaning, listening], confusables: [lx:money#n.currency], example: One coin is not enough.}
+  - {id: lx:jar#n.container, kind: sense, lemma: jar, pos: n, forms: [jar, jars], gloss_zh: 罐子, cefr: A1, freq_band: 3, facets: [meaning, listening], confusables: [lx:box#n.container], example: The jar is on the shelf.}
+  - {id: lx:label#n.sticker, kind: sense, lemma: label, pos: n, forms: [label, labels], gloss_zh: 标签, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [lx:note#n.message], example: There is a label on the jar.}
+  - {id: lx:parcel#n.package, kind: sense, lemma: parcel, pos: n, forms: [parcel, parcels], gloss_zh: 包裹, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [lx:box#n.container], example: The parcel is for the cat.}
+  - {id: lx:gift#n.present, kind: sense, lemma: gift, pos: n, forms: [gift, gifts], gloss_zh: 礼物, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: This gift is for the moon.}
+  - {id: lx:note#n.message, kind: sense, lemma: note, pos: n, forms: [note, notes], gloss_zh: 便条, cefr: A1, freq_band: 3, facets: [meaning, listening], confusables: [lx:label#n.sticker], example: The duck wrote a note.}
+  - {id: lx:counter#n.shop-surface, kind: sense, lemma: counter, pos: n, forms: [counter, counters], gloss_zh: 柜台, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [lx:desk#n.work-table], example: Put the parcel on the counter.}
+  - {id: lx:clock#n.timepiece, kind: sense, lemma: clock, pos: n, forms: [clock, clocks], gloss_zh: 时钟, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The clock is on the wall.}
+  - {id: lx:cup#n.drink-vessel, kind: sense, lemma: cup, pos: n, forms: [cup, cups], gloss_zh: 杯子, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The tea is in the cup.}
+  - {id: lx:window#n.opening, kind: sense, lemma: window, pos: n, forms: [window, windows], gloss_zh: 窗户, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The cat sits at the window.}
+  - {id: lx:desk#n.work-table, kind: sense, lemma: desk, pos: n, forms: [desk, desks], gloss_zh: 书桌, cefr: A1, freq_band: 3, facets: [meaning, listening], confusables: [lx:counter#n.shop-surface], example: The key is on the desk.}
+  - {id: lx:photo#n.picture, kind: sense, lemma: photo, pos: n, forms: [photo, photos], gloss_zh: 照片, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: This photo is a clue.}
+  - {id: lx:file#n.document, kind: sense, lemma: file, pos: n, forms: [file, files], gloss_zh: 档案, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [], example: The file is in the office.}
+  - {id: lx:shop#n.store, kind: sense, lemma: shop, pos: n, forms: [shop, shops], gloss_zh: 商店, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [lx:store#n.shop], example: The shop is open.}
+  - {id: lx:store#n.shop, kind: sense, lemma: store, pos: n, forms: [store, stores], gloss_zh: 商店（美式）, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:shop#n.store], example: The store sells socks.}
+  - {id: lx:office#n.workplace, kind: sense, lemma: office, pos: n, forms: [office, offices], gloss_zh: 办公室, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The office is quiet today.}
+  - {id: lx:item#n.thing, kind: sense, lemma: item, pos: n, forms: [item, items], gloss_zh: 物品, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [lx:object#n.thing], example: Every item has a label.}
+  - {id: lx:object#n.thing, kind: sense, lemma: object, pos: n, forms: [object, objects], gloss_zh: 物体, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [lx:item#n.thing], example: The strange object is a gift.}
+  - {id: lx:notebook#n.notepad, kind: sense, lemma: notebook, pos: n, forms: [notebook, notebooks], gloss_zh: 笔记本, cefr: A1, freq_band: 2, facets: [meaning, listening, form], confusables: [], example: The duck has a small notebook.}
+  - {id: lx:envelope#n.cover, kind: sense, lemma: envelope, pos: n, forms: [envelope, envelopes], gloss_zh: 信封, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: The note is in the envelope.}
+  - {id: lx:place#n.location, kind: sense, lemma: place, pos: n, forms: [place, places], gloss_zh: 地方, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [], example: This place is very quiet.}
+  - {id: lx:room#n.space, kind: sense, lemma: room, pos: n, forms: [room, rooms], gloss_zh: 房间, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [], example: The room is empty.}
+  - {id: lx:mouse#n.rodent, kind: sense, lemma: mouse, pos: n, forms: [mouse, mice], gloss_zh: 老鼠, cefr: A1, freq_band: 1, facets: [meaning, listening, form], confusables: [], example: A mouse is in the box.}
+  - {id: lx:courier#n.deliverer, kind: sense, lemma: courier, pos: n, forms: [courier, couriers], gloss_zh: 快递员, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [], example: The courier has a parcel.}
+  - {id: lx:client#n.customer, kind: sense, lemma: client, pos: n, forms: [client, clients], gloss_zh: 委托人, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [lx:customer#n.buyer], example: The client wants the key.}
+
+  # ---- 高频动词 ----
+  - {id: lx:ask#v.question, kind: sense, lemma: ask, pos: v, forms: [ask, asks, asked, asking], gloss_zh: 问, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [lx:answer#v.reply], example: Ask the duck a question.}
+  - {id: lx:answer#v.reply, kind: sense, lemma: answer, pos: v, forms: [answer, answers, answered, answering], gloss_zh: 回答, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [lx:ask#v.question], example: The cat answers the question.}
+  - {id: lx:wait#v.stay, kind: sense, lemma: wait, pos: v, forms: [wait, waits, waited, waiting], gloss_zh: 等待, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: Wait at the counter, please.}
+  - {id: lx:try#v.attempt, kind: sense, lemma: try, pos: v, forms: [try, tries, tried, trying], gloss_zh: 尝试, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: Try the small key.}
+  - {id: lx:check#v.verify, kind: sense, lemma: check, pos: v, forms: [check, checks, checked, checking], gloss_zh: 检查, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:look-for#v.search], example: Check the label on the parcel.}
+  - {id: lx:choose#v.select, kind: sense, lemma: choose, pos: v, forms: [choose, chooses, chose, choosing], gloss_zh: 选择, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: Choose one gift.}
+  - {id: lx:begin#v.start, kind: sense, lemma: begin, pos: v, forms: [begin, begins, began, beginning], gloss_zh: 开始, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:start#v.begin], example: The story begins at the shop.}
+  - {id: lx:start#v.begin, kind: sense, lemma: start, pos: v, forms: [start, starts, started, starting], gloss_zh: 开始, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:begin#v.start], example: The game starts now.}
+  - {id: lx:move#v.change-place, kind: sense, lemma: move, pos: v, forms: [move, moves, moved, moving], gloss_zh: 移动, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: Move the box to the wall.}
+  - {id: lx:keep#v.retain, kind: sense, lemma: keep, pos: v, forms: [keep, keeps, kept, keeping], gloss_zh: 保管, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: Keep the key in your bag.}
+  - {id: lx:read#v.interpret-text, kind: sense, lemma: read, pos: v, forms: [read, reads, reading], gloss_zh: 读, cefr: A1, freq_band: 1, facets: [meaning, listening, form], confusables: [], example: Read the note, please.}
+  - {id: lx:hide#v.conceal, kind: sense, lemma: hide, pos: v, forms: [hide, hides, hid, hiding], gloss_zh: 藏, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:find#v.discover], example: The moon hides the hat.}
+  - {id: lx:arrive#v.reach, kind: sense, lemma: arrive, pos: v, forms: [arrive, arrives, arrived, arriving], gloss_zh: 到达, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The courier arrives at six.}
+  - {id: lx:happen#v.occur, kind: sense, lemma: happen, pos: v, forms: [happen, happens, happened, happening], gloss_zh: 发生, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: Strange things happen here.}
+  - {id: lx:show#v.display, kind: sense, lemma: show, pos: v, forms: [show, shows, showed, showing], gloss_zh: 展示, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: Show me the photo.}
+  - {id: lx:point#v.indicate, kind: sense, lemma: point, pos: v, forms: [point, points, pointed, pointing], gloss_zh: 指, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: The duck points at the jar.}
+  - {id: lx:belong#v.ownership, kind: sense, lemma: belong, pos: v, forms: [belong, belongs, belonged], gloss_zh: 属于, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [], example: This hat belongs to the moon.}
+  - {id: lx:cost#v.price, kind: sense, lemma: cost, pos: v, forms: [cost, costs], gloss_zh: 花费, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [lx:pay#v.give-money], example: The cup costs two coins.}
+  - {id: lx:smile#v.smile, kind: sense, lemma: smile, pos: v, forms: [smile, smiles, smiled, smiling], gloss_zh: 微笑, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The customer smiles.}
+  - {id: lx:sound#v.seem, kind: sense, lemma: sound, pos: v, forms: [sound, sounds, sounded], gloss_zh: 听起来, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [], example: That sounds strange.}
+  - {id: lx:feel#v.sensation, kind: sense, lemma: feel, pos: v, forms: [feel, feels, felt, feeling], gloss_zh: 感觉, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: I feel tired now.}
+  - {id: lx:matter#v.be-important, kind: sense, lemma: matter, pos: v, forms: [matter, matters, mattered], gloss_zh: 要紧, cefr: A2, freq_band: 5, facets: [meaning, listening], confusables: [lx:important#adj.significant], example: It does not matter.}
+
+  # ---- 高频形容词 ----
+  - {id: lx:right#adj.correct, kind: sense, lemma: right, pos: adj, forms: [right], gloss_zh: 对的, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [lx:wrong#adj.incorrect], example: You are right.}
+  - {id: lx:wrong#adj.incorrect, kind: sense, lemma: wrong, pos: adj, forms: [wrong], gloss_zh: 错的, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [lx:right#adj.correct], example: This is the wrong key.}
+  - {id: lx:quiet#adj.silent, kind: sense, lemma: quiet, pos: adj, forms: [quiet, quieter, quietest], gloss_zh: 安静的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:loud#adj.noisy], example: The shop is quiet today.}
+  - {id: lx:loud#adj.noisy, kind: sense, lemma: loud, pos: adj, forms: [loud, louder, loudest], gloss_zh: 响亮的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:quiet#adj.silent], example: The clock is very loud.}
+  - {id: lx:strange#adj.odd, kind: sense, lemma: strange, pos: adj, forms: [strange, stranger, strangest], gloss_zh: 奇怪的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:ordinary#adj.normal], example: A strange object is on the desk.}
+  - {id: lx:ordinary#adj.normal, kind: sense, lemma: ordinary, pos: adj, forms: [ordinary], gloss_zh: 普通的, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [lx:strange#adj.odd], example: It is an ordinary box.}
+  - {id: lx:serious#adj.grave, kind: sense, lemma: serious, pos: adj, forms: [serious], gloss_zh: 严肃的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: The duck has a serious face.}
+  - {id: lx:tiny#adj.very-small, kind: sense, lemma: tiny, pos: adj, forms: [tiny, tinier, tiniest], gloss_zh: 极小的, cefr: A1, freq_band: 3, facets: [meaning, listening], confusables: [], example: A tiny key is in the jar.}
+  - {id: lx:missing#adj.absent, kind: sense, lemma: missing, pos: adj, forms: [missing], gloss_zh: 不见的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:lose#v.misplace], example: The hat is missing.}
+  - {id: lx:useful#adj.helpful, kind: sense, lemma: useful, pos: adj, forms: [useful], gloss_zh: 有用的, cefr: A2, freq_band: 2, facets: [meaning, listening], confusables: [], example: A notebook is useful.}
+  - {id: lx:important#adj.significant, kind: sense, lemma: important, pos: adj, forms: [important], gloss_zh: 重要的, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [lx:matter#v.be-important], example: This clue is important.}
+  - {id: lx:polite#adj.courteous, kind: sense, lemma: polite, pos: adj, forms: [polite], gloss_zh: 有礼貌的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: The courier is very polite.}
+  - {id: lx:careful#adj.cautious, kind: sense, lemma: careful, pos: adj, forms: [careful], gloss_zh: 小心的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: Be careful with the jar.}
+  - {id: lx:ready#adj.prepared, kind: sense, lemma: ready, pos: adj, forms: [ready], gloss_zh: 准备好的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The parcel is ready.}
+  - {id: lx:tired#adj.fatigued, kind: sense, lemma: tired, pos: adj, forms: [tired], gloss_zh: 累的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The cat is tired.}
+  - {id: lx:warm#adj.temperature, kind: sense, lemma: warm, pos: adj, forms: [warm, warmer, warmest], gloss_zh: 温暖的, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [lx:hot#adj.temperature], example: The tea is warm.}
+  - {id: lx:clear#adj.easy-to-see, kind: sense, lemma: clear, pos: adj, forms: [clear, clearer, clearest], gloss_zh: 清楚的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: The photo is clear.}
+  - {id: lx:simple#adj.easy, kind: sense, lemma: simple, pos: adj, forms: [simple, simpler, simplest], gloss_zh: 简单的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: The answer is simple.}
+  - {id: lx:possible#adj.possible, kind: sense, lemma: possible, pos: adj, forms: [possible], gloss_zh: 可能的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [lx:impossible#adj.not-possible], example: Two answers are possible.}
+  - {id: lx:impossible#adj.not-possible, kind: sense, lemma: impossible, pos: adj, forms: [impossible], gloss_zh: 不可能的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [lx:possible#adj.possible], example: Nothing is impossible here.}
+  - {id: lx:hidden#adj.concealed, kind: sense, lemma: hidden, pos: adj, forms: [hidden], gloss_zh: 隐藏的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [lx:hide#v.conceal], example: The key is hidden in the box.}
+  - {id: lx:locked#adj.secured, kind: sense, lemma: locked, pos: adj, forms: [locked], gloss_zh: 锁着的, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [lx:close#v.shut], example: The shop is locked.}
 
   # ---- 词块（第 5.1 节：词块列出全部变体）----
   - {id: ck:where-is, kind: chunk, forms: [where is, where's, where are, where was, where were], gloss_zh: …在哪里, cefr: A1, freq_band: 1, facets: [meaning, listening], confusables: [], example: Where is my hat?}
@@ -69,6 +147,13 @@ entries:
   - {id: ck:here-you-are, kind: chunk, forms: [here you are, here you go], gloss_zh: 给你, cefr: A1, freq_band: 3, facets: [meaning, listening], confusables: [], example: Here you are. One hat.}
   - {id: ck:just-looking, kind: chunk, forms: [just looking], gloss_zh: 只是看看（购物）, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [], example: No, thanks. I'm just looking.}
   - {id: ck:wait-a-minute, kind: chunk, forms: [wait a minute, just a minute], gloss_zh: 等一下, cefr: A1, freq_band: 3, facets: [meaning, listening], confusables: [], example: Wait a minute. The hat is gone.}
+  - {id: ck:right-away, kind: chunk, forms: [right away], gloss_zh: 立刻, cefr: A2, freq_band: 4, facets: [meaning, listening], confusables: [], example: I can help right away.}
+  - {id: ck:no-problem, kind: chunk, forms: [no problem], gloss_zh: 没问题, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: No problem at all.}
+  - {id: ck:all-right, kind: chunk, forms: [all right], gloss_zh: 好吧, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: All right, I can wait.}
+  - {id: ck:on-the-shelf, kind: chunk, forms: [on the shelf], gloss_zh: 在架子上, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: The jar is on the shelf.}
+  - {id: ck:never-mind, kind: chunk, forms: [never mind], gloss_zh: 算了, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: Never mind, I can wait.}
+  - {id: ck:be-careful, kind: chunk, forms: [be careful], gloss_zh: 小心, cefr: A1, freq_band: 2, facets: [meaning, listening], confusables: [], example: Be careful with the jar.}
+  - {id: ck:look-out, kind: chunk, forms: [look out], gloss_zh: 当心, cefr: A2, freq_band: 3, facets: [meaning, listening], confusables: [], example: Look out! The box is heavy.}
 
   # ---- 句型 ----
   - {id: pt:there-is-are, kind: pattern, forms: [there is, there are, there was, there were], gloss_zh: 存在句（有…）, cefr: A1, freq_band: 1, facets: [meaning, listening], prereq: [ck:where-is], example: There is a hat under the table.}
@@ -81,24 +166,47 @@ entries:
   - {id: pt:polite-imperatives, kind: pattern, forms: [], gloss_zh: 礼貌祈使句, cefr: A1, freq_band: 2, facets: [meaning, listening], example: Please take a seat.}
   - {id: pt:how-much-questions, kind: pattern, forms: [], gloss_zh: how much 问价句, cefr: A1, freq_band: 1, facets: [meaning, listening], prereq: [ck:how-much], example: How much are these socks?}
   - {id: pt:negation-dont, kind: pattern, forms: [], gloss_zh: don't 否定句, cefr: A1, freq_band: 1, facets: [meaning, listening], example: I don't sell hats on Mondays.}
+  - {id: pt:present-progressive, kind: pattern, forms: [], gloss_zh: 现在进行时（be + V-ing）, cefr: A1, freq_band: 1, facets: [meaning, listening, form], prereq: [pt:there-is-are], example: The duck is looking for the key.}
+  - {id: pt:be-going-to, kind: pattern, forms: [], gloss_zh: be going to 表打算, cefr: A2, freq_band: 2, facets: [meaning, listening, form], prereq: [pt:present-progressive], example: The moon is going to buy a hat.}
+  - {id: pt:comparatives, kind: pattern, forms: [], gloss_zh: 比较级（-er / more）, cefr: A2, freq_band: 2, facets: [meaning, listening, form], prereq: [lx:expensive#adj.costly], example: This hat is cheaper than mine.}
+  - {id: pt:possessives, kind: pattern, forms: [], gloss_zh: 所有格（'s / mine）, cefr: A1, freq_band: 1, facets: [meaning, listening, form], example: The moon's hat is on the shelf.}
+  - {id: pt:because-clauses, kind: pattern, forms: [], gloss_zh: because 原因从句, cefr: A2, freq_band: 2, facets: [meaning, listening], example: I am here because the shop is open.}
 
 # 功能词白名单（第 5.1 节：约 150 个，任何时候允许出现）
+#
+# 这一版的取舍：只放「闭类词 + 极高频核心词 + 缩写」，内容形容词/名词/动词一律留给 entries
+# 当学习条目（这样 OOV 量的是内容词负载，不是把教材级词汇也算成生词）。
+# 20k–20n 的 OOV 明细暴露出两个缺口：① `of` 这种最常用的介词根本不在表里；
+# ② 缩写只收了人称代词那一批，`we'll` / `there's` / `couldn't` 全漏，模型一用就记成假生词。
 function_words:
-  [a, an, the, and, but, or, so, because, if, when, than, that, this, these, those,
-   i, you, he, she, it, we, they, me, him, her, us, them, my, your, his, its, our, their, mine, yours,
-   myself, yourself, who, whom, whose, which, what, where, why, how, there, here,
+  [a, an, the, and, but, or, so, because, if, when, while, whether, though, although, unless,
+   than, that, this, these, those, such,
+   i, you, he, she, it, we, they, me, him, her, us, them,
+   my, your, his, its, our, their, mine, yours, myself, yourself,
+   who, whom, whose, which, what, where, why, how, there, here,
+   anybody, anyone, everyone, everybody, someone, somebody, nobody,
    am, is, are, was, were, be, been, being, do, does, did, doing, have, has, had, having,
-   will, would, shall, should, can, could, may, might, must,
-   not, no, yes, ok, okay, please, thanks, hello, hi, hey, oh, ah, hmm, well,
-   in, on, at, by, for, with, about, to, from, into, onto, up, down, out, off, over,
-   again, back, then, now, just, very, really, too, also, only, all, some, any, no,
-   one, two, three, four, five, first, last, other, same, different,
+   will, would, shall, should, can, could, may, might, must, cannot,
+   not, no, yes, ok, okay, please, thanks, hello, hi, hey, oh, ah, hmm, well, bye, goodbye, sorry,
+   in, on, at, by, for, with, about, of, to, from, into, onto, up, down, out, off, over,
+   after, before, through, around, across, along, toward, towards, without, during,
+   inside, outside, beside, past, since, until, against, among,
+   again, back, then, now, just, very, really, too, also, only, all, some, any, enough,
+   every, each, another, both, either, neither, own, else, next,
+   already, still, almost, soon, ever, sometimes, usually, often, together, instead, however,
+   once, twice, quite, maybe, perhaps, away, far, fast, early, late, yet,
+   somewhere, anywhere, everywhere,
+   one, two, three, four, five, first, last, other, same, different, more, most, much, many, few, lot,
    good, bad, big, small, little, new, old, long, short,
+   thing, things, something, nothing, everything,
    i'm, it's, that's, don't, doesn't, didn't, can't, won't, isn't, aren't, wasn't, weren't,
+   mustn't, shouldn't, couldn't, wouldn't, haven't, hasn't, hadn't,
    what's, who's, let's, we're, they're, you're, he's, she's, i've, you've, we've, they've,
+   there's, here's, where's, how's,
+   i'll, you'll, he'll, she'll, it'll, we'll, they'll,
+   i'd, you'd, he'd, she'd, we'd, they'd,
    go, goes, went, going, come, comes, came, coming, sit, sits, sat, say, says, said,
    see, sees, saw, seen, know, knows, knew, think, thinks, thought, want, wants, wanted,
    like, likes, liked, need, needs, needed, help, helps, helped, look, looks, looked,
    today, tomorrow, yesterday, tonight, morning, night, day, days, week, always, never,
-   monday, tuesday, wednesday, thursday, friday, saturday, sunday,
-   and, more, most, much, many, few, lot, lot, thing, things, something, nothing, everything]
+   monday, tuesday, wednesday, thursday, friday, saturday, sunday]
