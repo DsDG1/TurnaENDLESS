@@ -319,6 +319,16 @@ describe('导演编排（Stub LLM）', () => {
     expect(out.batch).not.toBeNull();
     expect(out.repairRounds).toBe(1);
     expect(out.calls.map((c) => c.stage)).toEqual(['showrunner', 'writer', 'repair']);
+    // 首版问题单要留下来：跑批后靠它区分「重写救回来了」还是「本来就没问题」
+    expect(out.firstDraftIssues.some((i) => i.code === 'E-PRIMED' && i.level === 'error')).toBe(true);
+  });
+
+  it('首版就通过的批次，firstDraftIssues 里没有阻塞错误', async () => {
+    const { deps } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : GOOD_BATCH));
+    const svc = new DirectorService(deps, config());
+    const out = await svc.generate({ batchId: 'tt-0003', channel: 'duck_detective', brief: BRIEF, ledger: new TropeLedger(), vars: {} });
+    expect(out.batch).not.toBeNull();
+    expect(out.firstDraftIssues.filter((i) => i.level === 'error')).toHaveLength(0);
   });
 
   it('修复两轮仍失败：丢弃问题场景后 brief 仍覆盖则照常使用（V4）', async () => {

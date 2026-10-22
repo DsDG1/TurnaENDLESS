@@ -131,6 +131,8 @@ export interface BatchRecord {
   firstPass: boolean;
   /** 首轮模型原始输出是否零错误（未经机械修复）。用于区分「模型写对了」与「修好了」 */
   rawFirstPass: boolean;
+  /** 第一版模型输出的问题单（含解析失败）：与 issues 对比即可看出重写救回了什么、改坏了什么 */
+  firstDraftIssues: ValidationIssue[];
   repairRounds: number;
   droppedScenes: string[];
   batchFailed: boolean;
@@ -197,6 +199,7 @@ interface PendingBatch {
   batchFailed: boolean;
   firstPass: boolean;
   rawFirstPass: boolean;
+  firstDraftIssues: ValidationIssue[];
   worldVersionAtGen: number;
 }
 
@@ -452,6 +455,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
           batchFailed: false,
           firstPass: out.repairRounds === 0 && out.droppedScenes.length === 0,
           rawFirstPass: rawCleanByBatch.get(out.batch.batch) ?? false,
+          firstDraftIssues: out.firstDraftIssues,
           worldVersionAtGen: worldVersion,
         };
       }
@@ -468,6 +472,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         batchFailed: true,
         firstPass: false,
         rawFirstPass: false,
+        firstDraftIssues: out.firstDraftIssues,
         worldVersionAtGen: worldVersion,
       };
     } catch (e) {
@@ -486,6 +491,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         batchFailed: true,
         firstPass: false,
         rawFirstPass: false,
+        firstDraftIssues: [],
         worldVersionAtGen: worldVersion,
       };
     }
@@ -505,6 +511,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         ok: false,
         firstPass: false,
         rawFirstPass: false,
+        firstDraftIssues: pending.firstDraftIssues,
         repairRounds: pending.repairRounds,
         droppedScenes: [],
         batchFailed: true,
@@ -713,6 +720,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       ok: true,
       firstPass: pending.firstPass,
       rawFirstPass: pending.rawFirstPass,
+      firstDraftIssues: pending.firstDraftIssues,
       repairRounds: pending.repairRounds,
       droppedScenes: pending.droppedScenes,
       batchFailed: false,

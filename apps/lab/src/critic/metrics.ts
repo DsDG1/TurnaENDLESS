@@ -45,6 +45,8 @@ export interface MetricsJson {
     v3AvgRepairRounds: number;
     v4SceneDropRate: number;
     v5Revalidation: { checked: number; regenerated: number };
+    /** 重写/修复的净效果：首版带阻塞错误的批次里救回多少、丢掉多少 */
+    rewriteEffect: { firstDraftDirty: number; recovered: number; lost: number; cleanButFailed: number };
   };
   cost: {
     /** K1：每批 / 每卡 token（按阶段拆分见 calls.jsonl） */
@@ -200,6 +202,16 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
   thresholds.push({ name: 'K4 卡顿概率', value: '见 buffer-sim', threshold: '≤ 5%（P1/缓冲2/预制3）', pass: null });
   thresholds.push({ name: 'N5 疲劳差 / 人工评分', value: '人工', threshold: '见 9.1 表', pass: null });
 
+  // 重写/修复的净效果：首版就有阻塞错误的批次，最后救回来几批、丢掉几批。
+  // 「首版干净但最终失败」虽然少见，但它一定是重写路径自己改坏的，单列出来盯。
+  const dirty = records.filter((r) => (r.firstDraftIssues ?? []).some((i) => i.level === 'error'));
+  const rewriteEffect = {
+    firstDraftDirty: dirty.length,
+    recovered: dirty.filter((r) => r.ok).length,
+    lost: dirty.filter((r) => !r.ok).length,
+    cleanButFailed: records.filter((r) => !r.ok && !(r.firstDraftIssues ?? []).some((i) => i.level === 'error')).length,
+  };
+
   return {
     runId: result.runId,
     batches: records.length,
@@ -226,6 +238,7 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
       v3AvgRepairRounds: records.reduce((s, r) => s + r.repairRounds, 0) / batchesPlayed,
       v4SceneDropRate: played.length ? totals.droppedScenes / played.reduce((s, p) => s + p.batch.scenes.length, 0) : 0,
       v5Revalidation: { checked: v5Checked, regenerated: v5Regen },
+      rewriteEffect,
     },
     cost: {
       k1PerBatch: { input: records.length ? totals.tokensIn / records.length : 0, output: records.length ? totals.tokensOut / records.length : 0 },
@@ -279,6 +292,13 @@ export function metricsMarkdown(m: MetricsJson): string {
   lines.push(`- V0 模型原始首轮零错误率：${pct(m.executability.v0RawFirstPassRate)}（机械修复前；V1 与它的差就是程序化自检的贡献）`);
   lines.push(`- V3 平均修复轮数：${m.executability.v3AvgRepairRounds.toFixed(2)}；V4 场景丢弃率：${pct(m.executability.v4SceneDropRate)}`);
   lines.push(`- V5 状态失效重校验：检查 ${m.executability.v5Revalidation.checked} 批，重生成 ${m.executability.v5Revalidation.regenerated} 批`);
+  {
+    const w = m.executability.rewriteEffect;
+    lines.push(
+      `- 重写净效果：首版带阻塞错误 ${w.firstDraftDirty} 批 → 救回 ${w.recovered} 批、丢掉 ${w.lost} 批` +
+        (w.cleanButFailed > 0 ? `；另有 ${w.cleanButFailed} 批首版干净却最终失败（重写路径改坏的）` : ''),
+    );
+  }
   lines.push('');
   lines.push('### 成本与延迟（K1/K2/K3/K5）');
   lines.push(`- K1 每批：输入 ${m.cost.k1PerBatch.input.toFixed(0)} / 输出 ${m.cost.k1PerBatch.output.toFixed(0)} token；每卡：输入 ${m.cost.k1PerCard.input.toFixed(0)} / 输出 ${m.cost.k1PerCard.output.toFixed(0)}`);

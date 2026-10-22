@@ -76,4 +76,52 @@ describe('metrics', () => {
     expect(md).toContain('运行报告');
     expect(md).toContain('阈值判定');
   });
+
+  it('重写净效果：首版带错的批次分别记为救回/丢掉，首版干净却失败的单独计数', () => {
+    const err = [{ code: 'E-SCHEMA', level: 'error' as const, message: 'x' }];
+    const rec = (seq: number, ok: boolean, firstDraftIssues: { code: string; level: 'error' | 'warn'; message: string }[]) => ({
+      seq,
+      batchId: `b-${seq}`,
+      channel: 'duck_detective',
+      briefId: 'lb-1',
+      cards: 4,
+      ok,
+      firstPass: ok && firstDraftIssues.length === 0,
+      rawFirstPass: firstDraftIssues.length === 0,
+      firstDraftIssues,
+      repairRounds: 0,
+      droppedScenes: [],
+      batchFailed: !ok,
+      issues: [],
+      factRefs: 0,
+      oovRatio: null,
+      tropes: [],
+      logline: '',
+      calls: [],
+      v5Revalidated: false,
+      v5Regenerated: false,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+    const m = computeMetrics(
+      {
+        runId: 'rewrite-effect',
+        records: [rec(1, true, err), rec(2, false, err), rec(3, false, []), rec(4, true, [])] as never,
+        played: [],
+        briefs: new Map(),
+        feedbacks: [],
+        ledgerEntries: [],
+        sim: undefined as never,
+        srs: undefined as never,
+        ability: undefined as never,
+        exposureCounts: new Map(),
+        introduced: new Set(),
+        totals: { batchesOk: 2, batchFailed: 2, droppedScenes: 0, cards: 16, tokensIn: 0, tokensOut: 0, calls: 0, firstPass: 2, rawFirstPass: 2 },
+      },
+      {},
+    );
+    expect(m.executability.rewriteEffect).toEqual({ firstDraftDirty: 2, recovered: 1, lost: 1, cleanButFailed: 1 });
+    expect(metricsMarkdown(m)).toContain('重写净效果：首版带阻塞错误 2 批 → 救回 1 批、丢掉 1 批');
+    expect(metricsMarkdown(m)).toContain('另有 1 批首版干净却最终失败');
+  });
 });

@@ -22,7 +22,7 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 
 ```bash
 pnpm install
-pnpm test            # 全部 143 个测试（esl 68 / world 12 / learning 18 / director 23 / lab 22）
+pnpm test            # 全部 145 个测试（esl 68 / world 12 / learning 18 / director 24 / lab 23）
 pnpm lab check       # 校验全部数据文件 + 提示词冻结漂移（Day 1–2 完成标志）
 pnpm lab smoke       # Stub 导演 5 批端到端冒烟（无需 API key）
 pnpm lab freeze      # 冻结当前提示词（默认 v1，之后版本自动递增）
@@ -93,3 +93,4 @@ docs/                # 实验方案与开源调研（唯一的规范来源）
 - **L3 OOV 中位 13%**（方案阈值 8%，已按偏差 #6 放宽并在配置里记录），根因是词库只有 62 条。
 - **`prices.yaml` 空**：K2 成本项不可判定。
 - **只跑过快速档 20 批单样本**；编剧室高档（R6）与三画像（P1/P2/P3）都还没跑。
+- **「重写是净收益还是净损失」还没有数字**：首版问题单（`firstDraftIssues`）与「重写净效果」指标已经落盘，等下一轮 60 批跑完才有结论。

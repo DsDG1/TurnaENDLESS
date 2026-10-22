@@ -81,6 +81,8 @@ export interface DirectorOutcome {
   batch: Batch | null;
   plan?: Plan;
   issues: ValidationIssue[];
+  /** 第一版模型输出（未经解析重写/修复/整批重写）的问题单 —— 用来量化「重写是净收益还是净损失」 */
+  firstDraftIssues: ValidationIssue[];
   repairRounds: number;
   precheckRetries: number;
   precheckFailures: string[];
@@ -244,6 +246,9 @@ export class DirectorService {
     let text = '';
     let validated = this.validate('', enc);
     let parseRetries = 0;
+    // 第一版输出的问题单（含解析失败）。后面的解析重写、逐场修复、整批重写都在改这份问题单，
+    // 只有把它留下来，跑批结束后才能回答「重写救回来的多，还是改坏的多」。
+    let firstDraftIssues: ValidationIssue[] | null = null;
     // 解析不出批次时，修复循环拿不到场景（badSceneIds 为空），只能整批失败；
     // 给它一次「带着解析错误重写」的机会，能把单个 schema 错误救回来。
     for (;;) {
@@ -257,6 +262,7 @@ export class DirectorService {
               .join('\n')}`;
       text = await this.complete(stage, genTemplate, { ...baseVars, retry_note: note });
       validated = this.validate(text, enc);
+      firstDraftIssues ??= validated.issues;
       if (validated.batch || parseRetries >= (this.config.maxParseRetries ?? 1)) break;
       parseRetries++;
     }
@@ -309,6 +315,7 @@ export class DirectorService {
         batch: validated.batch,
         plan,
         issues: validated.issues,
+        firstDraftIssues: firstDraftIssues ?? [],
         repairRounds,
         precheckRetries,
         precheckFailures,
@@ -330,6 +337,7 @@ export class DirectorService {
           batch: trimmed,
           plan,
           issues: validated.issues.filter((i) => !badSceneIds.has(i.scene ?? '')),
+          firstDraftIssues: firstDraftIssues ?? [],
           repairRounds,
           precheckRetries,
           precheckFailures,
@@ -343,6 +351,7 @@ export class DirectorService {
       batch: null,
       plan,
       issues: validated.issues,
+      firstDraftIssues: firstDraftIssues ?? [],
       repairRounds,
       precheckRetries,
       precheckFailures,
