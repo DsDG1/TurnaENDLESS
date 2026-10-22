@@ -1,0 +1,24 @@
+# 探针：6 批真实生成，只为一件事——验证「重写净效果」指标在真实失败批次上有数。
+# 除 run_id 与批数外与 run-smoke20n.yaml 完全一致（v11、两段式、快速档、P1），
+# 所以前 6 批与 20n 的前 6 批同源，可以互相参照。产物：runs/fd-probe6/
+run_id: fd-probe6
+director: two-stage
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast
+persona: P1
+batches: 6
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+# OOV 阈值：种子词库 62 条时放宽（方案默认 2%/5%）；词库扩到 ~300 条后调回。
+oov_warn: 0.08
+oov_block: 0.25

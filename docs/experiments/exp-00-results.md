@@ -55,7 +55,8 @@ R0–R6 与人工评审完成后按下面格式补正式判定：
 | `smoke-real-20l` | 与 20k 完全相同，只换 `run_id`（方差采样 + V0 指标） | 20 | `config/run-smoke20l.yaml` | 17/20 批通过，63 卡，78 次调用；**V0 原始首轮合规 0/20**（§4.2） |
 | `smoke-real-20m` | 提示词 v10（修掉示例里 3 选项却标 `recognition-4` 的自相矛盾） | 20 | `config/run-smoke20m.yaml` | **19/20 批通过，68 卡，75 次调用；V0 1/20，V1 60%**（§4.2） |
 | `smoke-real-20n` | 提示词 v11（补齐六种 effect 的字段，`open_thread` 的必填项） | 20 | `config/run-smoke20n.yaml` | 17/20 批通过，64 卡，57 次调用；**V0 3/20，V1 70%**（§4.2） |
-| promptfoo 矩阵 | 2 模型 × 5 条样例，单次生成合规率（无修复循环） | 10 格 | `promptfoo/promptfooconfig.yaml` | **1/10 通过**（变量补齐后重测，§4.4） |
+| `fd-probe6` | 「重写净效果」指标探针（与 20n 同配置，只缩到 6 批） | 6 | `config/run-fd-probe6.yaml` | 6/6 批通过，23 卡，21 次调用；V0 2/6，V1 4/6；**首版带错 2 批全部救回**（§4.5） |
+| promptfoo 矩阵 | 2 模型 × 5 条样例，单次生成合规率（无修复循环） | 10 格 | `promptfoo/promptfooconfig.yaml` | **5/10 通过（v11 重跑；§4.4）** |
 
 ## 3. 阈值对照（方案 9.1）
 
@@ -504,6 +505,26 @@ Stub 5 批（`pnpm lab smoke`）只能证明流水线接线正确：Stub 的 YAM
 2. `asset_tags` 必须是 `data/assets/manifest.yaml` 里真实存在的背景标签与 emoji 名（背景只有 6 个，`@tag:street` 直接 `E-ASSET-MISSING`；`hat` 是 tag 不是 emoji 名）。另外 `lab assert` 有 `--oov-warn` / `--oov-block` / `--allowed-extra`，矩阵按运行配置的 8%/25% 与用例词表判定，否则默认 2%/5% 会把「能过流水线」的批次判成失败。
 3. **占位符漏填**：`single.md` 有 16 个占位符，`defaultTest.vars` 原来只给了 9 个，`backgrounds`（v9 新增）/ `learning_checklist` / `allowed_words` / `retry_note` 一直以字面量 `{{...}}` 送进模型。之前那版「3/10」就是在提示词缺这四块上下文时量出来的，不能当基线。现已补上：`backgrounds` 与 `allowed_words` 由 `promptfoo/render-vars.ts` 按流水线 `buildVars` 的同一规则算出（冷启动、A1 的真实允许词表），脚本带 `--check` 防止以后再漏。
 4. **夹具里自造了词库条目**：A2 样例的 brief 曾写 `lx:cheap#adj.affordable`，真实条目是 `lx:cheap#adj.inexpensive`，模型老实照抄 `uses` 就触发 `E-SCHEMA`。夹具引用的每个 `lx:` / `ck:` id 都必须能在 `data/lexicon` 里查到——这一条同样是矩阵可信度的前提。
+
+### 4.5 「重写净效果」首测（6 批探针）
+
+§7 第 6 条要回答的是「修复循环会不会越修越差」。为此导演从第一次校验起就留存首版问题单（`firstDraftIssues`），`report.json` 与失败批次的 `failed.json` 都写，`metrics.json` 聚合成 `rewriteEffect`。为了验证这条链路在真实失败批次上真的有数，跑了一次 6 批探针 `fd-probe6`（`config/run-fd-probe6.yaml`，除 `run_id` 与批数外与 20n 完全一致，所以前 6 批与 20n 的前 6 批同源）。
+
+| 项 | 值 |
+|---|---|
+| 通过 | 6/6，23 卡，21 次调用 |
+| V0 原始首轮零错误 | 2/6 = 33.3% |
+| V1 机械修复后首次通过 | 4/6 = 66.7% |
+| V2 修复后通过 | 100% |
+| 首版即有阻塞错误 | 2 批 → 救回 2、丢掉 0 |
+| 首版干净却最终失败 | 0 |
+
+两个带阻塞错误的批次走了**两条不同的救回路径**，正好说明这个指标为什么必须分字段记：
+
+- `b-0004`：首版只有 1 个 `E-ASSET-MISSING`，autofix / 逐场修复就地改掉，最终 0 错误——机器修得动的那类。
+- `b-0006`：首版自造了两个 cast 成员（`robot`、`clerk`），连带 6 个阻塞错误（`E-ENTITY-UNKNOWN` ×2 + `E-ASSET-MISSING` ×4）；autofix 不敢猜角色，整批重写一次后干净，只剩 `W-OOV 13.1%`。**这正是「模型编名字」那一族里唯一能靠重写救回来的分支**，也解释了 §4.2 里 20n 那 2 批为什么失败：它们是在重写**之后**才写出非法条目 ID 的。
+
+必须说清楚的分寸：6 批的噪声是 ±2 批，33.3% 的 V0 不能拿去和 20 批的 15% 比大小；这一节的结论只有一条——**链路通了，且救回/丢掉/改坏三类能分得开**。真正的回答要等 R0–R6 那轮 60 批。
 
 ## 5. 偏差与决策记录
 
