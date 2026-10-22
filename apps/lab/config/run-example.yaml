@@ -1,13 +1,13 @@
 # 运行配置模板（复制到 runs/<run_id>/config.yaml 后修改）。
 # 每个运行的随机种子、提示词哈希、模型 ID 都写入本文件（第 7.1 节）。
 run_id: R3-example
-# 实验矩阵因子（R0–R6）
+# 实验矩阵因子（R0–R5；R6 已删，见结果文档 §7 第 8 条）
 director: two-stage          # two-stage | single
 world_state: true            # false 时上下文用「最近 3 批摘要」代替（R0）
 trope_ledger: true
 encoding: yaml               # yaml | json（RQ5）
 derive: false                # 派生场景开关（R5+）
-showrunner_tier: fast        # fast | premium（R6 的编剧室用高档）
+showrunner_tier: fast        # fast | premium（premium 目前与 fast 同型号，未用于正式矩阵）
 # 学习与模拟
 persona: P1                  # P1 快刷 / P2 认真 / P3 偏科
 batches: 60

@@ -5,7 +5,7 @@ provider:
   name: minimax
   base_url: https://api.minimax.cn/v1
   api_key_env: ENDLESS_API_KEY
-  # 推理强度：MiniMax M3 系列是推理模型，思考 token 计入输出上限。
+  # 推理强度：该模型是推理模型，思考 token 计入输出上限。
   # 长输出（分场编剧要写整批 YAML）时用 low，否则正文可能被思考吃光而返回空串。
   reasoning_effort: low
   # 单次调用超时（毫秒）：推理模型单次常要几十秒，5 分钟留足余量
@@ -13,9 +13,9 @@ provider:
 models:
   # 快速档：单批 P95 时延要满足 H7（卡顿概率 ≤ 5%）
   fast: MiniMax-M3.1-Flash
-  # 高档：暂时与快速档同模型。
-  # 换用 MiniMax-M3 的代价：它在 reasoning_effort=low 时会把思考内联进正文（`Thinking:…`），
-  # 而 M3.1-Flash 根本不允许关思考（thinking.type=disabled → HTTP 400，要求自适应思考）。
-  # 所以这里不赌「思考关得掉」：解析层（packages/esl/src/parse.ts 的 stripThinking）已能容忍内联思考，
-  # 以后换更强的模型只改这一行，不用改代码。
+  # 高档：与快速档同型号。本实验只用 MiniMax-M3.1-Flash 一个型号（2026-10-22 决定）。
+  # 该型号不允许关思考（thinking.type=disabled → HTTP 400，要求自适应思考），
+  # 所以不赌「思考关得掉」：解析层（packages/esl/src/parse.ts 的 stripThinking）已能容忍内联思考。
+  # 因为两档同型号，R6（编剧室高档）没有可跑的内容，已从正式矩阵删除（结果文档 §7 第 8 条）；
+  # 将来确定第二个型号时只改这一行，先验解析层，再恢复 R6。
   premium: MiniMax-M3.1-Flash

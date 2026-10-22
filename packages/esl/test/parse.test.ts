@@ -29,6 +29,17 @@ describe('stripThinking', () => {
     expect(stripThinking('{"batch":"dd-0042"}')).toBeNull();
   });
 
+  it('编剧室计划（logline/beats 开头）也算答案开头', () => {
+    const text = 'Thinking:\n计划先想场景序列。\n\nlogline: 一只鸭子找钥匙\nbeats:\n  - {n: 1, scene: comic}';
+    expect(stripThinking(text)).toBe('logline: 一只鸭子找钥匙\nbeats:\n  - {n: 1, scene: comic}');
+  });
+
+  it('模型只打了一个反引号当栅栏时，切在计划首行并去掉这个反引号', () => {
+    // 离线样本里的实际形态：思考段落最后一行是 "Better:"，下一行是 `logline: ...
+    const text = 'ThinkingWe need YAML. Better:\n`logline: "A polite badger"\nbeats: []';
+    expect(stripThinking(text)).toBe('logline: "A polite badger"\nbeats: []');
+  });
+
   it('有思考标记但找不到答案开头时返回 null，不瞎猜', () => {
     expect(stripThinking('Thinking: 我还没想好要写什么')).toBeNull();
   });

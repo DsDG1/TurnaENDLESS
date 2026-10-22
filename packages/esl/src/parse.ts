@@ -10,10 +10,14 @@ export function detectFormat(text: string): SurfaceFormat {
   return text.trimStart().startsWith('{') ? 'json' : 'yaml';
 }
 
-const THINK_OPEN = /^(?:<\s*thinking\s*>|thinking)/i;
+// 实测三种开头：`<think>`（短标签）、`<thinking>`、以及无标签的 `Thinking…`/`Thinking:`
+const THINK_OPEN = /^(?:<\s*(?:think|thinking|reasoning)\s*>|think)/i;
 const THINK_CLOSE = /<\/\s*(?:think|thinking|reasoning)\s*>/i;
-/** 答案第一行的样子：`scenes:` / `batch:` / 代码围栏 / JSON 开头。 */
-const ANSWER_HEAD = /^\s*(?:scenes\s*:|batch\s*:|```|\{|\[)/;
+/**
+ * 答案第一行的样子：批次文本（`batch:` / `scenes:` / JSON）、计划文本（`logline:` / `beats:` …）、
+ * 代码围栏。单/双反引号是模型「想开栅栏但只打了一两个」的常见残缺写法，也认。
+ */
+const ANSWER_HEAD = /^\s*(?:`{1,2}\s*)?(?:batch\s*:|scenes\s*:|logline\s*:|beats\s*:|cast\s*:|channel\s*:|hook_out\s*:|```|\{|\[)/;
 
 /**
  * 剥掉推理模型内联进正文的思考块（第 5.8.6 节）。
@@ -25,7 +29,7 @@ const ANSWER_HEAD = /^\s*(?:scenes\s*:|batch\s*:|```|\{|\[)/;
  *
  * 只在正文开头出现思考标记时才动手，正常输出原样返回（返回 null 表示「没找到可剥的块」）：
  *   1. 有闭合标记（`</thinking>`，或实测见到的短形式 `</think>`）→ 取闭合标记之后的内容；
- *   2. 没有闭合标记 → 从第一行「像答案开头」的行开始取；
+ *   2. 没有闭合标记 → 从第一行「像答案开头」的行开始取（顺手去掉那一两个残缺的反引号）；
  *   3. 两者都找不到 → 返回 null，让调用方按原样解析并报错，不猜。
  */
 export function stripThinking(text: string): string | null {
@@ -38,8 +42,11 @@ export function stripThinking(text: string): string | null {
   }
   const lines = t.split(/\r?\n/);
   for (let i = 1; i < lines.length; i++) {
-    if (ANSWER_HEAD.test(lines[i]!)) {
-      const rest = lines.slice(i).join('\n').trim();
+    const line = lines[i]!;
+    if (ANSWER_HEAD.test(line)) {
+      // 整行是 ``` 围栏时保留（下游 parseLooseYaml 会自己剥栅栏）；只有 1–2 个反引号才当噪声去掉
+      const head = /^\s*```/.test(line) ? line : line.replace(/^(\s*)`{1,2}\s*/, '$1');
+      const rest = [head, ...lines.slice(i + 1)].join('\n').trim();
       return rest === '' ? null : rest;
     }
   }

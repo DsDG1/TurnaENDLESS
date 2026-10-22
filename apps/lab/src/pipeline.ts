@@ -81,7 +81,7 @@ export interface PipelineOptions {
   director: 'two-stage' | 'single';
   encoding: 'yaml' | 'json';
   derive: boolean;
-  /** 编剧室用的模型档位（R6：高档编剧室 + 快速档分场） */
+  /** 编剧室用的模型档位（premium 只换编剧室、分场仍走 fast；目前两档同型号，未用于正式矩阵） */
   showrunnerTier?: 'fast' | 'premium';
   worldState: boolean;
   tropeLedgerOn: boolean;

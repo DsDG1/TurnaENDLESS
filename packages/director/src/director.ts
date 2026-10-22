@@ -38,8 +38,10 @@ export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
   maxParseRetries: 1,
   maxRewrites: 1,
   // 编剧室输出是计划（logline/节拍/卡司），正文不长，但思考 token 也计入：
-  // 2048 时实测出现过 think=2047 finish=length 的空响应（20g 第 9 批，靠重试救回）。
-  maxTokensByStage: { showrunner: 4096, writer: 8192, single: 8192, repair: 4096 },
+  // 2048 时实测出现过 think=2047 finish=length 的空响应（20g 第 9 批，靠重试救回）；
+  // 4096 在 v11/v12 更长的提示词下又顶到边缘（20n 的 b-0009/b-0013 各一次 finish=length，
+  // 全是思考、正文空，合计空转约 8k token）。上限只在用满时计费，所以留出余量：
+  maxTokensByStage: { showrunner: 6144, writer: 8192, single: 8192, repair: 4096 },
 };
 
 export interface CallRecord {

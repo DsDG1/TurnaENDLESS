@@ -259,7 +259,7 @@ async function cmdRun(): Promise<void> {
   for (const sub of ['batches', 'render', 'cache']) {
     await mkdir(safeChild(outDir, sub, [RUNS_DIR], 'run 子目录'), { recursive: true });
   }
-  // --persona / --batches 覆盖配置文件：R0–R6 每个配置 × 3 个画像共用一份配置
+  // --persona / --batches 覆盖配置文件：R0–R5 每个配置 × 3 个画像共用一份配置
   const persona = arg('persona');
   const overrides: Partial<RunConfig> = {
     batches: argInt('batches', cfg.batches),

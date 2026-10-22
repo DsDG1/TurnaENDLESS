@@ -388,12 +388,12 @@ describe('导演编排（Stub LLM）', () => {
     ]);
   });
 
-  it('只传部分配置时按阶段上限补默认值（不传 maxTokensByStage 也要拿到 8192 的分场上限）', async () => {
+  it('只传部分配置时按阶段上限补默认值（不传 maxTokensByStage 也要拿到 6144/8192 的默认上限）', async () => {
     const { deps, stub } = makeDeps((stage) => (stage === 'showrunner' ? PLAN_YAML : GOOD_BATCH));
     const svc = new DirectorService(deps, { mode: 'two-stage', encoding: 'yaml', maxPrecheckRetries: 2, maxRepairRounds: 2 });
     await svc.generate({ batchId: 'tt-0007b', channel: 'duck_detective', brief: BRIEF, ledger: new TropeLedger(), vars: {} });
     expect(stub.calls.map((c) => [c.stage, c.maxTokens])).toEqual([
-      ['showrunner', 4096],
+      ['showrunner', 6144],
       ['writer', 8192],
     ]);
   });
