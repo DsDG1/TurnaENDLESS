@@ -155,6 +155,7 @@ describe('渲染器', () => {
       targets: [],
       ink: new Map(),
       sceneSequence: [],
+      vocab: { totalTokens: 0, oovTokens: 0, oovRatio: 0 },
     }, { lexicon: { formsOf: (i) => data.lexicon.forms.get(i), confusables: () => [] } });
     const md = renderBatch(parsed.batch, ast, data);
     expect(md).toContain('dd-9001');

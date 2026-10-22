@@ -726,7 +726,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       batchFailed: false,
       issues: pending.issues,
       factRefs: pending.report.factRefs,
-      oovRatio: oovRatioOf(pending.report.issues),
+      oovRatio: pending.report.vocab.oovRatio,
       tropes: pending.tropes,
       logline: pending.logline,
       calls: pending.calls,
@@ -809,16 +809,6 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
     introduced,
     totals,
   };
-}
-
-function oovRatioOf(issues: ValidationIssue[]): number | null {
-  for (const i of issues) {
-    if (i.code === 'E-OOV-HIGH' || i.code === 'W-OOV') {
-      const m = i.message.match(/([0-9.]+)%/);
-      if (m) return Number(m[1]) / 100;
-    }
-  }
-  return null;
 }
 
 function recentCastCountsOf(ledger: TropeLedger): Map<string, number> {

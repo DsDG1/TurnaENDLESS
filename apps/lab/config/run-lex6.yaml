@@ -1,0 +1,26 @@
+# 探针：词库从 62 条扩到 143 条（+ 功能词 226→321、OOV 分词修假阳性）之后，
+# L3 的 OOV 中位数到底掉了多少。6 批只是探针，不能当通过率结论用。
+# 除 run_id 外与 run-fd-probe6.yaml 完全一致，所以可以和 fd-probe6、20n 前 6 批横向比。
+# 产物：runs/lex6/
+run_id: lex6
+director: two-stage
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast
+persona: P1
+batches: 6
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+# OOV 阈值刻意不动（方案默认 2%/5%，种库期放宽到 8%/25%）：
+# 这一轮要量的是「同一把尺子下词库扩容的作用」，口径一改就没法归因。
+oov_warn: 0.08
+oov_block: 0.25

@@ -72,6 +72,10 @@ export interface ValidateOutput extends ValidationReport {
   targets: { sceneId: string; path: string; itemId: string; form: string; start: number; end: number }[];
   ink: Map<string, InkCheckResult>;
   sceneSequence: string[];
+  /** §12 词表预算的原始计数：即使没超阈值也回报，供 L3 指标使用。
+   * 早先只能从 W-OOV 消息里正则抠百分比，于是 OOV 低于告警线的批次被当成「没有数据」丢掉，
+   * 指标整体偏高（结果文档 §4.6）。 */
+  vocab: { totalTokens: number; oovTokens: number; oovRatio: number };
 }
 
 const retrievalTypes: EvidenceType[] = ['recognition-2', 'recognition-4', 'listening-4', 'production'];
@@ -430,18 +434,33 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
   }
 
   // ---------- 12. 词汇预算（OOV 与句长） ----------
-  const singleForms = ctx.vocab.allowedForms;
-  const multiForms = new Set([...singleForms].filter((f) => f.includes(' ')));
-  for (const f of multiForms) singleForms.delete(f);
+  // 复制一份：下面会把多词形式挪到 multiForms，直接改 ctx 里的集合会污染调用方的词表。
+  const singleForms = new Set(ctx.vocab.allowedForms);
+  // 多词形式按首词建索引，支持 3 词以上（in front of / on the shelf），并按长度降序优先匹配长的
+  const multiByFirst = new Map<string, string[][]>();
+  for (const f of singleForms) {
+    if (!f.includes(' ')) continue;
+    singleForms.delete(f);
+    const words = f.split(/\s+/);
+    const list = multiByFirst.get(words[0]!) ?? [];
+    list.push(words);
+    multiByFirst.set(words[0]!, list);
+  }
+  for (const list of multiByFirst.values()) list.sort((a, b) => b.length - a.length);
   let totalTokens = 0;
   let oovTokens = 0;
   const oovDetail: string[] = [];
   for (const u of textUnits) {
     const tokens = tokenize(u.text);
+    totalTokens += tokens.length; // 多词形式占的 token 也是真 token，计入分母
     for (let i = 0; i < tokens.length; i++) {
-      totalTokens++;
       const t = tokens[i]!;
-      const next = i + 1 < tokens.length ? tokens[i + 1]! : null;
+      // 先试多词形式：in front of 里的 in、of 单独也算已知，若先走单词分支就会把 front 剩成生词
+      const multi = multiByFirst.get(t)?.find((words) => words.every((w, k) => tokens[i + k] === w));
+      if (multi) {
+        i += multi.length - 1; // 整个多词形式算已知
+        continue;
+      }
       // 所有格：`moon's hat` 里该查的是 moon；"'s" 本身永远不算生词。
       const possessiveBase = t.endsWith("'s") && t.length > 2 ? t.slice(0, -2) : null;
       if (
@@ -450,10 +469,6 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
         t === "n't" ||
         t === "'s"
       ) {
-        continue;
-      }
-      if (next && multiForms.has(`${t} ${next}`)) {
-        i++; // 多词形式占两个 token
         continue;
       }
       oovTokens++;
@@ -487,5 +502,5 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
   ).length;
 
   const ok = !issues.some((i) => i.level === 'error');
-  return { ok, issues, derivedEvidence, factRefs, textUnits, targets, ink: inkResults, sceneSequence };
+  return { ok, issues, derivedEvidence, factRefs, textUnits, targets, ink: inkResults, sceneSequence, vocab: { totalTokens, oovTokens, oovRatio } };
 }

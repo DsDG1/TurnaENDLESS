@@ -472,6 +472,33 @@ describe('反例', () => {
     });
     expect(codes(b).codes.has('E-OOV-HIGH')).toBe(true);
   });
+
+  it('§12 词表计数：没触发告警也要回报比例（L3 指标读取原始计数）', () => {
+    // 早先 L3 只能从 W-OOV 文案里正则抠百分比，于是「OOV 低于告警线」的批次被当成没有数据丢掉，
+    // 指标系统性偏高（结果文档 §4.6）。现在由校验器直接回报 totalTokens / oovTokens。
+    const clean = validateBatch(loadBaseBatch(), makeCtx());
+    expect(clean.vocab.totalTokens).toBeGreaterThan(0);
+    expect(clean.vocab.oovTokens).toBe(0);
+    expect(clean.vocab.oovRatio).toBe(0);
+    const b = mutate((x) => {
+      sceneOf(x, 's1', 'comic').panels[0]!.bubbles.push({ speaker: 'moon', text: 'Zorp quibbles the fluminox snib.' });
+    });
+    const dirty = validateBatch(b, makeCtx());
+    expect(dirty.vocab.oovTokens).toBeGreaterThan(0);
+    expect(dirty.vocab.oovRatio).toBeCloseTo(dirty.vocab.oovTokens / dirty.vocab.totalTokens, 10);
+  });
+
+  it('§12 不污染调用方的词表：多词形式不会被第一轮校验吃掉', () => {
+    const ctx = makeCtx();
+    ctx.vocab.oovWarn = 0;
+    ctx.vocab.oovBlock = 1;
+    const b = mutate((x) => {
+      sceneOf(x, 's1', 'comic').panels[0]!.bubbles.push({ speaker: 'moon', text: 'in front of' });
+    });
+    expect(validateBatch(b, ctx).vocab.oovTokens).toBe(0); // 多词形式整体算已知
+    // 第二轮复用同一个 ctx：若第一轮直接从 ctx 的集合里删了多词形式，这里 in / front / of 会变成 3 个生词
+    expect(validateBatch(b, ctx).vocab.oovTokens).toBe(0);
+  });
 });
 
 // ---------- 覆盖率自检：全部阻断码都有反例 ----------

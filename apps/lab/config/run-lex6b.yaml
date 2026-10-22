@@ -1,0 +1,24 @@
+# 复测：口径修正后（L3 由校验器直接回报计数、多词形式整段算已知）再跑 6 批，
+# 给结果文档 §4.6 一个和当前代码一致的 L3 数字。6 批只是探针。
+# 除 run_id 外与 run-lex6.yaml 完全一致。
+# 产物：runs/lex6b/
+run_id: lex6b
+director: two-stage
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast
+persona: P1
+batches: 6
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+oov_warn: 0.08
+oov_block: 0.25
