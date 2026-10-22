@@ -6,6 +6,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Batch } from '@endless/esl';
+import { stripThinking } from '@endless/esl';
 import { AiSdkLlmClient } from '@endless/director';
 import { renderTemplate } from '@endless/director';
 import { loadLabData } from '../data.js';
@@ -64,7 +65,9 @@ export async function runJudge(runDir: string, tier: 'fast' | 'premium' = 'premi
 }
 
 function parseVerdict(text: string, file: string): JudgeVerdict {
-  const stripped = text.replace(/^```[a-z]*\r?\n?/i, '').replace(/\r?\n?```\s*$/i, '');
+  // 先剥思考块：推理模型的思考里也常有 `{}`，不剥会把思考里的花括号当 JSON 起点
+  const cleaned = stripThinking(text) ?? text;
+  const stripped = cleaned.replace(/^```[a-z]*\r?\n?/i, '').replace(/\r?\n?```\s*$/i, '');
   const start = stripped.indexOf('{');
   const end = stripped.lastIndexOf('}');
   if (start === -1 || end <= start) return { batchFile: file, parseError: '输出不是 JSON' };

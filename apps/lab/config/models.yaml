@@ -13,5 +13,9 @@ provider:
 models:
   # 快速档：单批 P95 时延要满足 H7（卡顿概率 ≤ 5%）
   fast: MiniMax-M3.1-Flash
-  # 高档：R6 的编剧室用（更强构思能力）
-  premium: MiniMax-M3
+  # 高档：暂时与快速档同模型。
+  # 换用 MiniMax-M3 的代价：它在 reasoning_effort=low 时会把思考内联进正文（`Thinking:…`），
+  # 而 M3.1-Flash 根本不允许关思考（thinking.type=disabled → HTTP 400，要求自适应思考）。
+  # 所以这里不赌「思考关得掉」：解析层（packages/esl/src/parse.ts 的 stripThinking）已能容忍内联思考，
+  # 以后换更强的模型只改这一行，不用改代码。
+  premium: MiniMax-M3.1-Flash

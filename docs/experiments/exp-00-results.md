@@ -91,8 +91,13 @@ R0–R6 与人工评审完成后按下面格式补正式判定：
 ### 4.1 供应商与模型
 
 - 供应商：OpenAI 兼容端点 `https://api.minimax.cn/v1`（写在 `config/models.yaml`）；key 只从环境变量 `ENDLESS_API_KEY` 读取，不写入任何运行文件。
-- 快速档 `MiniMax-M3.1-Flash` / 高档 `MiniMax-M3`。该系列是推理模型：响应用 `reasoning_tokens` 单列思考量，**思考也计入 `max_tokens`**。
+- 两档模型都写在 `config/models.yaml`，目前**两档同为 `MiniMax-M3.1-Flash`**（高档留作换更强模型的位置；此前是 `MiniMax-M3`，因为它在 `reasoning_effort: low` 下会把思考写进正文，见下）。该系列是推理模型：响应用 `reasoning_tokens` 单列思考量，**思考也计入 `max_tokens`**。
 - `models.yaml` 因此显式设 `reasoning_effort: low` 与 `timeout_ms: 300000`。同一提示词下，`low` 把思考 token 从约 330 降到约 115（单次探针）；不提速时单次调用可到 80–100 秒。
+- **思考关不掉是常态，不是例外**（2026-10 单次探针，3 组对照）：
+  - `MiniMax-M3.1-Flash` + `thinking:{type:'disabled'}` → **HTTP 400**，报错原文 `model "MiniMax-M3.1-Flash" requires adaptive thinking; thinking.type="disabled" (including reasoning.effort=none) is not supported`。它只能调 `reasoning_effort`，**没有关掉思考的开关**。
+  - `MiniMax-M3` + `reasoning_effort: low` → 思考被**内联进正文**（`content` 以 `Thinking:…` 开头，`reasoning_tokens=105`），同一写批任务 13.1s vs 4.0s；`MiniMax-M3` + `thinking:{type:'disabled'}` 才干净（4.0s）。即「关思考」是**逐模型能力**，不是通用参数。
+  - 因此不赌「思考一定关得掉」：`models.yaml` 的两档都配 `MiniMax-M3.1-Flash`，并在**解析层**兜底——`packages/esl/src/parse.ts` 的 `stripThinking()` 会剥掉正文开头的内联思考块（`Thinking:…` / `<thinking>…</thinking>`，有闭合标记按标记切，没有则切到第一行像答案开头的行），`parseBatch()` 与导演的计划解析、评审的 JSON 解析都先过它。换更强的模型只改 `models.yaml`，不需要改代码。
+  - 这一条推翻了两处早先的结论：`docs/experiments/exp-00-results.md` 旧版说「只有 `thinking:{type:disabled}` 能关掉」（只对 M3 成立，对 Flash 直接 400）；`promptfoo` 那一节的「高档行测的是关掉思考的 M3」也随之失效——现在高档就是 Flash。
 
 ### 4.2 真实生成冒烟
 
@@ -492,6 +497,8 @@ Stub 5 批（`pnpm lab smoke`）只能证明流水线接线正确：Stub 的 YAM
 
 矩阵的用途是把提示词迭代变成可对比的实验：固定 5 条样例（位置介词暴露、到期复习、价格词块、A2 复习、纯暴露），跑快速档与高档两个模型，**单次生成、不带修复循环**，判定直接用 `lab assert` 调真正的校验器（规则只在 `packages/esl` 一处实现）。
 
+> 下面三轮（v9/v11/v12）的「高档」行都是当时配置里的 `MiniMax-M3`，是**历史数据**；`models.yaml` 现在两档都是 `MiniMax-M3.1-Flash`（§4.1），矩阵的高档行若要复现得先把配置改回去，否则两行同模型。
+
 下表是**第一次跑**（提示词 v9，变量也已补齐）的结果，保留作对照：
 
 | 样例 | 快速档 `MiniMax-M3.1-Flash` | 高档 `MiniMax-M3` |
@@ -556,7 +563,7 @@ Stub 5 批（`pnpm lab smoke`）只能证明流水线接线正确：Stub 的 YAM
 **适配层的两个坑（都已固化进 `promptfoo/provider.js`）**
 
 1. promptfoo 0.124 的 `openai:chat:` provider **不透传 `config.reasoning_effort`**（该参数只在 abliteration / openrouter 等少数 provider 里实现）。推理模型的思考与正文共享 `max_tokens`，结果 10 格全部 `finish_reason=length`、输出以 `Thinking:` 开头、`0 passed / 5 errors`，两次共烧掉约 10 万 completion token。改成 30 行自定义 provider（`file://provider.js`，自己 POST `reasoning_effort`）后一次通过解析。
-2. `MiniMax-M3`（非 Flash）把思考**内联进 `content`**（`Thinking:…` 前缀，没有单独的 `reasoning_content` 字段）；`reasoning_effort: minimal` 与 `enable_thinking: false` 都无效，只有 `thinking: {type: disabled}` 能关掉（各做一次探针验证）。所以高档行测的是「关掉思考的 M3」，不代表它在编剧室阶段（思考开着、输出是计划而非批次文本）的真实水平。
+2. `MiniMax-M3`（非 Flash）把思考**内联进 `content`**（`Thinking:…` 前缀，没有单独的 `reasoning_content` 字段）；`reasoning_effort: minimal` 与 `enable_thinking: false` 都无效，只有 `thinking: {type: disabled}` 能关掉（各做一次探针验证）。**但这条不能推广成「思考总是关得掉」**：同一组探针里 `MiniMax-M3.1-Flash` 对 `thinking: {type: disabled}` 直接返回 HTTP 400（`requires adaptive thinking`），即 Flash 档根本没有关思考的开关。所以矩阵不再赌「关思考」——`models.yaml` 两档都用 Flash，解析层用 `stripThinking()` 兜底内联思考（§4.1）。
 
 **样例夹具的四个坑**（前两个早已固化，后两个这次才踩到）：
 
@@ -634,7 +641,7 @@ Stub 5 批（`pnpm lab smoke`）只能证明流水线接线正确：Stub 的 YAM
 | 1 | 词库 62 → 143 条（方案要求约 300 条） | 扩表是内容工作（CEFR-J 底表 + 人工复核） | 实测证明条目数不是 L3 的瓶颈（§4.6），继续扩表优先级下调 | 用 `lab check` 保证增量合规；结论里标注样本 |
 | 2 | `config/prices.yaml` 单价未填 | 供应商单价未能从公开文档核实 | K2 不可判定 | 拿到单价后回填并重算 `lab metrics`；在此之前 K2 不计入达标项 |
 | 3 | promptfoo 矩阵缩为 2 模型 × 5 条样例（单段提示词） | 真实调用每次 20–40 秒、每格 20 批约需一小时以上；矩阵的用途是提示词迭代，不产正式指标 | 覆盖面小于方案 7.1 | `promptfoo/promptfooconfig.yaml` 是扩表入口：加 `prompts`/`tests` 即可扩格；正式 R0–R6 由 `lab run` 跑 |
-| 4 | 推理强度设为 `low` | 默认强度下长输出会被思考 token 吃光（§4.2） | 构思质量可能略低于默认强度 | 该参数写在 `models.yaml`，正式跑 R0–R6 前对 R6 单独评估是否调回默认 |
+| 4 | 推理强度设为 `low` | 默认强度下长输出会被思考 token 吃光（§4.2） | 构思质量可能略低于默认强度 | 该参数写在 `models.yaml`，对两档都生效；`low` 是唯一能用的强度旋钮（关思考在 Flash 上直接被 400 拒绝，§4.1） |
 | 5 | 提示词迭代到 v12（v1→v2 补 YAML 样例；v3 补证据/effect 硬规则；v4 喂真实允许词表；v6 加学习任务清单；v7 加解析重写与字段必填；v8 加批次级重写与 repair 五条硬规则；v9 给 `effects` / `objects` / 背景标签补反例，并把背景清单改为从 manifest 渲染；**v10 修掉示例里「3 个选项却标 recognition-4」的自相矛盾，并补一条「证据等级由场景形态决定」的硬规则**；**v11 补齐六种 effect 的字段清单**；**v12 删掉背景禁令里的两个非法标签字面量，换成常用道具的合法名字正例**） | 真实模型的错误是一层层暴露的，每轮只修一类 | v1–v9 的跑批数据只作迭代记录；**v9 相对 v8 没有提升通过率**（§4.2），它的价值是把失败类别压到 3 类；v10 掐掉了证据等级这一类（V0 0→5%、V1 30→60%），v11 掐掉了 `open_thread` 字段混用（V0 5→15%、V1 60→70%），v12 在矩阵上把 `@emoji:hat` 两格清掉（5/10 → 8/10）但 20 批 V2 仍是 90%，**没有一次越过 97%** | `data/prompts/FROZEN` 记录 v12；各版本改动见提交历史 |
 | 6 | 每批允许额外词 60 个（方案 R5 为 8 个）、OOV 告警/阻断 8%/25%（方案 2%/5%） | 种子词库 62 条 → 学习者「已知词」只有功能词 + 本批目标词，方案阈值下任何自然文本都会阻断（实测 7–20%） | L3 OOV 指标不能与方案阈值直接比较 | 阈值与词数都进了运行配置（`oov_warn`/`oov_block`）与 `Planner.allowedExtraCount`。§4.6 之后口径明确：扩表不解决 L3（残留生词九成在库里），所以「扩到 300 条再调回方案值」这条路径要重写，见 §7 第 2 条 |
 | 7 | 校验前对批次做机械修正（`autoFixBatch`，共五类：删找不到的 `uses`、删没人引用的 `effect`、删曝光不足的新条目 `evidence`、角色属性越界改 `neutral`/删掉、删掉装饰位里不存在的素材） | 这几类都是「声明与实际不符」，删声明就能修，不需要模型重写；留在修复循环里只烧调用 | V2 会被抬高：它量的是「修正后的批次」，不是「模型原样输出」 | 每处修正都打 `[autofix] …` 到 stderr；§4.2 的 20k 小节逐条统计了 44 次修正；矩阵（§4.4）量未修正的首轮输出；**新增 V0 指标**（修复前零错误率）把两者分开记录 |
@@ -686,5 +693,8 @@ promptfoo eval --no-cache --max-concurrency 2 -o output/result.json
    ```
 
    已核对的开关语义：`world_state: false` 关掉事实/伏笔/摘要/回调四块上下文与 canon 锁定；`trope_ledger: false` 把台账换成「（梗台账关闭）」；`encoding: json` 走 JSON 批次；`showrunner_tier: premium` 只把编剧室换高档、分场仍是快速档；`derive: false` 在校验前剔掉 derive 场景（提示词目前不要求模型写 derive，所以这一项开与关的差别要等提示词加上派生规则后才显现——R5 暂时只有「不剔除」的含义）。
-9. **把名字类的约束从提示词挪到解码期（唯一还没被证伪的杠杆）**：`AiSdkLlmClient` 现在只调 `generateText`，全仓没有任何 `response_format` / 结构化输出；`encoding: json` 只是「让模型输出 JSON 文本、再用 zod 解析」，对名字零约束力。可行的做法是把 `loadLabData()` 已经读到的清单喂给 schema 构造器——`buildBatchSchema(data)`：`background` 从 6 个合法背景生成 `z.enum`，`cast` 从角色规格表的 6 个 id 生成 `z.enum`，`@emoji:` 引用从 86 个 emoji 名字生成枚举——然后走 `generateObject({ schema })`（供应商支持严格模式时下发 `json_schema`，不支持时退化成 `json_object` + 现有的校验重试，行为与今天一致）。**预期**：20m/20n/20o 的 7 个失败批次里有 4 个是名字类（`@tag:apartment`、`mouse`、`@emoji:evidence`、非法条目 ID），这一类会变成「解码不出来」而不是「解码出来再判错」，V2 有希望从 90% 摸到 97%；**代价**：schema 生成 + 供应商能力探测 + 一次 20 批验证（约 45 分钟 API、1 万 token/批），且 YAML 编码路径会失去意义（R4 的 `encoding` 轴要重定义成「结构化 vs 文本」）。**没在本轮做**：工作量明显大于一次提示词迭代，且 `generateObject` 与现有「分阶段 `maxTokens` / `reasoning_effort`」的兼容性还没验证过，应当单独立项而不是塞进收尾。
+
+   **注意：R6 现在是空轴。** `models.yaml` 两档都是 `MiniMax-M3.1-Flash`（§4.1），所以 `showrunner_tier: premium` 与 `fast` 是同一个模型，R6 与 R5 只差一个无效参数。要么在跑 R6 前把高档换回 `MiniMax-M3`（此时必须确认 `stripThinking()` 能兜住它内联的思考块，否则整批解析失败），要么把 R6 从矩阵里去掉、把 7 条缩成 6 条。这一步留到正式开跑前决定，不要在预算没定的时候先跑出一份「R6 ≈ R5」的假结论。
+9. ~~**把名字类的约束从提示词挪到解码期**~~（**已证伪，2026-10 探针**）：`AiSdkLlmClient` 现在只调 `generateText`，全仓没有任何 `response_format` / 结构化输出；`encoding: json` 只是「让模型输出 JSON 文本、再用 zod 解析」，对名字零约束力。原计划是把 `loadLabData()` 已经读到的清单喂给 schema 构造器——`buildBatchSchema(data)`：`background` 从 6 个合法背景生成 `z.enum`，`cast` 从角色规格表的 6 个 id 生成 `z.enum`，`@emoji:` 引用从 86 个 emoji 名字生成枚举——然后走 `generateObject({ schema })`（供应商支持严格模式时下发 `json_schema`，不支持时退化成 `json_object` + 现有的校验重试）。
+   **探针结果：这个端点静默忽略 `response_format`。** 用同一段「必须输出非法值」的提示词（要求背景 `apartment`、道具 `hat`）打三组对照——不带 `response_format`、`{type:'json_object'}`、`{type:'json_schema', json_schema:{strict:true, schema:…enum…}}`——三次都是 HTTP 200，且**都照样输出 `apartment` / `hat`**，输出逐字一致。即约束解码在这个端点上不可用，`generateObject` 只会退化成「今天的行为 + 一层没用的参数」。**结论**：名字类失败没有解码期解，只剩提示词与修复循环；本项关闭，不再计入 §7 的待办杠杆。附带一条可复用的事实：`response_format` 的「200 但无效」是比报错更危险的失败模式，任何依赖它的方案都必须先做「非法值探针」而不是看文档。
 

@@ -5,7 +5,7 @@
  * 校验器由调用方注入（lab 组装词库/素材/世界上下文），导演保持与存储无关。
  */
 import { parse as parseYaml, stringify as yamlStringify } from 'yaml';
-import { Scene, type Batch, type ValidationIssue } from '@endless/esl';
+import { Scene, stripThinking, type Batch, type ValidationIssue } from '@endless/esl';
 import type { LearningBrief } from '@endless/learning';
 import type { LlmClient, LlmResponse } from './llm.js';
 import type { PromptTemplates } from './prompts.js';
@@ -365,8 +365,10 @@ export class DirectorService {
 // ---------- 序列化辅助 ----------
 
 function parseLooseYaml(text: string): unknown {
-  // 剥掉 markdown 代码围栏再解析；解析失败返回 null（由各 safeParse 分支兜住）
-  const stripped = text.replace(/^```[a-z]*\r?\n?/i, '').replace(/\r?\n?```\s*$/i, '');
+  // 先剥掉推理模型内联的思考块（YAML 会把 `Thinking: …` 当成映射键，不剥就是 E-SCHEMA 而不是「在思考」），
+  // 再剥掉 markdown 代码围栏；解析失败返回 null（由各 safeParse 分支兜住）
+  const cleaned = stripThinking(text) ?? text;
+  const stripped = cleaned.replace(/^```[a-z]*\r?\n?/i, '').replace(/\r?\n?```\s*$/i, '');
   try {
     return parseYaml(stripped);
   } catch {

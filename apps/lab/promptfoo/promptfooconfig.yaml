@@ -41,7 +41,9 @@ providers:
       temperature: 0.8
       max_tokens: 8192
       reasoning_effort: low
-      # M3 把思考内联进 content，只能整段关掉，否则 5/5 条都是 E-PARSE
+      # M3 把思考内联进 content（`Thinking:…` 前缀）。旧版矩阵只能整段关掉，否则 5/5 条都是 E-PARSE；
+      # 现在 `lab assert` 走的 parseBatch 会先过 stripThinking()，所以这一行可以删掉、按「思考开着」测。
+      # 注意别把它加到 Flash 那一档：Flash 对 thinking=disabled 直接返回 HTTP 400（要求自适应思考）。
       thinking: disabled
 
 defaultTest:

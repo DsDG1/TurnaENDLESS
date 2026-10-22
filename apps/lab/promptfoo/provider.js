@@ -39,9 +39,10 @@ class EndlessChatProvider {
       max_tokens: this.config.max_tokens ?? 8192,
       // 不压推理强度，长批次会被思考挤成 finish=length
       reasoning_effort: this.config.reasoning_effort ?? 'low',
-      // M3（非 Flash）把思考内联进 content（`Thinking:…` 前缀、无 reasoning_content），
-      // 直接喂给 YAML 解析必失败；`thinking: {type: disabled}` 是唯一能关掉它的开关
-      // （reasoning_effort: minimal / enable_thinking: false 都无效，实测 2026-10）。
+      // M3（非 Flash）把思考内联进 content（`Thinking:…` 前缀、无 reasoning_content）。
+      // `thinking: {type: disabled}` 能关掉 M3 的思考，但 **Flash 会直接 400**（requires adaptive thinking），
+      // 所以这个开关只给 M3 档用；流水线与 `lab assert` 已经靠 stripThinking() 容忍内联思考，
+      // 不设它也能解析（实测 2026-10）。
       ...(this.config.thinking ? { thinking: { type: this.config.thinking } } : {}),
     };
 
