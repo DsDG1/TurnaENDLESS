@@ -292,7 +292,8 @@ schema 用 Drizzle 定义一份，三端共用。
 3. CEFR-J Wordlist 当前版本的引用格式与再分发条款（能否把整理后的子集打进 app）。
 4. DiceBear 中拟采用的每个风格的单独许可证。
 5. SQLite WASM + OPFS 在目标版本 iOS Safari 上的持久化表现，以及 Drizzle 对浏览器 WASM 驱动的支持。
-6. 所选 LLM 供应商的 OpenAI 兼容端点对结构化输出（JSON Schema）的实际支持程度。
+6. ~~所选 LLM 供应商的 OpenAI 兼容端点对结构化输出（JSON Schema）的实际支持程度。~~
+   **已核实（2026-10-23）：不支持，而且是静默失效。** 用同一段「必须输出非法值」的提示词打三组对照——不带 `response_format`、`{type:'json_object'}`、`{type:'json_schema', strict:true, schema:…enum…}`——三次都是 HTTP 200，输出逐字一致，非法值照样输出。即约束解码在本实验用的端点上不可用，`generateObject` 只会退化成「今天的行为 + 一层没用的参数」。**可复用的教训**：`response_format` 的「200 但没有约束力」比报错更危险，依赖它的方案必须先做**非法值探针**，而不是读文档。细节见[结果文档 §7 第 9 条](../experiments/exp-00-results.md)。
 7. json-render 锁定版本的组件扩展能力：自定义节目粒度组件、动作回传、局部更新是否满足 ESL 运行时的需要。
 
 ---

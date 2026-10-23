@@ -8,7 +8,7 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 
 - pnpm monorepo：四个纯 TS 核心包 + 实验 CLI（Day 0 脚手架）
 - 词库 / 频道圣经 / 素材 / 谓词 / 梗分类 / 故事筛选 / 提示词 / 配置 全部落地并通过格式校验（Day 1–2）
-- ESL v0：Zod 规范模型、YAML/JSON 双表层、17 种阻断码 + 9 种建议级码校验器、ink 子集编译与路径穷举、Runtime AST（Day 2–3，正反例测试全过）
+- ESL v0：Zod 规范模型、YAML/JSON 双表层、17 种阻断码 + 12 种建议级码校验器、ink 子集编译与路径穷举、Runtime AST（Day 2–3，正反例测试全过）
 - 世界状态：双时态事实表、reducer（单值谓词自动失效、canon 拒写、选项 effect 门控）、检索打分、故事筛选（Day 4）
 - 学习系统：词库加载、ts-fsrs 封装（三档评分）、BKT 能力估计、规划器 R1–R7、证据策略 S-A/S-B/S-C（Day 5）
 - 导演：上下文组装器（分块 token 预算）、梗台账、两段式/单段编排、修复循环、LLM 接入（AI SDK）+ 请求哈希缓存 + Stub 模式（Day 6）
@@ -26,7 +26,7 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 
 ```bash
 pnpm install
-pnpm test            # 全部 265 个测试（esl 99 / world 12 / learning 18 / director 43 / lab 93）
+pnpm test            # 全部 271 个测试（esl 99 / world 12 / learning 18 / director 43 / lab 99）
 pnpm lab check       # 校验全部数据文件 + 提示词冻结漂移（Day 1–2 完成标志）
 pnpm lab smoke       # Stub 导演 5 批端到端冒烟（无需 API key）
 pnpm lab freeze      # 冻结当前提示词（默认 v1，之后版本自动递增）
@@ -45,7 +45,11 @@ pnpm lab render apps/lab/runs/smoke/batches/0001.esl.yaml   # 渲染一个批次
 # 3. 准备运行配置（模板：apps/lab/config/run-example.yaml；真实冒烟：run-smoke20o.yaml = 20 批 v12 + 143 条词库）
 $env:ENDLESS_API_KEY = "..."        # 变量名以 models.yaml 的 api_key_env 为准
 pnpm lab freeze                     # 跑批前先冻结提示词，否则 run 会记录哈希并警告
-pnpm lab run --config apps/lab/config/run-smoke20o.yaml
+# run_id 只从配置文件读（CLI 没有 --run-id 覆盖）。同一 run_id 换提示词或换数据会被 C2 指纹检查拒绝，
+# 所以新版本要复制一份配置改 run_id：run-smoke20o.yaml 的 run_id 是 smoke-real-20o（v12 时期），
+# 现在提示词已是 v16，直接跑它会红。
+cp apps/lab/config/run-smoke20o.yaml apps/lab/config/run-smoke20p.yaml   # 改 run_id 为 smoke-real-20p
+pnpm lab run --config apps/lab/config/run-smoke20p.yaml
 pnpm lab judge  apps/lab/runs/<run_id>    # LLM 评审（先校准，见方案 5.12）
 ```
 

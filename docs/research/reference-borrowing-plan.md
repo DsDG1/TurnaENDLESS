@@ -3,6 +3,7 @@
 > 状态：**阶段 0 / 1 / 2 已实施（2026-10-23，见第 8 节）；阶段 1 的 LLM 验收门未跑（缺 API key）**，阶段 3 属实验 1。
 > 用途：把 `reference/` 下三份竞品调研与实验 0 的现状逐条对齐，定出借什么、改成什么样、放在哪、怎么判断有效、什么时候做。
 > 参考：[`scrolltostudy-research/`](../../reference/scrolltostudy-research/README.md)（ScrollToStudy 产品全貌）、[`scrolltostudy-infinite/`](../../reference/scrolltostudy-infinite/README.md)（无限滚动机制）、[`ai-mini-app-research/`](../../reference/ai-mini-app-research/README.md)（Sekai AI 小程序）。
+> **`reference/` 不入库**（`.gitignore`）：那三份竞品调研是本地材料，clone 仓库后上面的链接会断。本文第 7 节的溯源表已把「借了哪一条、来自哪个文件」逐条列出，不依赖原文也能读。
 > 项目侧以 [`../experiments/exp-00-director-loop.md`](../experiments/exp-00-director-loop.md)（下称「方案」）与 [`../experiments/exp-00-results.md`](../experiments/exp-00-results.md)（下称「结果」）为准。
 > **纪律**：本计划不改变冻结纪律。凡是会改提示词、提示词变量或请求哈希的条目，都必须新版本 + 新 `run_id`，并且**不得混进 R0–R5 正式矩阵**（顺序见第 5 节）。
 
@@ -223,8 +224,9 @@
 
 - **来源**：ScrollToStudy 把 `source_content` 与产物同表持久化，续批不重传、不重抽；Sekai 每个版本有 id、父版本与根版本。
 - **现状**：
-  - 运行只记提示词哈希，不记数据指纹；
-  - `lab metrics` 只能重跑流水线读缓存，因为 N2/N3 依赖的 `ledgerEntries`、L1 依赖的逐批 `briefs` 只在内存里（结果 §5 #8）。1080 批跑完以后，只要指标代码一改，就没法离线重算。
+  - （**已修，2026-10-23**）运行只记提示词哈希，不记数据指纹；
+  - （**已修，2026-10-23**）`lab metrics` 只能重跑流水线读缓存，因为 N2/N3 依赖的 `ledgerEntries`、L1 依赖的逐批 `briefs` 只在内存里（结果 §5 #8）。1080 批跑完以后，只要指标代码一改，就没法离线重算。
+    → 现在运行结束写 `artifacts/metrics-input.json`，`lab metrics` 优先离线重算；下面「做法」两条都已落地，见第 8 节的 C2 行。
 - **做法**：
   1. 在 `config.yaml` 旁写 `data-fingerprint.json`：词库、圣经、素材、角色规格、谓词、梗分类、故事筛选各一个内容哈希（`packages/esl/src/hash.ts` 的 `contentHash` 可直接用）。`lab run` 在 `run_id` 已有产物且指纹变化时拒绝覆盖；比较两次运行时自动列出「除提示词外还有哪些数据变了」。
   2. 每批落盘 `brief`、梗台账条目、编剧室计划。`lab metrics` 优先读落盘产物离线重算，读不到再回退到现在的回放。
@@ -356,13 +358,15 @@
 
 ## 8. 实施状态（2026-10-23）
 
-阶段 0、1、2 的代码与测试已合入，提示词冻结为 **v14**（`apps/lab/data/prompts/FROZEN`，合并哈希 `1a0d8f727fac8166`）。`pnpm typecheck`、`pnpm test`（218 项）、`pnpm lab check`、`pnpm lab smoke`（5/5 批、23 卡、V2 100%、K5 2.30）全过。
+阶段 0、1、2 的代码与测试已合入，提示词冻结为 **v16**（`apps/lab/data/prompts/FROZEN`，合并哈希 `7439ac2995cc662e`）。`pnpm typecheck`、`pnpm test`（271 项）、`pnpm lab check`、`pnpm lab smoke`（5/5 批、23 卡、V2 100%、K5 2.30）全过。
+
+> 提示词版本说明：§5 排期里写的「提示词 v13」是计划写作时的预期版本号；实际在阶段 1 之后又走了两轮（v14 借鉴条目落地，v15/v16 是 2026-10-23 审计修复加的「每批至少一次世界状态改变 / 至少一个检测场景」两条硬规则），当前冻结版是 **v16**。版本号以 `FROZEN` 为准。
 
 | 条目 | 落点 | 判据状态 |
 |---|---|---|
 | A1 示例自检 | `apps/lab/test/prompt-examples.test.ts` | ✅ 故意改回「3 选项 + recognition-4」会红（已实测） |
 | A1 目录渲染 | `apps/lab/data/catalog.yaml`、`data.ts`（`renderCatalogScenes/Effects`）、`writer.md`/`single.md` 的 `{{catalog_scenes}}`/`{{catalog_effects}}`、`test/catalog.test.ts` | ✅ 逐场景示例过校验器；effect 示例字段不越界 |
-| A2 名字出路 | `showrunner.ts`（`needs` + 预检解析）、`apps/lab/src/resolve.ts`、`aliases`（28 项）、`autofix.ts` 第 0 类、`director.ts`（`available_names` 短清单）、`metrics.ts` 的「名字出路」行 | ✅ 单测全覆盖；**待跑** 2×20 批 V2 ≥ 97% |
+| A2 名字出路 | `showrunner.ts`（`needs` + 预检解析）、`apps/lab/src/resolve.ts`、`aliases`（28 项）、`packages/esl/src/autofix.ts` 第 0 类、`director.ts`（`available_names` 短清单）、`metrics.ts` 的「名字出路」行 | ✅ 单测全覆盖；**待跑** 2×20 批 V2 ≥ 97% |
 | A3 圣经对齐 | `apps/lab/src/bible-audit.ts`、`duck_detective.yaml` 的 premise 改写（`Apartment 7` → 客厅） | ✅ `lab check` 报 0 条；alias 兜底仍在 |
 | A4 重试与熔断 | `packages/director/src/retry.ts`、`pipeline.ts`、`metrics.ts` | ✅ 单测（抖动不误熔断 / 429 熔断） |
 | A5 短词表 | `apps/lab/src/allowed-words.ts`、`writer.md`/`single.md` | ✅ 单测钉住「表短了、判定集合没动」；**待跑** L3 与 token 读数 |
