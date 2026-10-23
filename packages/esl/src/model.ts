@@ -189,6 +189,33 @@ export const DeriveScene = SceneBase.extend({
   distractors: z.enum(['confusables', 'none']).default('confusables'),
 });
 
+/**
+ * 程序生成的练习卡（应用侧双层生成）：写手不写，由内容层按学习任务从词库与已播放
+ * 文本拼入批次。全部材料在构造时落进场景本体，回放不依赖生成期上下文。
+ *   cloze    —— 选择式填空：prompt 含 ____，选项为词形；
+ *   meaning  —— 词义辨认：prompt 给出形式，选项为中文释义；
+ *   sentence —— 选句子：选项为整句，干扰句把目标形式换成易混形式；
+ *   find     —— 找一找：选项带 @emoji/@char 图案的词图对应。
+ */
+export const QuizScene = SceneBase.extend({
+  type: z.literal('quiz'),
+  kind: z.enum(['cloze', 'meaning', 'sentence', 'find']),
+  item: ItemId,
+  prompt: z.string().min(1),
+  options: z
+    .array(z.object({ label: z.string().min(1), asset: AssetRef.optional(), correct: z.boolean().optional() }))
+    .min(2)
+    .max(4),
+  feedback: z.object({ on_correct: z.string().min(1), on_wrong: z.string().min(1) }),
+});
+
+/** 单词卡：正面是一句含目标形式的原句，翻面展示词表释义。reveal 翻面、advance 过卡。 */
+export const CardScene = SceneBase.extend({
+  type: z.literal('card'),
+  item: ItemId,
+  front: z.string().min(1),
+});
+
 export const Scene = z.discriminatedUnion('type', [
   ComicScene,
   ChatScene,
@@ -197,6 +224,8 @@ export const Scene = z.discriminatedUnion('type', [
   HiddenObjectScene,
   StoryScene,
   DeriveScene,
+  QuizScene,
+  CardScene,
 ]);
 export type Scene = z.infer<typeof Scene>;
 export type ComicSceneT = z.infer<typeof ComicScene>;
@@ -206,6 +235,8 @@ export type PickSceneT = z.infer<typeof PickScene>;
 export type HiddenObjectSceneT = z.infer<typeof HiddenObjectScene>;
 export type StorySceneT = z.infer<typeof StoryScene>;
 export type DeriveSceneT = z.infer<typeof DeriveScene>;
+export type QuizSceneT = z.infer<typeof QuizScene>;
+export type CardSceneT = z.infer<typeof CardScene>;
 
 // ---------- 批次（第 5.8.2 节） ----------
 
@@ -226,9 +257,12 @@ export const Batch = z.object({
 });
 export type Batch = z.infer<typeof Batch>;
 
-/** 计入 3–4 场上限的是六种基本场景；derive 不计（第 5.8.2 节）。 */
+/** 不计入 3–4 场上限的场景：derive（派生）与程序练习卡 quiz/card（第 5.8.2 节口径的扩展）。 */
+export const EXERCISE_SCENE_TYPES: ReadonlySet<string> = new Set(['derive', 'quiz', 'card']);
+
+/** 计入 3–4 场上限的是六种基本场景；derive 与程序练习卡不计（第 5.8.2 节）。 */
 export function countBaseScenes(batch: Batch): number {
-  return batch.scenes.filter((s) => s.type !== 'derive').length;
+  return batch.scenes.filter((s) => !EXERCISE_SCENE_TYPES.has(s.type)).length;
 }
 
 // ---------- 校验问题 ----------

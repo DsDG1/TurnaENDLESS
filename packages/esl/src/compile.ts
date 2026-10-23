@@ -130,6 +130,13 @@ export function compileBatch(batch: Batch, output: ValidateOutput, ctx: CompileC
       scene.objects.forEach((o, oi) => push(`${sid}.ob${oi}`, 'object', { asset: o.asset, spot: o.spot, target: o.target === true }, sid));
     } else if (scene.type === 'story') {
       push(`${sid}.ink`, 'ink', { source: scene.ink }, sid);
+    } else if (scene.type === 'quiz') {
+      push(`${sid}.q`, 'question', { text: scene.prompt, kind: scene.kind }, sid);
+      scene.options.forEach((o, oi) =>
+        push(`${sid}.o${oi}`, 'option', { label: o.label, asset: o.asset ?? null, correct: o.correct === true }, sid));
+      push(`${sid}.fb`, 'feedback', scene.feedback, sid);
+    } else if (scene.type === 'card') {
+      push(`${sid}.front`, 'card_front', { text: scene.front, item: scene.item }, sid);
     } else if (scene.type === 'derive') {
       const resolved = resolveFrom(scene.from, output.textUnits, ctx.priorTexts ?? new Map());
       if (resolved) {

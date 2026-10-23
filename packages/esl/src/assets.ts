@@ -56,6 +56,9 @@ export function collectAssetRefs(batch: Batch): AssetRefSite[] {
       case 'pick':
         scene.options.forEach((o, oi) => push(scene.id, `options[${oi}].asset`, o.asset));
         break;
+      case 'quiz':
+        scene.options.forEach((o, oi) => push(scene.id, `options[${oi}].asset`, o.asset));
+        break;
       case 'hidden_object':
         push(scene.id, 'background', scene.background);
         scene.objects.forEach((o, oi) => push(scene.id, `objects[${oi}].asset`, o.asset));

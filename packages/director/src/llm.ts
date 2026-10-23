@@ -123,6 +123,7 @@ export interface AiSdkClientOptions {
   reasoningEffort?: string;
   /** 单次调用超时（毫秒），默认 5 分钟；超时按调用失败处理。 */
   timeoutMs?: number;
+  maxRetries?: number;
 }
 
 /** Vercel AI SDK 实现。 */
@@ -132,12 +133,14 @@ export class AiSdkLlmClient implements LlmClient {
   private readonly providerName: string;
   private readonly reasoningEffort: string | undefined;
   private readonly timeoutMs: number;
+  private readonly maxRetries: number | undefined;
   constructor(opts: AiSdkClientOptions) {
     this.provider = createOpenAICompatible({ name: opts.providerName, baseURL: opts.baseURL, apiKey: opts.apiKey });
     this.models = opts.models;
     this.providerName = opts.providerName;
     this.reasoningEffort = opts.reasoningEffort;
     this.timeoutMs = opts.timeoutMs ?? 300_000;
+    this.maxRetries = opts.maxRetries;
   }
   async modelId(tier: 'fast' | 'premium'): Promise<string> {
     return this.models[tier];
@@ -155,6 +158,7 @@ export class AiSdkLlmClient implements LlmClient {
         temperature: req.temperature ?? 0.8,
         maxOutputTokens: req.maxTokens ?? 4096,
         abortSignal: controller.signal,
+        maxRetries: this.maxRetries,
         ...(this.reasoningEffort
           ? { providerOptions: { [this.providerName]: { reasoningEffort: this.reasoningEffort } } }
           : {}),

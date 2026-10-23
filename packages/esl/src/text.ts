@@ -57,6 +57,15 @@ export function batchTextUnits(batch: Batch): TextUnit[] {
           add(unit.path, unit.role, unit.text, unit.speaker);
         }
         break;
+      case 'quiz':
+        add('prompt', 'prompt', scene.prompt);
+        scene.options.forEach((o, oi) => add(`options[${oi}]`, 'option', o.label));
+        add('feedback.on_correct', 'feedback', scene.feedback.on_correct);
+        add('feedback.on_wrong', 'feedback', scene.feedback.on_wrong);
+        break;
+      case 'card':
+        add('front', 'narrative', scene.front);
+        break;
       case 'derive':
         break;
     }

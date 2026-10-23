@@ -126,7 +126,7 @@ export function autoFixBatch(batch: Batch, ctx: ValidationContext): AutoFixResul
       scene.cards.forEach((c, ci) => {
         c.asset = fixRef(c.asset, `${scene.id}.cards[${ci}].asset`);
       });
-    } else if (scene.type === 'pick') {
+    } else if (scene.type === 'pick' || scene.type === 'quiz') {
       scene.options.forEach((o, oi) => {
         if (o.asset) o.asset = fixRef(o.asset, `${scene.id}.options[${oi}].asset`);
       });
@@ -300,7 +300,7 @@ export function autoFixBatch(batch: Batch, ctx: ValidationContext): AutoFixResul
         panel.props = panel.props.filter((p) => !emojiMissing(p));
         for (const p of dead) fixes.push(`${scene.id}：panel[${pi}] 删掉素材清单里没有的道具「${p}」`);
       });
-    } else if (scene.type === 'pick') {
+    } else if (scene.type === 'pick' || scene.type === 'quiz') {
       scene.options.forEach((o, oi) => {
         const asset = (o as { asset?: string }).asset;
         if (!emojiMissing(asset)) return;

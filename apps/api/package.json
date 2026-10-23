@@ -1,0 +1,27 @@
+{
+  "name": "@endless/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "start": "tsx --env-file-if-exists=.env src/main.ts",
+    "preview": "tsx --env-file-if-exists=.env src/main.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@endless/content": "workspace:*",
+    "@endless/director": "workspace:*",
+    "@endless/esl": "workspace:*",
+    "@endless/player": "workspace:*",
+    "tsx": "^4.20.0",
+    "yaml": "^2.8.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.0"
+  }
+}

@@ -25,6 +25,7 @@ export interface DirectorConfig {
   maxParseRetries?: number;
   /** 批次级问题（定位不到场景）时整批重写的次数（默认 1）。 */
   maxRewrites?: number;
+  repairMode?: 'scenes' | 'batch';
   /** 是否保留 derive（派生）场景；关闭时校验前剔掉（R5 消融对照）。 */
   derive?: boolean;
   /**
@@ -660,7 +661,7 @@ export class DirectorService {
         .map((i) => `- ${i.scene ?? '(batch)'} ${i.code}: ${i.message}`)
         .join('\n');
       if (!current) break; // 解析不出批次：上面的解析重写已经试过，再整批重写只是重复烧钱
-      if (badSceneIds.length === 0) {
+      if (badSceneIds.length === 0 || this.config.repairMode === 'batch') {
         // 批次级问题（brief 覆盖缺口、新条目提前检测、OOV）定位不到场景，逐场修复救不了；
         // 整批重写一次，把问题单原样回填给分场编剧（此时会话已重置，必重新输出完整模板）。
         if (rewrites >= (this.config.maxRewrites ?? 1)) break;
@@ -668,7 +669,8 @@ export class DirectorService {
         this.resetSessions(stage);
         const res = await this.complete(stage, genTemplate, {
           ...baseVars,
-          retry_note: `\n上一批未通过校验，问题如下，请整批重写并逐条避免：\n${problems}`,
+          retry_note: `\n上一批未通过校验，问题如下，请整批重写并逐条避免：\n${problems}${
+            this.config.repairMode === 'batch' ? `\n[上一版完整批次]\n${serializeBatch(current, enc)}` : ''}`,
         });
         text = res.text;
         lastWriterUserPrompt = res.userPrompt;

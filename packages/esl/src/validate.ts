@@ -103,6 +103,11 @@ function deriveEvidenceType(scene: Scene): EvidenceType | null {
       return scene.mode === 'judge' ? 'recognition-2' : null;
     case 'story':
       return 'recognition-2'; // 子集每处选择 ≤3 项
+    case 'quiz':
+      return scene.options.length === 4 ? 'recognition-4' : 'recognition-2';
+    case 'card':
+      // 翻卡是教学/曝光，不是检索：声明高于 practice 的证据会被判过度声明
+      return 'practice';
     default:
       return null;
   }
@@ -345,6 +350,13 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
       if (new Set(labels).size !== labels.length) err('E-ANSWER-DUP', 'pick 选项重复', scene.id);
       checkLengthLeak(scene.options.map((o) => o.label), scene.options.findIndex((o) => o.correct), scene.id, 'options');
     }
+    if (scene.type === 'quiz') {
+      const n = scene.options.filter((o) => o.correct).length;
+      if (n !== 1) err('E-ANSWER-COUNT', `quiz 正确答案数为 ${n}，须恰好 1`, scene.id);
+      const labels = scene.options.map((o) => o.label.trim().toLowerCase());
+      if (new Set(labels).size !== labels.length) err('E-ANSWER-DUP', 'quiz 选项重复', scene.id);
+      checkLengthLeak(scene.options.map((o) => o.label), scene.options.findIndex((o) => o.correct), scene.id, 'options');
+    }
     if (scene.type === 'chat' && scene.reply) {
       const n = scene.reply.options.filter((o) => o.correct).length;
       if (n !== 1) err('E-ANSWER-COUNT', `chat 回复正确答案数为 ${n}，须恰好 1`, scene.id);
@@ -385,6 +397,14 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
     if (scene.type === 'chat' && scene.evidence && !scene.reply) {
       err('E-SCHEMA', 'chat 场景声明了 evidence 但没有 reply 交互', scene.id);
     }
+    if (scene.type === 'quiz' || scene.type === 'card') {
+      // 程序练习卡的 item 必须来自词库；card 的正面还必须实际包含一个形式（front 是叙述文本，uses 定位走同一规则）
+      if (ctx.lexicon.formsOf(scene.item) === undefined) {
+        err('E-SCHEMA', `条目 ${scene.item} 不在词库`, scene.id, 'item');
+      } else if (scene.type === 'card' && !formsOf(scene.item).some((form) => locateForm(scene.front, form).length)) {
+        err('E-USES-NOT-FOUND', `单词卡正面文本不包含条目 ${scene.item} 的任何形式`, scene.id, 'front');
+      }
+    }
     if (scene.type === 'story' && scene.evidence) {
       const hasChoice = inkResults.get(scene.id)?.paths.some((p) => p.choices.length > 0) ?? false;
       if (!hasChoice) err('E-SCHEMA', 'story 场景声明了 evidence 但没有任何选项', scene.id);
@@ -398,10 +418,10 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
       // 干扰项与答案不得是同一条目的不同形式
       const answerForms = new Set(formsOf(item));
       const labels: string[] = [];
-      if (scene.type === 'pick') labels.push(...scene.options.map((o) => o.label));
+      if (scene.type === 'pick' || scene.type === 'quiz') labels.push(...scene.options.map((o) => o.label));
       if (scene.type === 'chat' && scene.reply) labels.push(...scene.reply.options.map((o) => o.label));
       const correct = labels.find((l, i) =>
-        (scene.type === 'pick' && scene.options[i]?.correct) ||
+        ((scene.type === 'pick' || scene.type === 'quiz') && scene.options[i]?.correct) ||
         (scene.type === 'chat' && scene.reply?.options[i]?.correct));
       const correctNorm = correct?.trim().toLowerCase();
       for (const label of labels) {
