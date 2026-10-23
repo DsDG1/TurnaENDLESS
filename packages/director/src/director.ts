@@ -352,6 +352,38 @@ function learningChecklist(plan: Plan | undefined, brief: LearningBrief): string
   return lines.length > 0 ? lines.join('\n') : '（本批没有学习任务）';
 }
 
+/** 六种 effect 的字段提示：写错字段名就是 E-SCHEMA（整批失败）。 */
+const EFFECT_FIELD_HINT: Record<string, string> = {
+  set_fact: 'set_fact: {subject: <实体>, predicate: <谓词>, object: <值>, standing: stated}',
+  end_fact: 'end_fact: {subject: <实体>, predicate: <谓词>}（只能结束当前仍成立的事实）',
+  open_thread: 'open_thread: {id: <小写下划线>, title: "<一句英文>", priority: 2}',
+  advance_thread: 'advance_thread: {id: <[开放伏笔] 里的 id>}',
+  resolve_thread: 'resolve_thread: {id: <[开放伏笔] 里的 id>}',
+  user_fact: 'user_fact: {predicate: <谓词>, object: <值>}',
+};
+
+/**
+ * 世界状态要求（审计 §3）：把编剧室声明的 world_change 变成写手可执行的一行。
+ *
+ * 之前提示词只说「没人引用的 effect 要删掉」，从没说过「每批必须改一次世界」，
+ * 于是 20 批真实产出里 effects 出现 0 次、story 场景 0 个 —— 世界状态层在真实产出上空转。
+ * 这里把要求显式渲染进提示词，并给出承载它的唯一两种合法形态。
+ */
+export function worldChangeChecklist(plan: Plan | undefined): string {
+  const wc = plan?.world_change;
+  if (!wc) {
+    return (
+      '- 本批必须至少发生一次世界状态改变：让某个 chat 的 reply 选项带 `effect: 名字`，' +
+      '或让 story 的 ink 行写 `# effect:名字`；对应场景的 `effects` 里放 set_fact / open_thread / user_fact 等。'
+    );
+  }
+  const carrier = wc.carrier !== undefined ? `第 ${wc.carrier} 场` : '某个 chat 或 story 场景';
+  return [
+    `- 本批必须发生一次世界状态改变（${wc.kind}）：写在${carrier}的 ` + '`effects`' + ` 里 —— ${EFFECT_FIELD_HINT[wc.kind] ?? wc.kind}`,
+    `- 意图：${wc.note}`,
+  ].join('\n');
+}
+
 export class DirectorService {
   private readonly config: DirectorConfig;
   private readonly sessions: Record<'showrunner' | 'writer' | 'single', StageSession> = {
@@ -570,6 +602,7 @@ export class DirectorService {
       brief: briefYaml(brief),
       plan: plan ? planYaml(plan) : '',
       learning_checklist: learningChecklist(plan, brief),
+      world_change_checklist: worldChangeChecklist(plan),
       available_names: availableNamesText({
         plan,
         resolved: resolvedNeeds,

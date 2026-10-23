@@ -8,26 +8,32 @@ ENDLESS 是「无尽内容流」形态的 AI 原生英语学习产品构想。�
 
 - pnpm monorepo：四个纯 TS 核心包 + 实验 CLI（Day 0 脚手架）
 - 词库 / 频道圣经 / 素材 / 谓词 / 梗分类 / 故事筛选 / 提示词 / 配置 全部落地并通过格式校验（Day 1–2）
-- ESL v0：Zod 规范模型、YAML/JSON 双表层、17 种阻断码校验器、ink 子集编译与路径穷举、Runtime AST（Day 2–3，60 个正反例测试全过）
+- ESL v0：Zod 规范模型、YAML/JSON 双表层、17 种阻断码 + 9 种建议级码校验器、ink 子集编译与路径穷举、Runtime AST（Day 2–3，正反例测试全过）
 - 世界状态：双时态事实表、reducer（单值谓词自动失效、canon 拒写、选项 effect 门控）、检索打分、故事筛选（Day 4）
 - 学习系统：词库加载、ts-fsrs 封装（三档评分）、BKT 能力估计、规划器 R1–R7、证据策略 S-A/S-B/S-C（Day 5）
 - 导演：上下文组装器（分块 token 预算）、梗台账、两段式/单段编排、修复循环、LLM 接入（AI SDK）+ 请求哈希缓存 + Stub 模式（Day 6）
-- 实验 CLI：run / render / metrics / replay / judge / srs-sim / buffer-sim / check / smoke / assert / freeze；学习者模拟器三画像；缓冲模拟；Critic 程序指标；5 批端到端冒烟通过（Day 7）
+- 实验 CLI：run / render / patch / metrics / replay / judge / review / srs-sim / buffer-sim / check / smoke / assert / freeze；学习者模拟器三画像；缓冲模拟；Critic 程序指标；5 批端到端冒烟通过（Day 7）
 - 提示词冻结纪律落地：`lab freeze` 写 `data/prompts/FROZEN`，`lab check` 与 `lab run` 检测漂移（Day 8）
 - 真实模型接入跑通：`MiniMax-M3.1-Flash` 两段式；20 批真实冒烟 v10/v11/v12 各一次（19/20、17/20、18/20，V2 合计 54/60 = 90%，阈值 97% 未达标），**模型原始首轮合规率从 0/20 提到 3/20**（V0），数据与失败清单见 [结果文档](docs/experiments/exp-00-results.md)（Day 8）
 - 机械修正层 `autoFixBatch`：校验前先修五类「声明与实际不符」（`uses` 不在文本、无人引用的 `effect`、曝光不足就检测、角色属性越界、装饰位素材不存在），每次修正都打 `[autofix]` 日志；20k 触发 44 次、20l 33 次、20m 36 次、20n 38 次、20o 38 次（Day 8）
+- **审计后完善（2026-10-23）**：把「世界状态层在真实产出上空转」「L1/L2 的 100% 是空心」两处结构性缺口补成显式读数 ——
+  `world_change` 进编剧室方案并进预检、`W-NO-WORLD-CHANGE` / `W-NO-DETECTION` 两个建议级码、`metrics` 单列零 effect / 零检测批次占比、
+  L1/L2 分母为 0 时输出「不可判定」而不是 1.0；补三个缺失工具：S-R 真实产出回放（`srs-sim --run-dir`）、
+  L4 歧义率程序口径、人工评分聚合（`lab review`：Spearman ρ / Krippendorff α）；`buffer-sim --from-run` 改用实测时延分布。详见 [审计修复记录](docs/experiments/exp-00-audit-fixes.md)
 - promptfoo 回归矩阵：2 模型 × 5 条样例，单次生成合规率 8/10（提示词 v12 重跑，见结果文档 §4.4；首轮 1/10 的根因是规范示例自身把 3 选项写成了 `recognition-4`），适配层两个坑（`reasoning_effort` 不透传、思考被内联进 `content`）已固化进自定义 provider；`render-vars.ts` 是矩阵变量的唯一来源（Day 8）
 
 ## 快速开始
 
 ```bash
 pnpm install
-pnpm test            # 全部 149 个测试（esl 71 / world 12 / learning 18 / director 24 / lab 24）
+pnpm test            # 全部 265 个测试（esl 99 / world 12 / learning 18 / director 43 / lab 93）
 pnpm lab check       # 校验全部数据文件 + 提示词冻结漂移（Day 1–2 完成标志）
 pnpm lab smoke       # Stub 导演 5 批端到端冒烟（无需 API key）
 pnpm lab freeze      # 冻结当前提示词（默认 v1，之后版本自动递增）
-pnpm lab srs-sim     # 证据策略对照 S-A/S-B/S-C（不调 LLM，产出 L6/L7 报告）
-pnpm lab buffer-sim  # 卡顿概率矩阵（K4 / H7）
+pnpm lab srs-sim     # 证据策略对照 S-A/S-B/S-C（合成事件流，不调 LLM，产出 L6/L7 报告）
+pnpm lab srs-sim --run-dir apps/lab/runs/<run_id>    # S-R 回放：在真实产出上重放三种策略
+pnpm lab buffer-sim --from-run apps/lab/runs/<run_id> # K4 用实测时延分布（不传则退回 20s 假设值）
+pnpm lab review --template --batches 60  # 导出人工评分表模板；填完用 --ratings 汇总 α/ρ
 pnpm lab render apps/lab/runs/smoke/batches/0001.esl.yaml   # 渲染一个批次为 Markdown
 ```
 
@@ -44,8 +50,8 @@ pnpm lab judge  apps/lab/runs/<run_id>    # LLM 评审（先校准，见方案 5
 ```
 
 > `metrics.json` / `report.md` 由 `lab run` 在结束的同一进程里算出，与当次运行必然一致。
-> `lab metrics <run_id>` 是**重跑一遍流水线读响应缓存**，只有当前代码产生的请求哈希与该次运行完全一致时才命中；
-> 改过提示词或输出上限后再回放会全部未命中，指标归零（CLI 已加保护，不会覆盖已有的 `metrics.json`）。
+> `lab metrics <run_id>` **优先读 `artifacts/metrics-input.json` 离线重算**（records / briefs / feedbacks / 台账 / 伏笔卫生快照全在盘上），
+> 代码改过也能复算；只有旧运行（没有该产物）才退回「重放流水线读响应缓存」，那种情况下请求哈希不匹配就会全部未命中（CLI 会拒绝覆盖已有的 `metrics.json`）。
 
 `lab run` 会在 `runs/<run_id>/` 写 `config.yaml`（本次参数）、`prompts.json`（提示词哈希与冻结版本）、
 `calls.jsonl`（每次 LLM 调用的阶段、token、时延）与 `cache/`（按请求哈希存原始响应，可回放）。

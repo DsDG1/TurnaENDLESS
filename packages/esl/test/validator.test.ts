@@ -523,6 +523,81 @@ describe('D4 选项长度泄露（建议级）', () => {
   });
 });
 
+// ---------- 世界状态改变（审计 §3）----------
+
+describe('世界状态改变计数与 W-NO-WORLD-CHANGE', () => {
+  /** 一个完全没有 effects 的批次：comic + pick + chat（chat 无 reply 也就没有 effect 入口）。 */
+  const NO_EFFECT_YAML = `
+batch: b-noworld
+channel: duck_detective
+brief: lb-0001
+cast: [duck]
+scenes:
+  - id: s1
+    type: comic
+    setting: "@tag:agency_office"
+    panels:
+      - shot: wide
+        actors: ["@char:duck{expr=neutral}"]
+        bubbles:
+          - {speaker: duck, text: "No cases today."}
+  - id: s2
+    type: pick
+    question: "What is under the box?"
+    cast: [duck]
+    evidence: {item: ck:where-is, type: recognition-2}
+    options:
+      - {label: "a key", correct: true}
+      - {label: "a hat"}
+    feedback: {on_correct: "Right.", on_wrong: "Look again."}
+  - id: s3
+    type: chat
+    skin: messenger
+    cast: [duck]
+    messages:
+      - {from: duck, text: "Nothing happened today."}
+`;
+  // 学习任务与词汇预算都与本节无关：去掉 brief、放开 OOV 与句长，只看世界状态那一条
+  const noBrief = () => makeCtx({ brief: undefined, vocab: { allowedForms: new Set(), oovWarn: 1, oovBlock: 1, maxWordsPerLine: 999 } });
+
+  it('基准批次：生效 effect 数 > 0，不报 W-NO-WORLD-CHANGE', () => {
+    const out = validateBatch(loadBaseBatch(), makeCtx());
+    // s4 的 accuse_cat（open_thread + set_fact）与 accuse_moon（set_fact + user_fact）
+    expect(out.worldChanges).toBe(4);
+    expect(out.issues.some((i) => i.code === 'W-NO-WORLD-CHANGE')).toBe(false);
+  });
+
+  it('没有任何 effect 的批次：worldChanges = 0 且报建议级 W-NO-WORLD-CHANGE（不阻断）', () => {
+    const parsed = parseBatch(NO_EFFECT_YAML, 'yaml');
+    expect(parsed.ok, parsed.ok ? '' : parsed.issues.map((i) => i.message).join('; ')).toBe(true);
+    if (!parsed.ok) return;
+    const out = validateBatch(parsed.batch, noBrief());
+    expect(out.worldChanges).toBe(0);
+    const issue = out.issues.find((i) => i.code === 'W-NO-WORLD-CHANGE');
+    expect(issue?.level).toBe('warning');
+    expect(out.ok).toBe(true); // 建议级：不改变通过率
+  });
+
+  it('声明了 effect 但没被引用：不算世界改变，且仍报 E-EFFECT-INVALID', () => {
+    const b = mutate((x) => {
+      const s = sceneOf(x, 's3', 'chat');
+      s.effects = { unused_mark: [{ set_fact: { subject: 'cat', predicate: 'suspect_status', object: 'clear', standing: 'stated' } }] };
+    });
+    const out = validateBatch(b, noBrief());
+    expect(out.issues.some((i) => i.code === 'E-EFFECT-INVALID' && i.message.includes('从未被引用'))).toBe(true);
+  });
+
+  it('没有任何检测交互的批次：detectionScenes = 0 且报 W-NO-DETECTION（学习层空转可见）', () => {
+    // 基准批次有 2 个检测场景（hidden_object + chat）
+    expect(validateBatch(loadBaseBatch(), noBrief()).detectionScenes).toBe(2);
+    const pure = mutate(() => undefined);
+    for (const s of pure.scenes) delete (s as { evidence?: unknown }).evidence;
+    const out = validateBatch(pure, noBrief());
+    expect(out.detectionScenes).toBe(0);
+    expect(out.issues.find((i) => i.code === 'W-NO-DETECTION')?.level).toBe('warning');
+  });
+});
+
 // ---------- 覆盖率自检：全部阻断码都有反例 ----------
 
 describe('阻断码覆盖自检', () => {

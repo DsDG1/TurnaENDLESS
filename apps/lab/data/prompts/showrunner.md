@@ -14,6 +14,10 @@
 - 用 `needs` 声明本批要用到的背景、道具、配角（用人话写，例如 `apartment`、`hat`、`mouse`）。
   程序会按素材清单与别名表把它们解析成合法名字再交给分场编剧；解析不了的项会退回让你换方案。
   只列本批真正用到的（背景 ≤ 1、道具 ≤ 3、配角 ≤ 2），不要为了凑数把清单搬进来。
+- **每批必须有一次世界状态改变**（`world_change` 必填）：从六种 effect 里选一个，并说清它由哪一拍承载。
+  承载它的节拍**只能是 chat 或 story** —— comic / pick / swipe / hidden_object 在规范里没有 effect 入口。
+  纯展示的批次（四拍全是不带 reply 的展示/检测场景）会被预检退回重试。
+  如果这一批确实只是"重复上一批的信息"，那就用 `advance_thread` 或 `set_fact` 把已有伏笔/事实往前推一格，不要空着。
 - 若 [本批指定] 不是「未指定」：本批必须落在指定的 `set_piece`、梗族与检测角度上
   （`test_angle` 决定检测场景怎么出：词义辨认 / 语境推断 / 易混辨析），梗从该族里挑。
 - 输出且只输出 YAML，字段见输出示例，不要输出其他文字。
@@ -31,7 +35,11 @@ needs:                    # 人话声明本批要用的名字，程序解析成�
   background: apartment
   props: [hat, ladder]
   cast: []
-thread_ops: []            # 可选：open/advance/resolve
+world_change:             # 必填：本批的世界状态改变，以及由哪一拍承载
+  kind: open_thread       # set_fact | end_fact | open_thread | advance_thread | resolve_thread | user_fact
+  carrier: 3              # 承载它的节拍号，只能是 chat 或 story
+  note: "结尾鸭子承认帽子是自己藏的，留下新伏笔"
+thread_ops: []            # 与 world_change 同向的伏笔操作；advance/resolve 只能引用 [开放伏笔] 里已有的 id
 callback: null            # 或引用候选里的 subject
 tropes: [字面理解, 荒诞委托人]   # 用梗分类表里的 id
 punchline: deadpan

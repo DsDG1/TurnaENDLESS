@@ -17,13 +17,16 @@ import { renderBatch } from './render.js';
 import { SqliteWorldStore } from './storage/sqlite.js';
 import { makeStubScript } from './stub.js';
 import { runSrsSim } from './srsim.js';
+import { readReplayEvents, replayStrategies } from './srsreplay.js';
 import { mulberry32 } from './sim/rng.js';
 import { sweepBuffer } from './buffersim.js';
+import { readLatencySummary } from './latency.js';
 import { computeMetrics, metricsMarkdown } from './critic/metrics.js';
 import { FileLlmCache } from './filecache.js';
 import { safeChild, safePath, writeValidated } from './safepath.js';
 import { smokeBrief } from './smokebrief.js';
-import { runJudge } from './critic/judge.js';
+import { runJudge, type JudgeVerdict } from './critic/judge.js';
+import { buildReviewReport, parseRatingsCsv, ratingsTemplate } from './critic/review.js';
 import { diffFrozen, driftReport, hashPrompts, manifestPath, nextVersion, readFrozen, writeFrozen } from './freeze.js';
 import { computeDataFingerprint, diffFingerprint, fingerprintReport, type DataFingerprint } from './fingerprint.js';
 import { auditChannelBibles, bibleAuditReport } from './bible-audit.js';
@@ -137,7 +140,8 @@ async function cmdSmoke(): Promise<void> {
   store.close();
   const okAll = result.records.every((r) => r.ok);
   console.log(`冒烟：${result.totals.batchesOk}/5 批通过，${result.totals.cards} 卡`);
-  console.log(`V2 修复后通过率 ${(metrics.executability.v2AfterRepairRate * 100).toFixed(0)}%，L1 覆盖率 ${(metrics.learning.l1Coverage * 100).toFixed(0)}%，K5 ${metrics.cost.k5DerivationFactor.toFixed(2)} 卡/调用`);
+  const l1 = metrics.learning.l1Coverage === null ? '不可判定' : `${(metrics.learning.l1Coverage * 100).toFixed(0)}%`;
+  console.log(`V2 修复后通过率 ${(metrics.executability.v2AfterRepairRate * 100).toFixed(0)}%，L1 覆盖率 ${l1}，K5 ${metrics.cost.k5DerivationFactor.toFixed(2)} 卡/调用`);
   console.log(`产物：${outDir}`);
   if (!okAll) {
     console.error('存在失败批次 ❌');
@@ -617,10 +621,32 @@ async function cmdRender(): Promise<void> {
 }
 
 async function cmdSrsSim(): Promise<void> {
+  // S-R 回放（第 7.2 节第二条腿）：在真实运行产出上重放三种策略
+  const runDirArg = arg('run-dir');
+  if (runDirArg) {
+    const dir = safePath(repoPath(runDirArg), [RUNS_DIR], '--run-dir');
+    const { events, batches } = await readReplayEvents(dir);
+    const report = replayStrategies(events, ['S-A', 'S-B', 'S-C'], batches);
+    const tag = relative(RUNS_DIR, dir).replace(/[\\/]/g, '-');
+    const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, `srs-replay-${tag}`)), [RUNS_DIR], '--out');
+    await mkdir(outDir, { recursive: true });
+    await writeValidated(
+      safeChild(outDir, 'srs-replay.json', [RUNS_DIR], 'srs-replay 结果'),
+      [RUNS_DIR],
+      'srs-replay 结果',
+      JSON.stringify({ run: tag, batches: report.batches, events: report.events, items: report.items, days: report.days, byStrategy: report.byStrategy }, null, 2),
+    );
+    await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'srs-replay 报告'), [RUNS_DIR], 'srs-replay 报告', report.markdown);
+    console.log(report.markdown);
+    console.log(`\n产物：${outDir}`);
+    if (report.events === 0) process.exitCode = 1;
+    return;
+  }
   const report = runSrsSim({
     items: argInt('items', 300),
     days: argInt('days', 60),
-    seeds: argInt('seeds', 2),
+    // 方案 7.2：5 个种子；种子太少时校准误差的均值会被单次抽样左右
+    seeds: argInt('seeds', 5),
   });
   const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'srs-sim')), [RUNS_DIR], '--out');
   await mkdir(outDir, { recursive: true });
@@ -634,21 +660,103 @@ async function cmdBufferSim(): Promise<void> {
   const buffers = (arg('buffer') ?? '1,2,3').split(',').map(Number);
   const prefetched = (arg('prefetched') ?? '0,3,5').split(',').map(Number);
   const persona = (arg('persona') ?? 'P1') as 'P1' | 'P2' | 'P3';
-  const genMedianMs = argInt('gen-ms', 20_000);
+  // 生成侧时延（第 5.13 节）：优先用实测分布，其次手传 --gen-ms，最后才是 20s 假设值
+  const fromRun = arg('from-run');
+  let genSamples: number[] | undefined;
+  let latencySource: string | undefined;
+  let genMedianMs = argInt('gen-ms', 20_000);
+  if (fromRun) {
+    const dir = safePath(repoPath(fromRun), [RUNS_DIR], '--from-run');
+    const summary = await readLatencySummary(dir);
+    genSamples = summary.batches;
+    genMedianMs = Math.round(summary.p50BatchMs);
+    latencySource = `${relative(REPO_ROOT, join(dir, 'calls.jsonl'))}（P50 ${(summary.p50BatchMs / 1000).toFixed(1)}s，P95 ${(summary.p95BatchMs / 1000).toFixed(1)}s，${summary.meanCallsPerBatch.toFixed(1)} 次调用/批）`;
+  } else if (process.argv.includes('--gen-ms')) {
+    latencySource = '--gen-ms 手传';
+  }
   // B3：派生填空（每批可派生张数）；D1：并发与速率取同一份 budget.yaml，避免两处配置打架
   const derivePerBatch = argInt('derive-fill', 0);
+  // 每批卡数（K5 的另一种表达）：K4 的量级账靠它，能在不改代码的前提下试「每批 12 卡」
+  const cardsPerBatch = argInt('cards-per-batch', 4);
   const budget = await loadBudgetConfig(join(CONFIG_DIR, 'budget.yaml'));
-  const concurrent = (budget.budget.run?.concurrency ?? 1) >= 2 ? 2 : 1;
-  const { markdown } = sweepBuffer({ buffers, prefetched, persona, genMedianMs, derivePerBatch, concurrent });
-  const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'buffer-sim')), [RUNS_DIR], '--out');
+  const concurrencyArg = argInt('concurrent', 0);
+  const concurrent = (concurrencyArg > 0 ? concurrencyArg : (budget.budget.run?.concurrency ?? 1)) >= 2 ? 2 : 1;
+  const { markdown } = sweepBuffer({
+    buffers,
+    prefetched,
+    persona,
+    genMedianMs,
+    derivePerBatch,
+    concurrent,
+    cardsPerBatch,
+    ...(genSamples ? { genSamples } : {}),
+    ...(latencySource ? { latencySource } : {}),
+  });
+  const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, fromRun ? `buffer-sim-${fromRun.split('/').pop()}` : 'buffer-sim')), [RUNS_DIR], '--out');
   await mkdir(outDir, { recursive: true });
   await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'buffer-sim 报告'), [RUNS_DIR], 'buffer-sim 报告', markdown);
   console.log(markdown);
   console.log(`\n产物：${outDir}`);
 }
 
-async function cmdJudge(): Promise<void> {
-  const runDir = process.argv[3];
+/**
+ * 人工评分表聚合（方案 7.4 / 9.1 的人工阈值）。
+ * 用法：
+ *   lab review --ratings ratings.csv [--judge RUN] [-o runs/review]
+ *   lab review --template --batches 60 --raters alice,bob [-o runs/review]
+ */
+async function cmdReview(): Promise<void> {
+  const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'review')), [RUNS_DIR], '--out');
+  await mkdir(outDir, { recursive: true });
+  const judgeArg = arg('judge');
+  const judgeDir = judgeArg ? safePath(repoPath(judgeArg), [RUNS_DIR], '--judge') : undefined;
+
+  if (arg('template')) {
+    const raters = (arg('raters') ?? 'rater1,rater2').split(',').map((s) => s.trim()).filter(Boolean);
+    const csv = ratingsTemplate({
+      batches: argInt('batches', 60),
+      raters,
+      dimensions: ['want_next', 'fun', 'natural_english', 'drill_feel', 'consistency', 'comprehensible'],
+    });
+    const path = safeChild(outDir, 'ratings-template.csv', [RUNS_DIR], '评分表模板');
+    await writeValidated(path, [RUNS_DIR], '评分表模板', csv);
+    console.log(`已写出评分表模板：${path}`);
+    console.log('填完用 lab review --ratings <该文件> 汇总（batch 列写渲染稿序号，0001 → 1）。');
+    return;
+  }
+
+  const ratingsPath = arg('ratings');
+  if (!ratingsPath) {
+    console.error('用法：lab review --ratings ratings.csv [--judge RUN] [-o OUT]');
+    console.error('  或：lab review --template --batches 60 --raters alice,bob');
+    process.exit(1);
+  }
+  const { readValidated } = await import('./safepath.js');
+  const parsed = parseRatingsCsv(await readValidated(repoPath(ratingsPath), [REPO_ROOT], '--ratings'));
+  if (parsed.rows.length === 0) {
+    console.error(`评分表没有可用数据行：${parsed.errors.join('；') || '（空表）'}`);
+    process.exit(1);
+  }
+  let judge: JudgeVerdict[] | undefined;
+  if (judgeDir) {
+    const text = await readFile(join(judgeDir, 'judge', 'judge.jsonl'), 'utf8').catch(() => null);
+    if (text === null) {
+      console.error(`没有 ${relative(REPO_ROOT, join(judgeDir, 'judge', 'judge.jsonl'))}：先跑 lab judge 才能算校准 ρ。`);
+      process.exit(1);
+    }
+    judge = text
+      .split('\n')
+      .filter((l) => l.trim() !== '')
+      .map((l) => JSON.parse(l) as JudgeVerdict);
+  }
+  const report = buildReviewReport(parsed, judge ? { judge } : {});
+  await writeValidated(safeChild(outDir, 'review.json', [RUNS_DIR], 'review 结果'), [RUNS_DIR], 'review 结果', JSON.stringify(report, null, 2));
+  await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'review 报告'), [RUNS_DIR], 'review 报告', report.markdown);
+  console.log(report.markdown);
+  console.log(`\n产物：${outDir}`);
+}
+
+async function cmdJudge(): Promise<void> {  const runDir = process.argv[3];
   if (!runDir) {
     console.error('用法：lab judge <runDir>（LLM 评审，需 API key）');
     process.exit(1);
@@ -745,6 +853,9 @@ async function main(): Promise<void> {
     case 'judge':
       await cmdJudge();
       break;
+    case 'review':
+      await cmdReview();
+      break;
     case 'assert':
       await cmdAssert();
       break;
@@ -766,8 +877,12 @@ async function main(): Promise<void> {
       console.log('  lab metrics RUNDIR            重算指标（基于响应缓存回放）');
       console.log('  lab replay RUNDIR             从缓存回放整个运行');
       console.log('  lab judge RUNDIR              LLM 评审（需 API key；先校准再参与判定）');
-      console.log('  lab srs-sim [--items N --days N --seeds N]   证据策略对照（S-A/S-B/S-C，不调 LLM）');
+      console.log('  lab review --ratings CSV [--judge RUN]   人工评分汇总：α / ρ / 41–60 批均分 / N5 / L5');
+      console.log('  lab review --template --batches 60        导出评分表模板（每评审一行一批）');
+      console.log('  lab srs-sim [--items N --days N --seeds N]   证据策略对照（S-A/S-B/S-C，合成事件流，不调 LLM）');
+      console.log('  lab srs-sim --run-dir RUN        在真实运行产出上回放三种策略（S-R，读 feedback.jsonl）');
       console.log('  lab buffer-sim [--buffer 1,2,3 --prefetched 0,3,5 --derive-fill N]  卡顿概率矩阵（K4，N 张/批 = B3 派生填空）');
+      console.log('  lab buffer-sim --from-run RUN     用该运行 calls.jsonl 的实测时延分布算 K4（推荐，别用 20s 默认值）');
       if (cmd !== undefined) process.exit(1);
   }
 }

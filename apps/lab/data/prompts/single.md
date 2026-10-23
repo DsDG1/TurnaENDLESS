@@ -96,9 +96,11 @@ scenes:
 - 批次头：batch / channel / brief / cast（至少 1 个已知实体）/ hook_out（持续频道必填）/ scenes（3–4 个基本场景，derive 不计）。
 - `id` 必须是 s1、s2…；`uses` 与 `evidence.item` 只能引用词库条目（lx: / ck: / pt:）。
 - **`evidence` 只写在真正有交互的场景上**：pick、swipe（mode=judge）、hidden_object、带 reply 的 chat、story 的选项。**comic 不写 evidence**；只想让学习者看到某条目时，把它写进 `uses`。
+- **每批至少有一个检测场景**（3–4 场里至少一场写 `evidence`）；整批 0 个检测会得 `W-NO-DETECTION`，这一批不产生学习证据。
 - **`evidence.type` 禁止写 `exposure`**：曝光用 `uses` 表达，`evidence` 只标检测（comprehension / recognition-2 / recognition-4 / listening-4 / production）。
 - **chat 写了 `evidence` 就必须有 `reply`**（选项 + on_correct + on_wrong）。
 - **`effects` 里每个名字都必须被引用**（选项的 `effect: 名字` 或 ink 标签 `# effect:名字`），没被引用就删掉，否则整批被阻断。
+- **本批必须至少发生一次世界状态改变**：某个 chat 的 reply 选项带 `effect: 名字`，或 story 的某一行写 `# effect:名字`，并在该场景的 `effects` 里放具名表。只有 chat 与 story 能承载（pick 的选项没有 `effect` 字段，comic / swipe / hidden_object 没有 effect 入口）。整批 0 个生效 effect 会得 `W-NO-WORLD-CHANGE`，伏笔与事实表一步都不推进。
 - `effects` 是**具名映射**（名字 → effect 列表），不是数组；effect 只有 set_fact / end_fact / open_thread / advance_thread / resolve_thread / user_fact 六种。
 - `effects` 里每个名字的值是一个**列表**，列表里每一项只能是上面六种之一、且只带一个键。下面这三种写法会被校验器直接拒绝（真实失败案例）：`- {id: bell}`、`- "advance_thread"`、`- - advance_thread: {id: bell}`（多套一层列表）。
 - 六种 effect 各自的字段见下面的 [组件目录]，字段混用就是 `E-SCHEMA`（整批失败）。
@@ -164,4 +166,7 @@ scenes:
 
 [本批学习任务（逐条落实，缺一条整批不通过）]
 {{learning_checklist}}
+
+[本批世界状态要求（必须做到；做不到会得 W-NO-WORLD-CHANGE）]
+{{world_change_checklist}}
 {{retry_note}}

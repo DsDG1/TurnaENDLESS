@@ -24,6 +24,24 @@ export const ShowrunnerPlan = z.object({
       ]),
     )
     .optional(),
+  /**
+   * 本批要发生的世界状态改变（审计 §3）。
+   *
+   * 为什么需要它：提示词以前只说「没人引用的 effect 删掉」，从没要求「本批至少改一次世界」，
+   * 于是模型专挑最不容易出错的 comic / pick / swipe / hidden_object，20 批产出里 effects = 0，
+   * 世界库除种子 canon 之外一片空白 —— R1–R5（世界状态开）与 R0（关）会变成同一个实验。
+   *
+   * 兼容性：字段可选。缺省时预检退化为结构检查（thread_ops 非空，或节拍里有 chat / story），
+   * 手写计划与旧测试因此不必改；提示词里它是必填项。
+   */
+  world_change: z
+    .object({
+      kind: z.enum(['set_fact', 'end_fact', 'open_thread', 'advance_thread', 'resolve_thread', 'user_fact']),
+      /** 由第几个节拍承载（对应 beats[].n）；只能指向 chat 或 story */
+      carrier: z.number().int().min(1).max(4).optional(),
+      note: z.string().min(1),
+    })
+    .optional(),
   callback: z.string().nullable().optional(),
   tropes: z.array(z.string()).default([]),
   punchline: z.string().optional(),
@@ -59,6 +77,52 @@ export interface PrecheckInput {
    * 正符合两段式「问题在第一步就拦下」的设计初衷。
    */
   resolveNeed?: (kind: 'background' | 'prop' | 'cast', asked: string) => { ok: boolean; value?: string; reason?: string };
+}
+
+/**
+ * 只有 chat 与 story 能承载 effect：
+ * - chat 靠 `reply.options[].effect`（pick 的选项没有 effect 字段）；
+ * - story 靠 ink 标签 `# effect:名字`；
+ * comic / swipe / hidden_object 三个类型在 ESL 里根本没有 effect 入口。
+ */
+export const EFFECT_CARRIER_SCENES: readonly SceneType[] = ['chat', 'story'];
+
+/**
+ * 能承载 `evidence` 的场景：除 comic 以外的五种。
+ * pick / hidden_object / swipe(judge) / chat(带 reply) / story(带选项) 各按 5.8.4 的证据推导行进：
+ * 四拍全是 comic 的批次写不出任何检测，学习层就整批空转。
+ */
+export const DETECTION_CARRIER_SCENES: readonly SceneType[] = ['chat', 'pick', 'swipe', 'hidden_object', 'story'];
+
+/** 世界状态改变检查（预检第 6 项，审计 §3 修的落点）。 */
+export function checkWorldChange(plan: ShowrunnerPlan): string[] {
+  const failures: string[] = [];
+  const carriers = plan.beats.filter((b) => EFFECT_CARRIER_SCENES.includes(b.scene));
+  const wc = plan.world_change;
+  if (wc) {
+    if (wc.carrier === undefined) {
+      if (carriers.length === 0) {
+        failures.push('world_change 没有指定 carrier，且节拍里没有 chat 或 story —— 其余四种场景写不了 effects');
+      }
+    } else {
+      const beat = plan.beats.find((b) => b.n === wc.carrier);
+      if (!beat) {
+        failures.push(`world_change.carrier 指向第 ${wc.carrier} 拍，但 beats 里没有这一拍`);
+      } else if (!EFFECT_CARRIER_SCENES.includes(beat.scene)) {
+        failures.push(
+          `world_change 的载体是第 ${beat.n} 拍 ${beat.scene}，这一型写不了 effect：只能用 chat（reply 选项的 effect）或 story（ink 标签 # effect:）`,
+        );
+      }
+    }
+    return failures;
+  }
+  if ((plan.thread_ops ?? []).length === 0 && carriers.length === 0) {
+    failures.push(
+      '本批没有任何世界状态改变：world_change 缺失、thread_ops 为空、节拍里也没有 chat 或 story' +
+        '（comic / pick / swipe / hidden_object 都写不了 effects）。把一拍改成 story 或带 reply 的 chat，并声明 world_change。',
+    );
+  }
+  return failures;
 }
 
 /** 预检（5.7.2 表）。不合格附原因重试，最多 2 次；仍不合格记一次「预检失败」用最后一次继续。 */
@@ -99,6 +163,12 @@ export function precheckPlan(input: PrecheckInput): { ok: boolean; failures: str
   // 角色合法：cast 里的未知实体
   for (const id of plan.cast) {
     if (!entityExists(id)) failures.push(`cast 实体 ${id} 未知（新角色须在 new_entities 声明）`);
+  }
+  // 世界状态改变（审计 §3）：没有这一条，批次就是纯展示，世界状态层永远空转
+  failures.push(...checkWorldChange(plan));
+  // 检测供给：四拍全是 comic 的批次写不出 evidence，整批不产生学习证据（L1/L2 分母为 0）
+  if (!plan.beats.some((b) => DETECTION_CARRIER_SCENES.includes(b.scene))) {
+    failures.push('4 个节拍里没有能承载检测的场景（comic 写不了 evidence）：至少把一拍改成 pick / chat / hidden_object / swipe / story');
   }
   // 名字解析（A2）：needs 里每一项都必须解析成合法名字；解析不了退回编剧室换方案
   if (input.resolveNeed && plan.needs) {

@@ -22,7 +22,8 @@ export const DEFAULT_SRS_SIM: SrsSimOptions = {
   days: 60,
   personas: ['P1', 'P2', 'P3'],
   strategies: ['S-A', 'S-B', 'S-C'],
-  seeds: 2,
+  // 方案 7.2 要求 5 个种子：校准误差结论要在种子之间稳定，2 个种子的均值容易被单次抽样左右
+  seeds: 5,
   introducePerDay: 5,
   reviewsPerDay: 25,
 };
@@ -112,21 +113,7 @@ function runOne(strategy: Strategy, persona: PersonaId, seed: number, opts: SrsS
 
   const brier = calib.length ? calib.reduce((s, p) => s + (p.predicted - (p.correct ? 1 : 0)) ** 2, 0) / calib.length : 0;
   const brierTrue = calib.length ? calib.reduce((s, p) => s + (p.predicted - p.trueRecall) ** 2, 0) / calib.length : 0;
-  const bins: StrategyRunResult['bins'] = [];
-  for (let b = 0; b < 10; b++) {
-    const lo = b / 10;
-    const hi = (b + 1) / 10;
-    const inBin = calib.filter((p) => p.predicted >= lo && p.predicted < hi + (b === 9 ? 0.01 : 0));
-    if (inBin.length === 0) continue;
-    bins.push({
-      lo,
-      hi,
-      n: inBin.length,
-      predMean: inBin.reduce((s, p) => s + p.predicted, 0) / inBin.length,
-      obsRate: inBin.filter((p) => p.correct).length / inBin.length,
-    });
-  }
-  const ece = bins.reduce((s, b) => s + (b.n / Math.max(1, calib.length)) * Math.abs(b.predMean - b.obsRate), 0);
+  const { bins, ece } = calibrationBins(calib);
   return {
     strategy,
     persona,
@@ -140,6 +127,32 @@ function runOne(strategy: Strategy, persona: PersonaId, seed: number, opts: SrsS
     fsrsReviews,
     calibPoints: calib,
   };
+}
+
+/**
+ * 10 档 ECE（第 6.3 节 L6）。抽出来单独导出：合成流（srs-sim）与真实产出回放（srs-replay）
+ * 必须用同一套分箱口径，否则两条腿的数字不能放在一张表里比。
+ */
+export function calibrationBins(points: { predicted: number; correct: boolean }[]): {
+  bins: StrategyRunResult['bins'];
+  ece: number;
+} {
+  const bins: StrategyRunResult['bins'] = [];
+  for (let b = 0; b < 10; b++) {
+    const lo = b / 10;
+    const hi = (b + 1) / 10;
+    const inBin = points.filter((p) => p.predicted >= lo && p.predicted < hi + (b === 9 ? 0.01 : 0));
+    if (inBin.length === 0) continue;
+    bins.push({
+      lo,
+      hi,
+      n: inBin.length,
+      predMean: inBin.reduce((s, p) => s + p.predicted, 0) / inBin.length,
+      obsRate: inBin.filter((p) => p.correct).length / inBin.length,
+    });
+  }
+  const ece = bins.reduce((s, b) => s + (b.n / Math.max(1, points.length)) * Math.abs(b.predMean - b.obsRate), 0);
+  return { bins, ece };
 }
 
 export interface SrsSimReport {

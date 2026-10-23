@@ -204,6 +204,12 @@ export interface BatchRecord {
   /** 编剧室节拍 gist（N1 语料：梗概 + 节拍，方案 6.1） */
   gistText: string;
   factRefs: number;
+  /**
+   * 本批实际生效的 effect 操作数（被选项或 ink 标签引用到的）。
+   * 0 = 这一批没改变任何世界状态。世界状态开/关（R1–R5 vs R0）的差别全靠它撑着，
+   * 之前只能靠事后 grep `batches/*.esl.yaml` 才发现 20 批里 0 次 effects（审计 §3）。
+   */
+  worldChanges: number;
   oovRatio: number | null;
   tropes: string[];
   logline: string;
@@ -782,6 +788,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
         issues: pending.issues,
         gistText: '',
         factRefs: 0,
+        worldChanges: 0,
         oovRatio: null,
         tropes: [],
         logline: '',
@@ -1063,6 +1070,7 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       issues: pending.issues,
       gistText: pending.gistText,
       factRefs: pending.report.factRefs,
+      worldChanges: pending.report.worldChanges,
       oovRatio: pending.report.vocab.oovRatio,
       tropes: pending.tropes,
       logline: pending.logline,
@@ -1096,7 +1104,20 @@ export async function runExperiment(opts: PipelineOptions): Promise<RunResult> {
       );
       await writeFile(
         join(opts.outDir, 'batches', `${id}.report.json`),
-        JSON.stringify({ ...record, calls: undefined, issues: pending.issues, report: { factRefs: pending.report.factRefs, derivedEvidence: pending.report.derivedEvidence } }, null, 2),
+        JSON.stringify(
+          {
+            ...record,
+            calls: undefined,
+            issues: pending.issues,
+            report: {
+              factRefs: pending.report.factRefs,
+              worldChanges: pending.report.worldChanges,
+              derivedEvidence: pending.report.derivedEvidence,
+            },
+          },
+          null,
+          2,
+        ),
       );
       await writeFile(join(opts.outDir, 'render', `${id}.md`), render);
       if (opts.recordCalls !== false) {

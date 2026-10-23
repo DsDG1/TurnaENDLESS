@@ -4,9 +4,9 @@ import { parseBatch, validateBatch, type Batch, type ValidationContext } from '@
 import type { LearningBrief } from '@endless/learning';
 import { assembleContext, DEFAULT_BUDGETS } from '../src/context.js';
 import { TropeLedger } from '../src/ledger.js';
-import { precheckPlan, type ShowrunnerPlan } from '../src/showrunner.js';
+import { checkWorldChange, precheckPlan, type ShowrunnerPlan } from '../src/showrunner.js';
 import { StubLlmClient, MemoryLlmCache, CachingLlmClient, requestHash, type LlmClient, type LlmRequest } from '../src/llm.js';
-import { DirectorService, type DirectorConfig, type DirectorDeps } from '../src/director.js';
+import { DirectorService, worldChangeChecklist, type DirectorConfig, type DirectorDeps } from '../src/director.js';
 import type { PromptTemplates } from '../src/prompts.js';
 
 // ---------- 最小可过校验的批次 ----------
@@ -227,6 +227,103 @@ describe('编剧室预检', () => {
     const bad = { ...plan, beats: [{ n: 1, scene: 'comic' as const, gist: 'Where is my hat, asks duck.' }, ...plan.beats.slice(1)] };
     const check = precheckPlan({ plan: bad, brief: BRIEF, ledger: new TropeLedger(), entityExists: () => true, formsOf: (i) => LEX[i] ?? [] });
     expect(check.failures.some((f) => f.includes('提前出现'))).toBe(true);
+  });
+});
+
+// ---------- 世界状态改变（审计 §3）----------
+
+describe('世界状态改变预检', () => {
+  const base: ShowrunnerPlan = {
+    logline: 'L',
+    channel: 'duck_detective',
+    cast: ['duck'],
+    beats: [
+      { n: 1, scene: 'comic', gist: 'Duck looks behind the door.' },
+      { n: 2, scene: 'pick', gist: 'A where-question.' },
+      { n: 3, scene: 'story', gist: 'The accusation.' },
+    ],
+    tropes: [],
+    learning_placement: [],
+  };
+  const check = (over: Partial<ShowrunnerPlan>) =>
+    checkWorldChange({ ...base, ...over } as ShowrunnerPlan);
+
+  it('声明了 world_change 且载体是 story：通过', () => {
+    expect(check({ world_change: { kind: 'open_thread', carrier: 3, note: '留下新伏笔' } })).toEqual([]);
+  });
+
+  it('载体指向 comic（写不了 effect）：被拒', () => {
+    const failures = check({ world_change: { kind: 'set_fact', carrier: 1, note: 'x' } });
+    expect(failures.some((f) => f.includes('写不了 effect'))).toBe(true);
+  });
+
+  it('载体编号不存在：被拒', () => {
+    const failures = check({ world_change: { kind: 'set_fact', carrier: 4, note: 'x' } });
+    expect(failures.some((f) => f.includes('没有这一拍'))).toBe(true);
+  });
+
+  it('四拍全是展示/检测场景且无 thread_ops：被拒（纯展示批次）', () => {
+    const failures = check({
+      beats: [
+        { n: 1, scene: 'comic', gist: 'a' },
+        { n: 2, scene: 'swipe', gist: 'b' },
+        { n: 3, scene: 'pick', gist: 'c' },
+      ],
+    });
+    expect(failures.some((f) => f.includes('没有任何世界状态改变'))).toBe(true);
+  });
+
+  it('没有 world_change，但有 thread_ops：通过（兼容旧手写计划）', () => {
+    expect(check({ thread_ops: [{ op: 'advance', id: 'missing_hat' }] })).toEqual([]);
+  });
+
+  it('四拍全是 comic：预检以「没有检测载体」退回', () => {
+    const plan: ShowrunnerPlan = {
+      logline: 'L',
+      channel: 'duck_detective',
+      cast: ['duck'],
+      beats: [
+        { n: 1, scene: 'comic', gist: 'a' },
+        { n: 2, scene: 'comic', gist: 'b' },
+        { n: 3, scene: 'comic', gist: 'c' },
+      ],
+      tropes: [],
+      learning_placement: [],
+      // world_change 有载体就不缺，但整批仍然没有一处能写 evidence
+      world_change: { kind: 'set_fact', carrier: 3, note: 'x' },
+    };
+    const res = precheckPlan({ plan, brief: BRIEF, ledger: new TropeLedger(), entityExists: () => true, formsOf: (i) => LEX[i] ?? [] });
+    // comic 既不能承载 effect 也不能承载 evidence：两条都会报
+    expect(res.ok).toBe(false);
+    expect(res.failures.some((f) => f.includes('写不了 effect'))).toBe(true);
+    const noWc = { ...plan, world_change: undefined, thread_ops: [{ op: 'advance' as const, id: 'hat' }] };
+    const res2 = precheckPlan({ plan: noWc, brief: BRIEF, ledger: new TropeLedger(), entityExists: () => true, formsOf: (i) => LEX[i] ?? [] });
+    expect(res2.failures.some((f) => f.includes('承载检测'))).toBe(true);
+  });
+});
+
+describe('世界状态要求的渲染（写手可见的那一行）', () => {
+  it('有 world_change：带类型、载体与字段提示', () => {
+    const text = worldChangeChecklist({
+      logline: 'L',
+      channel: 'duck_detective',
+      cast: ['duck'],
+      beats: [{ n: 3, scene: 'story', gist: 'g' }],
+      tropes: [],
+      learning_placement: [],
+      world_change: { kind: 'open_thread', carrier: 3, note: '鸭子在结尾留下新伏笔' },
+    } as ShowrunnerPlan);
+    expect(text).toContain('第 3 场');
+    expect(text).toContain('open_thread');
+    expect(text).toContain('priority');
+    expect(text).toContain('鸭子在结尾留下新伏笔');
+  });
+
+  it('单段模式（没有 plan）：给出两条合法出路', () => {
+    const text = worldChangeChecklist(undefined);
+    expect(text).toContain('chat');
+    expect(text).toContain('story');
+    expect(text).toContain('# effect:');
   });
 });
 

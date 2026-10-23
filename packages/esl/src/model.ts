@@ -262,6 +262,18 @@ export const ISSUE_CODES = [
   'W-SENSE-UNSURE',
   /** 正确选项明显长于干扰项：长度本身会泄露答案，猜对率 g 高于按选项数取的值（D4） */
   'W-OPTION-LENGTH-LEAK',
+  /**
+   * 整批没有任何世界状态改变（0 个被引用的 effect）。
+   * 不是「写错了」，而是「这一批对世界没有影响」——世界状态层空转时 R1–R5 会退化成 R0，
+   * 所以它必须是可见的读数，而不是靠事后 grep 才发现（审计 §3）。
+   */
+  'W-NO-WORLD-CHANGE',
+  /**
+   * 整批没有任何检测交互（0 个带 evidence 的场景）。
+   * 纯展示批次不产生学习证据：SRS 不推进、L1/L2 的分母恒为 0，
+   * 于是「L1 100%」其实是「没有到期复习」的空心读数（20o 实测 18 批里只有 2 批带检测）。
+   */
+  'W-NO-DETECTION',
 ] as const;
 export type IssueCode = (typeof ISSUE_CODES)[number];
 export const BLOCKING_CODES: readonly string[] = ISSUE_CODES.filter((c) => c.startsWith('E-'));
@@ -279,4 +291,19 @@ export interface ValidationReport {
   issues: ValidationIssue[];
   derivedEvidence: { sceneId: string; item: string; declared?: EvidenceType; derived: EvidenceType | null }[];
   factRefs: number; // 对出场实体当前属性的陈述数（C1 分母，程序可判部分）
+  /**
+   * 本批实际生效的 effect 操作数（被选项或 ink 标签引用到的那些）。
+   * 0 = 这一批没有改变任何世界状态：没有新事实、没有伏笔推进、没有用户事实。
+   * 世界状态层（R1–R5）与无状态基线（R0）的差别全靠这个数撑着（审计 §3）。
+   */
+  worldChanges: number;
+  /** 带 evidence 的基本场景数（derive 不计）。0 = 这一批不产生学习证据（W-NO-DETECTION） */
+  detectionScenes: number;
+}
+
+/** 批次是否发生过世界状态改变（供指标与预检共用）。 */
+export function hasWorldChange(batch: Batch): boolean {
+  // effects 声明必须被引用才生效，而「声明了但没引用」本身是 E-EFFECT-INVALID；
+  // 这里只做「有没有东西被写进去」的粗判，精确计数在 validateBatch 里。
+  return batch.scenes.some((s) => s.effects !== undefined && Object.keys(s.effects).length > 0);
 }

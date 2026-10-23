@@ -25,6 +25,11 @@ export interface BufferSimInput {
    * （B3 的上限是每批 1 张、占比 ≤ 25%）。这里量它能把 K4 卡顿概率压下多少。
    */
   derivePerBatch?: number;
+  /**
+   * 实测单批时延样本（毫秒，来自 `calls.jsonl`）。给出时**取代**对数正态抽样：
+   * 拟合一条分布会把真实的双峰与长尾抹平，而 K4 恰恰是被长尾决定的。
+   */
+  genSamples?: number[];
 }
 
 export interface BufferSimResult {
@@ -44,6 +49,9 @@ export function simulateBuffer(input: BufferSimInput): BufferSimResult {
   const rng = mulberry32(input.seed);
   const persona = PERSONAS[input.persona];
   const totalCards = input.batches * input.cardsPerBatch;
+  // 有实测样本就按经验分布抽样，否则退回对数正态（保留旧口径以便跨报告对比）
+  const samples = input.genSamples && input.genSamples.length > 0 ? input.genSamples : null;
+  const genLatency = () => (samples ? samples[Math.floor(rng() * samples.length)]! : lognormal(rng, Math.log(input.genMedianMs), input.genSigma));
 
   // 消费侧：每张卡的到达时间（累计停留）
   const arrival: number[] = [];
@@ -69,7 +77,7 @@ export function simulateBuffer(input: BufferSimInput): BufferSimResult {
       if (machineFree[m]! < machineFree[mIdx]!) mIdx = m;
     }
     const begin = Math.max(start, machineFree[mIdx]!);
-    const finish = begin + lognormal(rng, Math.log(input.genMedianMs), input.genSigma);
+    const finish = begin + genLatency();
     machineFree[mIdx] = finish;
     ready.push(finish);
   }
@@ -129,6 +137,10 @@ export interface BufferSweepOptions {
   seed: number;
   /** B3 派生填空：每批可派生的张数（0 = 关闭） */
   derivePerBatch: number;
+  /** 实测单批时延样本（毫秒）；给出时取代 genMedianMs/genSigma */
+  genSamples?: number[];
+  /** 时延来源说明（写进报告头，避免读报告的人不知道这个数是实测还是假设） */
+  latencySource?: string;
 }
 
 /** K4 判定矩阵（第 9.1 节）：P1、缓冲 2、3 个预制批 → 卡顿概率 ≤ 5%。 */
@@ -155,7 +167,11 @@ export function sweepBuffer(opts: Partial<BufferSweepOptions> = {}): { results: 
   const lines: string[] = [];
   lines.push('# 缓冲与卡顿模拟（K4 / H7）');
   lines.push('');
-  lines.push(`画像 ${full.persona}（${PERSONAS[full.persona].name}），${full.batches} 批 × ${full.cardsPerBatch} 卡，单批生成中位 ${full.genMedianMs / 1000}s，并发 ${full.concurrent}。`);
+  const latencyDesc =
+    full.genSamples && full.genSamples.length > 0
+      ? `单批生成时延按实测经验分布抽样（${full.genSamples.length} 个批次样本，中位 ${(percentile([...full.genSamples].sort((a, b) => a - b), 50) / 1000).toFixed(1)}s，来源 ${full.latencySource ?? '实测'}）`
+      : `单批生成中位 ${(full.genMedianMs / 1000).toFixed(1)}s（对数正态 σ=${full.genSigma}；**假设值，不是实测**）`;
+  lines.push(`画像 ${full.persona}（${PERSONAS[full.persona].name}），${full.batches} 批 × ${full.cardsPerBatch} 卡，${latencyDesc}，并发 ${full.concurrent}。`);
   lines.push('');
   const withDerive = full.derivePerBatch > 0;
   lines.push(
@@ -185,5 +201,17 @@ export function sweepBuffer(opts: Partial<BufferSweepOptions> = {}): { results: 
       );
     }
   }
+  // 量级账：一张表就能看出「卡顿靠调缓冲治不了」，要走设计参数（每批卡数 / 调用次数 / 模型速度）
+  const consumeMs = full.cardsPerBatch * PERSONAS[full.persona].dwellMedianMs;
+  const genP50 =
+    full.genSamples && full.genSamples.length > 0
+      ? percentile([...full.genSamples].sort((a, b) => a - b), 50)
+      : full.genMedianMs;
+  lines.push('');
+  lines.push(
+    `量级账：消费侧 ${full.cardsPerBatch} 卡 × ${(PERSONAS[full.persona].dwellMedianMs / 1000).toFixed(0)}s ≈ **${(consumeMs / 1000).toFixed(0)}s/批**；` +
+      `生成侧 ${(genP50 / 1000).toFixed(1)}s/批 → **生成/消费 = ${(genP50 / consumeMs).toFixed(1)}×**。` +
+      '这个比值 > 1 时稳态一定卡：缓冲只是把等待挪到首屏，派生填空只补得了零头。要达标得压到 ≈1 以下（提高 K5 每批卡数、减少调用次数、或换更快模型）。',
+  );
   return { results, markdown: lines.join('\n') };
 }

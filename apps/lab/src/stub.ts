@@ -182,12 +182,19 @@ export function stubPlanYaml(n: number): string {
   const whereBeat = seq.indexOf('chat') + 1;
   const behindBeat = seq.indexOf('comic') + 1;
   const tropes = TROPE_SETS[(n - 1) % TROPE_SETS.length]!.join(', ');
+  // 世界状态改变（审计 §3）：stub 的 story 场景本来就写 effect，这里把编剧室的声明补上，
+  // 让「预检 → 写手」这条链在冒烟里真的走一遍带 world_change 的分支
+  const storyBeat = seq.indexOf('story') + 1;
   return `
 logline: "${LOGLINES[(n - 1) % LOGLINES.length]}"
 channel: duck_detective
 cast: [duck, cat, moon]
 beats:
 ${beats}
+world_change:
+  kind: open_thread
+  carrier: ${storyBeat}
+  note: "结尾指认一个人，留下新伏笔"
 tropes: [${tropes}]
 punchline: deadpan
 learning_placement:

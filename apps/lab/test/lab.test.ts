@@ -151,6 +151,8 @@ describe('渲染器', () => {
       issues: [],
       derivedEvidence: [],
       factRefs: 0,
+      worldChanges: 0,
+      detectionScenes: 0,
       textUnits: [],
       targets: [],
       ink: new Map(),

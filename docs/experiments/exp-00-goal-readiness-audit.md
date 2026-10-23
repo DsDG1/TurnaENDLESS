@@ -3,6 +3,8 @@
 > 审计对象：[`exp-00-director-loop.md`](exp-00-director-loop.md)（方案）第 9.1 节的 10 项阈值与第 0 節的 5 个研究问题。
 > 审计方式：实跑验证链（typecheck / test / `lab check` / `lab smoke` / `lab srs-sim` / `lab buffer-sim`）+ 复核 `runs/smoke-real-20o` 的原始产物（`batches/`、`world.sqlite`、`calls.jsonl`、`metrics.json`）+ 代码走查。
 > 日期：2026-10-23。提示词冻结版本 v14（`data/prompts/FROZEN`）。
+>
+> **后续（同日）**：审计出的问题已在本轮代码里修掉，修法与可复现读数见 [`exp-00-audit-fixes.md`](exp-00-audit-fixes.md)（提示词 v14 → v16、`lab check` v16 一致、265 项测试通过）。本文保留审计当时的状态，不做追溯修改——特别是第 3 节对 L1 的判定（「100% 达标」）已被推翻，正确结论是「不可判定（分母 0）」，原因写在 fixes 文档第 2 节。
 
 ---
 

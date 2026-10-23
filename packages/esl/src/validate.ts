@@ -284,6 +284,37 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
     }
   }
 
+  // ---------- 5.5 世界状态改变计数（审计 §3） ----------
+  // 只数「被引用到的」effect 操作：声明了却没被引用的会在上面报 E-EFFECT-INVALID，
+  // 数进来等于把「模型多写了没用的东西」当成世界推进。
+  let worldChanges = 0;
+  for (const [sceneId, names] of referencedEffects) {
+    const declared = declaredEffects.get(sceneId);
+    if (!declared) continue;
+    for (const name of names) {
+      if (!declared.has(name)) continue;
+      const scene = batch.scenes.find((s) => s.id === sceneId);
+      worldChanges += scene?.effects?.[name]?.length ?? 0;
+    }
+  }
+  // 建议级而不是阻断级：世界状态空转不会让批次不可播放，它让实验失去实验对象。
+  // 真正的门禁在 metrics（零 effect 批次占比）与预检（plan 层没有载体就退回）。
+  if (worldChanges === 0) {
+    warn(
+      'W-NO-WORLD-CHANGE',
+      '本批没有任何世界状态改变（没有 set_fact / open_thread / advance_thread / resolve_thread / end_fact / user_fact）：剧情对世界没有影响，伏笔与事实表都不会推进',
+    );
+  }
+  // ---------- 5.6 检测供给（学习层的空转同样要可见） ----------
+  // 只有 exposure 声明的批次不产生证据：SRS 不推进，L1/L2 的分母是 0，报告里的「100%」是空心的。
+  const detectionScenes = batch.scenes.filter((s) => s.type !== 'derive' && s.evidence !== undefined).length;
+  if (detectionScenes === 0) {
+    warn(
+      'W-NO-DETECTION',
+      '本批没有任何检测交互（没有场景声明 evidence）：这一批不产生学习证据，SRS 与能力估计都不会推进。至少给 pick / chat(reply) / hidden_object / swipe(judge) / story 之一写 evidence',
+    );
+  }
+
   // ---------- 6. 答案唯一性与重复 ----------
   /**
    * 选项长度泄露（D4，借 ScrollToStudy「短答案保证干扰项不泄露长度」）。
@@ -557,5 +588,5 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
   ).length;
 
   const ok = !issues.some((i) => i.level === 'error');
-  return { ok, issues, derivedEvidence, factRefs, textUnits, targets, ink: inkResults, sceneSequence, vocab: { totalTokens, oovTokens, oovRatio } };
+  return { ok, issues, derivedEvidence, factRefs, worldChanges, detectionScenes, textUnits, targets, ink: inkResults, sceneSequence, vocab: { totalTokens, oovTokens, oovRatio } };
 }

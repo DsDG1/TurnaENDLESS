@@ -4,6 +4,7 @@ export * from './text.js';
 export * from './parse.js';
 export * from './ink.js';
 export * from './validate.js';
+export * from './ambiguity.js';
 export * from './autofix.js';
 export * from './compile.js';
 export * from './hash.js';
