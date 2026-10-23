@@ -1,5 +1,6 @@
 # 角色规格表（第 5.9.3 节）：声明底图 emoji、可用表情、可用配件。
 # @char:duck{expr=suspicious, hat=detective} 的键值必须在这里面。
+# aliases（A2）：模型把 delivery_mouse 写成 mouse 这类短名，由别名表解析回合法 id。
 duck:
   base: "@emoji:duck"
   expr: [neutral, happy, suspicious, smug, nervous, shocked, sad]
@@ -20,11 +21,13 @@ shopkeeper:
   expr: [neutral, happy, polite, suspicious, nervous, shocked]
   hat: [none, cap]
   props_allowed: [price_tag, notebook, shopping_cart]
+  aliases: [badger, clerk, shop_owner]
 delivery_mouse:
   base: "@emoji:mouse"
   expr: [neutral, tired, nervous, shocked, happy]
   hat: [none, cap]
   props_allowed: [box, envelope, watch]
+  aliases: [mouse, courier, delivery_guy]
 mayor:
   base: "@emoji:person"
   expr: [neutral, smug, angry, shocked, happy]

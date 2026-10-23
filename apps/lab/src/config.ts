@@ -45,7 +45,26 @@ export async function loadPricesConfig(path: string): Promise<PricesConfig> {
 }
 
 export interface BudgetConfig {
-  budget: { per_100_cards: number };
+  budget: {
+    per_100_cards: number;
+    /** 调用策略（D1，借 Sekai 宿主的 budget / min_interval，对齐 ScrollToStudy 的成本护栏） */
+    llm?: {
+      /** 每分钟请求上限（0 = 不限）。换算成最小间隔做节流，避免 429。 */
+      requests_per_minute?: number;
+      /** 单批 token 上限（输入+输出）；超出视为预算配置错误，停跑 */
+      max_tokens_per_batch?: number;
+      /** 传输类失败的重试策略（A4） */
+      retry?: { max_attempts?: number; base_delay_ms?: number; max_delay_ms?: number };
+    };
+    run?: {
+      /** 全量 token 上限（触顶即停） */
+      max_total_tokens?: number;
+      /** 连续传输失败批次数达到即熔断（A4，默认 3） */
+      max_consecutive_failures?: number;
+      /** buffer-sim 的生成并发（1 或 2） */
+      concurrency?: number;
+    };
+  };
 }
 export async function loadBudgetConfig(path: string): Promise<BudgetConfig> {
   return parseYaml(await readFile(path, 'utf8'));
@@ -70,6 +89,10 @@ export interface RunConfig {
   /** OOV 告警/阻断阈值（种子词库阶段放大，见结果文档偏差表） */
   oov_warn: number;
   oov_block: number;
+  /** 会话窗口大小（默认 6 批；设为 1 时退化为每批孤立单轮请求） */
+  session_window?: number;
+  /** 采样轴（B1）：只有 R3s 这类对照行开；默认关，R0–R5 的口径不能被它动 */
+  sampling?: boolean;
 }
 
 export async function loadRunConfig(path: string): Promise<RunConfig> {
@@ -93,4 +116,6 @@ const RunConfigSchema = z.object({
   channel_weights: z.record(z.string(), z.number()).default({ duck_detective: 0.5, impossible_store: 0.3, improv: 0.2 }),
   oov_warn: z.number().min(0).max(1).default(0.05),
   oov_block: z.number().min(0).max(1).default(0.2),
+  session_window: z.number().int().min(1).max(60).optional(),
+  sampling: z.boolean().optional(),
 });

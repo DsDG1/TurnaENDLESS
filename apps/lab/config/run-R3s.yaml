@@ -1,0 +1,28 @@
+# R3s：R3 + 采样轴显式化（B1）（对照行，不替换 R3）
+# 60 批 × 3 画像：pnpm lab run --config apps/lab/config/run-R3s.yaml --persona P1
+#
+# 与 R3 唯一的差别是 sampling: true —— 每批由程序挑「频道 × set_piece × 梗族 × 检测角度」里
+# 最冷的一格，作为本批指定项写进编剧室上下文。梗台账照旧只负责禁止项，两者分工不同。
+# 读的是第 21–60 批的 N1–N3 曲线与人工「想看下一张」；不达标就只保留禁止项（回到 R3）。
+run_id: r3s-60-p1
+director: two-stage
+world_state: true
+trope_ledger: true
+encoding: yaml
+derive: false
+showrunner_tier: fast
+sampling: true
+persona: P1
+batches: 60
+seed: 42
+feedback_lag: 2
+strategy: S-B
+llm: real
+stub_script: null
+channel_weights:
+  duck_detective: 0.5
+  impossible_store: 0.3
+  improv: 0.2
+# 与 R3 保持一致：词库规模未到方案值时放宽 OOV（见结果文档偏差 #6）
+oov_warn: 0.08
+oov_block: 0.25

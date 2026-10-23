@@ -1,43 +1,45 @@
 # 梗分类表（第 5.10 节）：预置约 40 项。跑完要根据评审抽取结果修订，允许「其他」自由文本。
+# family（B1 采样轴用）：梗族 = 梗分类表的上一级。采样器按「频道 × set_piece × 梗族 × 检测角度」
+# 挑最冷的组合作为本批指定项；台账继续负责禁止项，两者分工不同。
 tropes:
-  - {id: literal_interpretation, zh: 字面理解}
-  - {id: role_swap, zh: 角色互换}
-  - {id: absurd_bureaucracy, zh: 荒诞官僚}
-  - {id: outsider_mistake, zh: 外行误入}
-  - {id: escalation, zh: 层层升级}
-  - {id: callback, zh: 旧梗回调}
-  - {id: false_ending, zh: 假结局}
-  - {id: unreliable_witness, zh: 不可靠证人}
-  - {id: object_personification, zh: 物品拟人}
-  - {id: rule_loophole, zh: 规则漏洞}
-  - {id: over_seriousness, zh: 过度认真}
-  - {id: scale_mismatch, zh: 错位比例}
-  - {id: excessive_politeness, zh: 礼貌过头}
-  - {id: misunderstanding_chain, zh: 误会连锁}
-  - {id: deadpan_escalation, zh: 面无表情地升级}
-  - {id: absurd_client, zh: 荒诞委托人}
-  - {id: trivial_case_gravitas, zh: 小案子大阵仗}
-  - {id: wrong_tool, zh: 用错工具}
-  - {id: reverse_haggling, zh: 反向讨价还价}
-  - {id: impossible_inventory, zh: 不可能的库存}
-  - {id: price_absurdity, zh: 价格荒诞（按纽扣计价）}
-  - {id: side_effect_purchase, zh: 购买的小副作用}
-  - {id: returns_desk_paradox, zh: 退货台悖论}
-  - {id: petty_theft_trivialized, zh: 小偷小摸不当回事}
-  - {id: mistaken_identity, zh: 认错人/物}
-  - {id: meta_commentary, zh: 打破第四面墙的旁白}
-  - {id: running_gag, zh: 反复出现的口头禅}
-  - {id: anticlimax, zh: 虎头蛇尾}
-  - {id: double_meaning, zh: 一语双关}
-  - {id: silent_reaction, zh: 无言的反应}
-  - {id: tiny_but_mighty, zh: 小而强}
-  - {id: grumpy_helper, zh: 嫌弃但帮忙}
-  - {id: naive_question, zh: 天真提问戳穿一切}
-  - {id: bureaucracy_loophole, zh: 官僚漏洞被利用}
-  - {id: stolen_identity_of_object, zh: 物品身份被冒用}
-  - {id: fake_expert, zh: 假专家}
-  - {id: exaggerated_fear, zh: 夸张恐惧}
-  - {id: mundane_solution, zh: 平淡无奇的解法}
-  - {id: time_paradox_lite, zh: 轻量时间悖论}
-  - {id: moon_vanity, zh: 月亮的虚荣心}
+  - {id: literal_interpretation, family: wordplay, zh: 字面理解}
+  - {id: role_swap, family: character, zh: 角色互换}
+  - {id: absurd_bureaucracy, family: system, zh: 荒诞官僚}
+  - {id: outsider_mistake, family: social, zh: 外行误入}
+  - {id: escalation, family: escalation, zh: 层层升级}
+  - {id: callback, family: meta, zh: 旧梗回调}
+  - {id: false_ending, family: meta, zh: 假结局}
+  - {id: unreliable_witness, family: character, zh: 不可靠证人}
+  - {id: object_personification, family: object, zh: 物品拟人}
+  - {id: rule_loophole, family: system, zh: 规则漏洞}
+  - {id: over_seriousness, family: character, zh: 过度认真}
+  - {id: scale_mismatch, family: object, zh: 错位比例}
+  - {id: excessive_politeness, family: social, zh: 礼貌过头}
+  - {id: misunderstanding_chain, family: escalation, zh: 误会连锁}
+  - {id: deadpan_escalation, family: escalation, zh: 面无表情地升级}
+  - {id: absurd_client, family: social, zh: 荒诞委托人}
+  - {id: trivial_case_gravitas, family: character, zh: 小案子大阵仗}
+  - {id: wrong_tool, family: object, zh: 用错工具}
+  - {id: reverse_haggling, family: social, zh: 反向讨价还价}
+  - {id: impossible_inventory, family: object, zh: 不可能的库存}
+  - {id: price_absurdity, family: object, zh: 价格荒诞（按纽扣计价）}
+  - {id: side_effect_purchase, family: object, zh: 购买的小副作用}
+  - {id: returns_desk_paradox, family: system, zh: 退货台悖论}
+  - {id: petty_theft_trivialized, family: social, zh: 小偷小摸不当回事}
+  - {id: mistaken_identity, family: character, zh: 认错人/物}
+  - {id: meta_commentary, family: meta, zh: 打破第四面墙的旁白}
+  - {id: running_gag, family: meta, zh: 反复出现的口头禅}
+  - {id: anticlimax, family: meta, zh: 虎头蛇尾}
+  - {id: double_meaning, family: wordplay, zh: 一语双关}
+  - {id: silent_reaction, family: character, zh: 无言的反应}
+  - {id: tiny_but_mighty, family: character, zh: 小而强}
+  - {id: grumpy_helper, family: character, zh: 嫌弃但帮忙}
+  - {id: naive_question, family: wordplay, zh: 天真提问戳穿一切}
+  - {id: bureaucracy_loophole, family: system, zh: 官僚漏洞被利用}
+  - {id: stolen_identity_of_object, family: object, zh: 物品身份被冒用}
+  - {id: fake_expert, family: character, zh: 假专家}
+  - {id: exaggerated_fear, family: character, zh: 夸张恐惧}
+  - {id: mundane_solution, family: escalation, zh: 平淡无奇的解法}
+  - {id: time_paradox_lite, family: meta, zh: 轻量时间悖论}
+  - {id: moon_vanity, family: character, zh: 月亮的虚荣心}
 punchline_types: [deadpan, twist, visual_gag, wordplay, reversal, anticlimax]

@@ -22,6 +22,8 @@ export interface ReduceContext {
   predicates: Map<string, PredicateSpec>;
   /** 不可变事实，格式 "subject predicate object"（来自频道圣经 canon_locked 与既有 canon 事实） */
   canonLocked: string[];
+  /** 本批用户实际选中的选项标签（记录进事件表 user_choice 列） */
+  userChoice?: string;
 }
 
 export interface ReduceViolation {
@@ -59,7 +61,7 @@ export function applyEffects(store: WorldStore, effects: Effect[], ctx: ReduceCo
         type,
         actors,
         summary_en: summary,
-        user_choice: null,
+        user_choice: ctx.userChoice ?? null,
         tags: tags ?? null,
       }),
     );

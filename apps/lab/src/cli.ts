@@ -3,19 +3,21 @@
  * 子命令：check / smoke / run / render / metrics / replay / srs-sim / buffer-sim
  * 用户传入或来自配置文件的路径一律经 safePath / safeChild / readValidated / writeValidated 守卫。
  */
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { stringify as yamlStringify } from 'yaml';
-import { compileBatch, parseBatch, validateBatch } from '@endless/esl';
+import { parse as parseYaml, stringify as yamlStringify } from 'yaml';
+import { z } from 'zod';
+import { applyPatch, compileBatch, contentHash, parseBatch, patchLogLine, validateBatch } from '@endless/esl';
 import { AiSdkLlmClient, StubLlmClient } from '@endless/director';
 import type { LearningBrief } from '@endless/learning';
 import { loadLabData } from './data.js';
 import { loadBudgetConfig, loadModelsConfig, loadPricesConfig, loadRunConfig, resolveApiKey, type RunConfig } from './config.js';
-import { runExperiment, type RunResult } from './pipeline.js';
+import { runExperiment, RunAbortedError, type RunResult } from './pipeline.js';
 import { renderBatch } from './render.js';
 import { SqliteWorldStore } from './storage/sqlite.js';
 import { makeStubScript } from './stub.js';
 import { runSrsSim } from './srsim.js';
+import { mulberry32 } from './sim/rng.js';
 import { sweepBuffer } from './buffersim.js';
 import { computeMetrics, metricsMarkdown } from './critic/metrics.js';
 import { FileLlmCache } from './filecache.js';
@@ -23,6 +25,10 @@ import { safeChild, safePath, writeValidated } from './safepath.js';
 import { smokeBrief } from './smokebrief.js';
 import { runJudge } from './critic/judge.js';
 import { diffFrozen, driftReport, hashPrompts, manifestPath, nextVersion, readFrozen, writeFrozen } from './freeze.js';
+import { computeDataFingerprint, diffFingerprint, fingerprintReport, type DataFingerprint } from './fingerprint.js';
+import { auditChannelBibles, bibleAuditReport } from './bible-audit.js';
+import { buildMetricsInput, readMetricsInput, toRunResult, writeMetricsInput } from './artifacts.js';
+import { threadHygiene } from '@endless/world';
 
 const HERE = import.meta.dirname; // apps/lab/src
 const LAB_ROOT = resolve(HERE, '..');
@@ -57,6 +63,12 @@ async function cmdCheck(): Promise<void> {
   console.log(`角色规格：${[...data.charSpecs.keys()].join(' / ')} ✅`);
   console.log(`谓词 ${data.predicates.size} 个；梗分类 ${data.tropes.length} 项；故事筛选 ${data.sifting.length} 模式 ✅`);
   console.log(`提示词：${Object.keys(data.prompts).join(' / ')} ✅`);
+  console.log(
+    `组件目录：场景 ${data.catalog.scenes.length} 类（写手可选 ${data.catalog.scenes.filter((s) => s.writer_selectable).length}）／effect ${data.catalog.effects.length} 种／素材类 ${data.catalog.assets.length} 类 ✅`,
+  );
+  // A3：圣经与素材清单对齐检查（建议级，只报不改，不影响退出码）
+  for (const line of bibleAuditReport(auditChannelBibles(data))) console.log(line);
+  console.log(`别名表：${data.aliases.size} 项（${[...data.aliases.entries()].map(([k, v]) => `${k}→${v.target}`).join(', ')}）`);
   // 冻结纪律（第 8 节）：check 是 CI 入口，提示词漂移必须让检查失败，否则冻结形同虚设
   const frozen = await readFrozen(DATA_DIR);
   if (!frozen) {
@@ -119,6 +131,7 @@ async function cmdSmoke(): Promise<void> {
     smokeSeed: true,
   });
   const metrics = computeMetrics(result, { store, card: result.totals.cards });
+  await writeMetricsInput(outDir, buildMetricsInput(result, { threadHygiene: threadHygiene(store, result.totals.cards), card: result.totals.cards }));
   await writeValidated(safeChild(outDir, 'metrics.json', [RUNS_DIR], 'metrics'), [RUNS_DIR], 'metrics', JSON.stringify(metrics, null, 2));
   await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'report'), [RUNS_DIR], 'report', metricsMarkdown(metrics));
   store.close();
@@ -172,6 +185,12 @@ async function executeRun(
   );
   const llm = cfg.llm === 'stub' ? new StubLlmClient(makeStubScript()) : await makeLlm(readOnlyCache);
   const cache = new FileLlmCache(safeChild(outDir, 'cache', [RUNS_DIR], 'cache 目录'), readOnlyCache);
+  const prices = await loadPricesConfig(join(CONFIG_DIR, 'prices.yaml'));
+  const budget = await loadBudgetConfig(join(CONFIG_DIR, 'budget.yaml'));
+  const budgetCircuit = budget.budget.run?.max_consecutive_failures;
+  const rpm = budget.budget.llm?.requests_per_minute ?? 0;
+  // 熔断后照原文重跑同一条命令即可：已完成的调用全部命中请求哈希缓存（A4）
+  const resumeHint = `pnpm lab run --config ${relative(REPO_ROOT, configPath)} --persona ${cfg.persona}`;
   const result = await runExperiment({
     data,
     store,
@@ -188,6 +207,7 @@ async function executeRun(
     showrunnerTier: cfg.showrunner_tier,
     worldState: cfg.world_state,
     tropeLedgerOn: cfg.trope_ledger,
+    channelWeights: cfg.channel_weights,
     strategy: cfg.strategy,
     feedbackLag: cfg.feedback_lag,
     smokeSeed: cfg.llm === 'stub',
@@ -197,15 +217,31 @@ async function executeRun(
     recordCalls: !readOnlyCache,
     oovWarn: cfg.oov_warn,
     oovBlock: cfg.oov_block,
+    sessionWindow: cfg.session_window,
+    sampling: cfg.sampling === true,
+    maxConsecutiveTransportFailures: budgetCircuit,
+    resumeHint,
+    // A4 重试策略与 D1 配额：全部来自 config/budget.yaml，运行配置之外只此一处
+    retry: {
+      ...(budget.budget.llm?.retry?.max_attempts !== undefined ? { maxAttempts: budget.budget.llm.retry.max_attempts } : {}),
+      ...(budget.budget.llm?.retry?.base_delay_ms !== undefined ? { baseDelayMs: budget.budget.llm.retry.base_delay_ms } : {}),
+      ...(budget.budget.llm?.retry?.max_delay_ms !== undefined ? { maxDelayMs: budget.budget.llm.retry.max_delay_ms } : {}),
+      ...(rpm > 0 ? { minIntervalMs: Math.ceil(60_000 / rpm) } : {}),
+    },
+    maxTokensPerBatch: budget.budget.llm?.max_tokens_per_batch ?? 0,
+    maxTotalTokens: budget.budget.run?.max_total_tokens ?? 0,
   });
-  const prices = await loadPricesConfig(join(CONFIG_DIR, 'prices.yaml'));
-  const budget = await loadBudgetConfig(join(CONFIG_DIR, 'budget.yaml'));
   const metrics = computeMetrics(result, {
     store,
     card: result.totals.cards,
     prices: { inputPerMtok: prices.prices.fast.input_per_mtok, outputPerMtok: prices.prices.fast.output_per_mtok },
     budgetPer100Cards: budget.budget.per_100_cards,
   });
+  // C2：把「算指标需要的全部输入」落盘，之后 `lab metrics` 可以离线重算（删掉 cache/ 也不影响）
+  if (!readOnlyCache) {
+    const hygiene = threadHygiene(store, result.totals.cards);
+    await writeMetricsInput(outDir, buildMetricsInput(result, { threadHygiene: hygiene, card: result.totals.cards }));
+  }
   if (readOnlyCache) {
     // 回放全部命中缓存：token 与时延都是 0，不能覆盖首次运行记下的成本/时延
     const prevText = await readFile(safeChild(outDir, 'metrics.json', [RUNS_DIR], 'metrics'), 'utf8').catch(() => null);
@@ -259,6 +295,32 @@ async function cmdRun(): Promise<void> {
   for (const sub of ['batches', 'render', 'cache']) {
     await mkdir(safeChild(outDir, sub, [RUNS_DIR], 'run 子目录'), { recursive: true });
   }
+  // C2：原料指纹 —— 同一 run_id 不允许混两套数据/两版提示词，否则事后无法归因
+  const fingerprint = await computeDataFingerprint(DATA_DIR);
+  if (!arg('force')) {
+    const prevFpText = await readFile(join(outDir, 'data-fingerprint.json'), 'utf8').catch(() => null);
+    const prevPromptsText = await readFile(join(outDir, 'prompts.json'), 'utf8').catch(() => null);
+    let blocked = false;
+    if (prevFpText) {
+      const before = JSON.parse(prevFpText) as DataFingerprint;
+      const diff = diffFingerprint(before, fingerprint);
+      if (!diff.same) {
+        for (const line of fingerprintReport(before, diff)) console.error(line);
+        blocked = true;
+      }
+    }
+    if (prevPromptsText) {
+      const prev = JSON.parse(prevPromptsText) as { combined?: string; frozenVersion?: string | null };
+      if (prev.combined && prev.combined !== promptHashes.combined) {
+        console.error(`提示词也变了（${prev.frozenVersion ?? '未知'} → ${frozen?.version ?? '未冻结'}），同一 run_id 不能混两版提示词。`);
+        blocked = true;
+      }
+    }
+    if (blocked) {
+      console.error('换一个新的 run_id（推荐），或加 --force 覆盖（覆盖会让旧指标失去归因）。');
+      process.exit(1);
+    }
+  }
   // --persona / --batches 覆盖配置文件：R0–R5 每个配置 × 3 个画像共用一份配置
   const persona = arg('persona');
   const overrides: Partial<RunConfig> = {
@@ -277,7 +339,23 @@ async function cmdRun(): Promise<void> {
     '提示词哈希',
     JSON.stringify({ frozenVersion: frozen?.version ?? null, frozenAt: frozen?.frozen_at ?? null, ...promptHashes }, null, 2),
   );
-  const result = await executeRun(safeConfig, RUNS_DIR, false, overrides);
+  await writeValidated(
+    safeChild(outDir, 'data-fingerprint.json', [RUNS_DIR], '原料指纹'),
+    [RUNS_DIR],
+    '原料指纹',
+    JSON.stringify(fingerprint, null, 2),
+  );
+  const result = await executeRun(safeConfig, RUNS_DIR, false, overrides).catch((e: unknown) => {
+    if (e instanceof RunAbortedError) {
+      console.error(`\n⛔ 跑批已熔断：${e.message}`);
+      if (e.resumeHint) {
+        console.error(`续跑命令（已完成的调用全部命中请求哈希缓存，不会重复付费）：`);
+        console.error(`  ${e.resumeHint}`);
+      }
+      process.exit(1);
+    }
+    throw e;
+  });
   console.log(`运行 ${cfg.run_id}：${result.totals.batchesOk}/${result.records.length} 批通过，${result.totals.cards} 卡，${result.totals.calls} 次 LLM 调用`);
   console.log(`产物：${outDir}`);
 }
@@ -302,10 +380,29 @@ async function cmdReplay(): Promise<void> {
 async function cmdMetrics(): Promise<void> {
   const runDir = process.argv[3];
   if (!runDir) {
-    console.error('用法：lab metrics <runDir>（基于缓存回放重算）');
+    console.error('用法：lab metrics <runDir>（优先离线重算，缺产物时回放缓存）');
     process.exit(1);
   }
   const safeRun = safePath(repoPath(runDir), [RUNS_DIR], 'runDir');
+  // C2：优先读运行结束时的落盘输入离线重算 —— 不再依赖响应缓存，代码改过也能复算
+  const persisted = await readMetricsInput(safeRun);
+  if (persisted) {
+    const prices = await loadPricesConfig(join(CONFIG_DIR, 'prices.yaml'));
+    const budget = await loadBudgetConfig(join(CONFIG_DIR, 'budget.yaml'));
+    const metrics = computeMetrics(toRunResult(persisted), {
+      threadHygiene: persisted.threadHygiene,
+      card: persisted.card,
+      prices: { inputPerMtok: prices.prices.fast.input_per_mtok, outputPerMtok: prices.prices.fast.output_per_mtok },
+      budgetPer100Cards: budget.budget.per_100_cards,
+    });
+    await writeValidated(safeChild(safeRun, 'metrics.json', [RUNS_DIR], 'metrics'), [RUNS_DIR], 'metrics', JSON.stringify(metrics, null, 2));
+    await writeValidated(safeChild(safeRun, 'report.md', [RUNS_DIR], 'report'), [RUNS_DIR], 'report', metricsMarkdown(metrics));
+    console.log(`指标已按落盘产物离线重算（${persisted.records.length} 批，不需要响应缓存）：`);
+    console.log(`  ${safeChild(safeRun, 'metrics.json', [RUNS_DIR], 'metrics')}`);
+    console.log('  report.md');
+    return;
+  }
+  console.warn('没有 artifacts/metrics-input.json（旧运行）：退回缓存回放，代码改动会导致全部未命中。');
   const configPath = safeChild(safeRun, 'config.yaml', [RUNS_DIR], 'run 配置');
   const result = await executeRun(configPath, RUNS_DIR, true);
   if (!result.metricsWritten) {
@@ -314,6 +411,167 @@ async function cmdMetrics(): Promise<void> {
     return;
   }
   console.log(`指标已写入 ${safeChild(safeRun, 'metrics.json', [RUNS_DIR], 'metrics')} 与 report.md`);
+}
+
+/**
+ * C1：把一个 ESL 批次按补丁改值，重新校验后写出新版本（带 parent_hash）。
+ * 用法：lab patch <batch.esl.yaml> <patch.yaml> [-o out.yaml]
+ * 补丁格式：
+ *   - {path: "scenes[s1].setting", value: "@tag:living_room", note: "apartment 别名"}
+ *   - {path: "batch.cast", value: [duck, delivery_mouse]}
+ * 口径：人工补丁属于人工干预，不计入 V2（CLI 会明确打出来）。
+ */
+async function cmdPatch(): Promise<void> {
+  const input = process.argv[3];
+  const patchFile = process.argv[4];
+  if (!input || !patchFile) {
+    console.error('用法：lab patch <batch.esl.yaml> <patch.yaml> [-o out.yaml]');
+    process.exit(1);
+  }
+  const outIdx = process.argv.indexOf('-o');
+  const data = await loadLabData(DATA_DIR);
+  const { readValidated, safeChild } = await import('./safepath.js');
+  const parsed = parseBatch(await readValidated(input, [REPO_ROOT], 'input'), 'yaml');
+  if (!parsed.ok) {
+    console.error(parsed.issues.map((i) => `${i.code}: ${i.message}`).join('\n'));
+    process.exit(1);
+  }
+  const rawPatches = parseYaml(await readValidated(patchFile, [REPO_ROOT], 'patch')) as unknown;
+  const list = z
+    .array(z.object({ op: z.literal('replace').optional(), path: z.string(), value: z.unknown(), note: z.string().optional() }))
+    .parse(Array.isArray(rawPatches) ? rawPatches : (rawPatches as { patches?: unknown }).patches);
+  const parentHash = contentHash(parsed.batch);
+  const outcome = applyPatch(parsed.batch, list);
+  for (const a of outcome.applied) console.log(patchLogLine(a));
+  for (const r of outcome.rejected) console.error(`拒绝 ${r.path}（${r.cls}）：${r.reason}`);
+  if (outcome.rejected.length > 0) {
+    console.error('补丁未全部应用：一个都没写出去（宁可什么都不改，也不要半改的批次）');
+    process.exit(1);
+  }
+
+  // text 类补丁会动台词，必须重跑校验：词汇/OOV/uses 定位都可能随之变化
+  const properNouns = [...data.channels.values()].flatMap((b) => [...b.cast.map((c) => c.id), ...b.locations]);
+  const allowed = new Set<string>([...data.lexicon.functionWords, ...properNouns.map((n) => n.toLowerCase())]);
+  for (const forms of data.lexicon.forms.values()) for (const f of forms) allowed.add(f);
+  const report = validateBatch(outcome.batch, {
+    vocab: { allowedForms: allowed, oovWarn: 0.08, oovBlock: 0.25, maxWordsPerLine: 999 },
+    lexicon: { formsOf: (i) => data.lexicon.forms.get(i), confusables: (i) => data.lexicon.entries.get(i)?.confusables ?? [] },
+    assets: data.assetCatalog,
+    entities: { exists: () => true },
+    predicates: data.predicates,
+    canonFacts: [],
+    activeFacts: [],
+    threads: new Map(),
+  });
+  const blocking = report.issues.filter((i) => i.level === 'error');
+  if (!report.ok) {
+    console.error(`补丁后校验未通过（${blocking.length} 个阻断问题）：`);
+    for (const i of blocking) console.error(`  ${i.code}${i.scene ? `@${i.scene}` : ''}: ${i.message}`);
+    process.exit(1);
+  }
+  const newHash = contentHash(outcome.batch);
+  const outPath = outIdx > 0 ? process.argv[outIdx + 1]! : input.replace(/\.esl\.yaml$|\.yaml$/, '.patched.yaml');
+  await writeFile(safeChild(REPO_ROOT, outPath, [REPO_ROOT], 'patch-out'), yamlStringify(outcome.batch));
+  await writeFile(
+    safeChild(REPO_ROOT, `${outPath}.versions.json`, [REPO_ROOT], 'patch-out'),
+    JSON.stringify({ batchId: outcome.batch.batch, parentHash, newHash, applied: outcome.applied }, null, 2),
+  );
+  console.log(`补丁 ${outcome.applied.length} 处，校验通过；parent ${parentHash} → ${newHash}`);
+  console.log(`已写出 ${outPath}（人工干预批次，不计入 V2）`);
+}
+
+/**
+ * D2 成对盲评：同一序号、同一画像的两批输出，去标签后随机左右，评审人只回答「哪一批更想看下一批」。
+ * 用法：lab render --pair <runA> <runB> [-n 15 --seed 7 -o runs/pairs]
+ *
+ * 为什么成对而不是 5 分制：评审人只有 2–3 人（方案 §10 自己写了统计力弱），
+ * 成对比较的符号检验比绝对打分敏感得多。5 分制保留，成对结果作为 RQ1 的补充证据。
+ * 键文件单独写，评审时不给评审人看。
+ */
+async function cmdPair(): Promise<void> {
+  const i = process.argv.indexOf('--pair');
+  const runA = process.argv[i + 1];
+  const runB = process.argv[i + 2];
+  if (!runA || !runB) {
+    console.error('用法：lab render --pair <runA> <runB> [-n 15 --seed 7 -o OUTDIR]');
+    process.exit(1);
+  }
+  // 允许写 `smoke`（runs 下的目录名）或完整相对路径 `apps/lab/runs/smoke`
+  const runDir = (p: string) => (isAbsolute(p) || p.includes('/') || p.includes('\\') ? repoPath(p) : join(RUNS_DIR, p));
+  const dirA = safePath(runDir(runA), [RUNS_DIR], 'runA');
+  const dirB = safePath(runDir(runB), [RUNS_DIR], 'runB');
+  // `-n` 与 `--n` 都认：手敲命令时短横线更顺手
+  const shortN = process.argv.indexOf('-n');
+  const n = shortN > 0 ? Number(process.argv[shortN + 1]) || 15 : argInt('n', 15);
+  const seed = argInt('seed', 7);
+  const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'pairs')), [RUNS_DIR], '--out');
+  await mkdir(outDir, { recursive: true });
+
+  const listOf = async (dir: string): Promise<Map<number, string>> => {
+    const map = new Map<number, string>();
+    for (const f of await readdir(join(dir, 'render'))) {
+      const m = /^([0-9]+)\.md$/.exec(f);
+      if (m) map.set(Number(m[1]), join(dir, 'render', f));
+    }
+    return map;
+  };
+  const a = await listOf(dirA);
+  const b = await listOf(dirB);
+  const common = [...a.keys()].filter((k) => b.has(k)).sort((x, y) => x - y);
+  if (common.length === 0) {
+    console.error('两个 run 没有可配对的批次（先各自跑一遍 `lab run`）');
+    process.exit(1);
+  }
+  const rng = mulberry32(seed);
+  const picked = [...common];
+  // 洗牌后取前 n 对：评审人看不到序号顺序带来的偏好
+  for (let j = picked.length - 1; j > 0; j--) {
+    const k = Math.floor(rng() * (j + 1));
+    [picked[j], picked[k]] = [picked[k]!, picked[j]!];
+  }
+  const key: { pair: number; seq: number; left: string; right: string }[] = [];
+  const chosen = picked.slice(0, n).sort((x, y) => x - y);
+  for (let idx = 0; idx < chosen.length; idx++) {
+    const seq = chosen[idx]!;
+    const leftIsA = rng() < 0.5;
+    const left = await readFile(leftIsA ? a.get(seq)! : b.get(seq)!, 'utf8');
+    const right = await readFile(leftIsA ? b.get(seq)! : a.get(seq)!, 'utf8');
+    const name = `pair-${String(idx + 1).padStart(2, '0')}`;
+    const body = [
+      `# 对照稿 ${idx + 1}（批次序号已隐藏）`,
+      '',
+      '> 只回答一个问题：**哪一稿更让你想看下一批？**（允许平局）',
+      '',
+      '## 稿 A',
+      '',
+      stripRunLabels(left),
+      '',
+      '---',
+      '',
+      '## 稿 B',
+      '',
+      stripRunLabels(right),
+      '',
+    ].join('\n');
+    await writeValidated(safeChild(outDir, `${name}.md`, [RUNS_DIR], 'pair'), [RUNS_DIR], 'pair', body);
+    key.push({ pair: idx + 1, seq, left: leftIsA ? runA : runB, right: leftIsA ? runB : runA });
+  }
+  await writeValidated(
+    safeChild(outDir, 'pair-key.json', [RUNS_DIR], 'pair-key'),
+    [RUNS_DIR],
+    'pair-key',
+    JSON.stringify({ seed, pairs: key }, null, 2),
+  );
+  console.log(`已生成 ${chosen.length} 对盲评稿：${outDir}`);
+  console.log('评审人只写「A / B / 平」；键文件 pair-key.json 不要给评审人看。');
+  console.log(`汇总时用符号检验（平局按 0.5 计）：A 胜 ${'#'} 次、B 胜 ${'#'} 次 —— 键文件里有左右对应。`);
+}
+
+/** 去标签：输出里出现的 run_id、批次 id 前缀一律抹掉，避免评审人靠编号猜版本。 */
+function stripRunLabels(text: string): string {
+  return text
+    .replace(/^# .*$/gm, (line) => line.replace(/(r[0-9a-z-]+|20[0-9]{2}[-_][0-9]{2}[-_][0-9]{2})/gi, '××'))
+    .replace(/\bb-[0-9]{4}\b/g, 'b-××××');
 }
 
 async function cmdRender(): Promise<void> {
@@ -377,7 +635,11 @@ async function cmdBufferSim(): Promise<void> {
   const prefetched = (arg('prefetched') ?? '0,3,5').split(',').map(Number);
   const persona = (arg('persona') ?? 'P1') as 'P1' | 'P2' | 'P3';
   const genMedianMs = argInt('gen-ms', 20_000);
-  const { markdown } = sweepBuffer({ buffers, prefetched, persona, genMedianMs });
+  // B3：派生填空（每批可派生张数）；D1：并发与速率取同一份 budget.yaml，避免两处配置打架
+  const derivePerBatch = argInt('derive-fill', 0);
+  const budget = await loadBudgetConfig(join(CONFIG_DIR, 'budget.yaml'));
+  const concurrent = (budget.budget.run?.concurrency ?? 1) >= 2 ? 2 : 1;
+  const { markdown } = sweepBuffer({ buffers, prefetched, persona, genMedianMs, derivePerBatch, concurrent });
   const outDir = safePath(repoPath(arg('out') ?? join(RUNS_DIR, 'buffer-sim')), [RUNS_DIR], '--out');
   await mkdir(outDir, { recursive: true });
   await writeValidated(safeChild(outDir, 'report.md', [RUNS_DIR], 'buffer-sim 报告'), [RUNS_DIR], 'buffer-sim 报告', markdown);
@@ -468,7 +730,11 @@ async function main(): Promise<void> {
       await cmdRun();
       break;
     case 'render':
-      await cmdRender();
+      if (process.argv.includes('--pair')) await cmdPair();
+      else await cmdRender();
+      break;
+    case 'patch':
+      await cmdPatch();
       break;
     case 'metrics':
       await cmdMetrics();
@@ -495,11 +761,13 @@ async function main(): Promise<void> {
       console.log('  lab smoke [--out DIR]         Stub 导演 5 批端到端冒烟（无需 API key）');
       console.log('  lab run --config FILE         按运行配置跑批（需 API key；config/run-example.yaml 为模板）');
       console.log('  lab render FILE [-o OUT]      渲染一个 ESL 批次为 Markdown');
+      console.log('  lab render --pair A B         D2 成对盲评稿（去标签、随机左右，键文件单独写）');
+      console.log('  lab patch BATCH PATCHFILE     套补丁改值（locked 字段会被拒绝），重新校验后写新版本');
       console.log('  lab metrics RUNDIR            重算指标（基于响应缓存回放）');
       console.log('  lab replay RUNDIR             从缓存回放整个运行');
       console.log('  lab judge RUNDIR              LLM 评审（需 API key；先校准再参与判定）');
       console.log('  lab srs-sim [--items N --days N --seeds N]   证据策略对照（S-A/S-B/S-C，不调 LLM）');
-      console.log('  lab buffer-sim [--buffer 1,2,3 --prefetched 0,3,5]  卡顿概率矩阵（K4）');
+      console.log('  lab buffer-sim [--buffer 1,2,3 --prefetched 0,3,5 --derive-fill N]  卡顿概率矩阵（K4，N 张/批 = B3 派生填空）');
       if (cmd !== undefined) process.exit(1);
   }
 }

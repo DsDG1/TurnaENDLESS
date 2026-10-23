@@ -1,7 +1,9 @@
 /**
  * 程序化自检（实验方案第 7 节：生成后自检 + 定点修复，能程序化的部分先程序化）。
  *
- * 做五类「删声明 / 换名字、不改故事」的机械修复，每条都对应校验器的一条阻断规则：
+ * 做六类「删声明 / 换名字、不改故事」的机械修复，每条都对应校验器的一条阻断规则：
+ *   0. 别名替换（A2）：只按人事先声明的别名表把口语名字换成合法名字（背景/emoji/角色），
+ *      V0 仍按替换前口径单列，所以它不会把「模型没写对」藏起来
  *   1. uses 里的条目在本场景文本中找不到 → 删掉这条声明（E-USES-NOT-FOUND）
  *   2. 声明了但没有任何选项 / ink 标签引用的 effect → 删掉（E-EFFECT-INVALID）
  *   3. 新条目（brief.introduce）累计曝光 < 2 就被检测 → 去掉检测（E-NEW-TESTED-EARLY）
@@ -27,6 +29,8 @@ export interface AutoFixResult {
   batch: Batch;
   /** 人类可读的修复记录，按发生顺序；为空表示没有可修的 */
   fixes: string[];
+  /** 别名替换命中（A2）：单独计数进报告，V0 仍按替换前口径 */
+  aliasHits: { from: string; to: string; kind: 'background' | 'emoji' | 'char' }[];
 }
 
 const isRetrieval = (t: string) => ((EVIDENCE_RANK as Record<string, number>)[t] ?? 0) >= 1;
@@ -40,9 +44,152 @@ type MutableScene = Scene & {
 
 export function autoFixBatch(batch: Batch, ctx: ValidationContext): AutoFixResult {
   const fixes: string[] = [];
+  const aliasHits: AutoFixResult['aliasHits'] = [];
   const next = structuredClone(batch) as Batch;
   const scenes = next.scenes as MutableScene[];
   const formsOf = (item: string) => (ctx.lexicon.formsOf(item) ?? []).map((f) => f.toLowerCase());
+
+  // ---------- 0. 别名替换（A2 第六类）----------
+  // 只查人事先声明的别名表：等价关系是数据，不是程序猜的（结果 §7 第 4 条划的边界）。
+  // 查不到就照旧走修复循环；V0 用替换前口径，所以这里不会把「模型没写对」藏起来。
+  const aliasOf = (name: string) => ctx.assets.aliases?.get(name.toLowerCase());
+
+  /** 素材引用改写；不需要改时返回 null。 */
+  const rewriteRef = (ref: string): string | null => {
+    const parsed = parseAssetRef(ref);
+    if (!parsed) return null;
+    if (parsed.kind === 'emoji' && !ctx.assets.emojis.has(parsed.name)) {
+      const a = aliasOf(parsed.name);
+      if (!a) return null;
+      if (a.kind === 'emoji') return `@emoji:${a.target}`;
+      if (a.kind === 'background') return `@tag:${a.target}`;
+      return null;
+    }
+    if (parsed.kind === 'tag' && !ctx.assets.tags.has(parsed.tag)) {
+      const a = aliasOf(parsed.tag);
+      if (a?.kind === 'background') return `@tag:${a.target}`;
+      if (a?.kind === 'emoji') return `@emoji:${a.target}`;
+      return null;
+    }
+    if (parsed.kind === 'char' && !ctx.assets.chars.has(parsed.entity)) {
+      const a = aliasOf(parsed.entity);
+      if (a?.kind !== 'char') return null;
+      const attrs = Object.entries(parsed.attrs).map(([k, v]) => `${k}=${v}`);
+      return attrs.length > 0 ? `@char:${a.target}{${attrs.join(', ')}}` : `@char:${a.target}`;
+    }
+    return null;
+  };
+
+  const fixRef = (ref: string, where: string): string => {
+    const replaced = rewriteRef(ref);
+    if (replaced === null) return ref;
+    const parsedFrom = parseAssetRef(ref);
+    const parsedTo = parseAssetRef(replaced);
+    const kind = parsedTo?.kind === 'tag' ? 'background' : parsedTo?.kind === 'char' ? 'char' : 'emoji';
+    const fromName = parsedFrom?.kind === 'tag' ? parsedFrom.tag : parsedFrom?.kind === 'char' ? parsedFrom.entity : parsedFrom?.kind === 'emoji' ? parsedFrom.name : ref;
+    const toName = parsedTo?.kind === 'tag' ? parsedTo.tag : parsedTo?.kind === 'char' ? parsedTo.entity : parsedTo?.kind === 'emoji' ? parsedTo.name : replaced;
+    aliasHits.push({ from: fromName, to: toName, kind });
+    fixes.push(`${where}：按别名表把 ${ref} 换成 ${replaced}`);
+    return replaced;
+  };
+
+  /**
+   * 实体 id 改写（cast / 说话者 / new_entities 用）。
+   * 顺带记下「替换后真正出现的角色」：模型常常只在 `@char:` 或说话者位置写了别名、
+   * 却没把那个角色写进批次 cast，替换完反而变成「说话者不在 cast」。
+   */
+  const renamedChars = new Set<string>();
+  const aliasEntity = (id: string): string | null => {
+    const a = aliasOf(id);
+    if (a?.kind !== 'char') return null;
+    // 目标必须是角色规格表里的真角色，否则宁可不动（那是修复循环的事）
+    if (ctx.assets.chars.has(a.target)) renamedChars.add(a.target);
+    return a.target;
+  };
+
+  for (const scene of scenes) {
+    if (scene.type === 'comic') {
+      scene.setting = fixRef(scene.setting, `${scene.id}.setting`);
+      scene.panels.forEach((p, pi) => {
+        p.actors = p.actors.map((a, ai) => fixRef(a, `${scene.id}.panels[${pi}].actors[${ai}]`));
+        p.props = p.props.map((a, ai) => fixRef(a, `${scene.id}.panels[${pi}].props[${ai}]`));
+        p.bubbles.forEach((b, bi) => {
+          const fixed = aliasEntity(b.speaker);
+          if (fixed) {
+            fixes.push(`${scene.id}.panels[${pi}].bubbles[${bi}]：按别名表把说话者 ${b.speaker} 换成 ${fixed}`);
+            aliasHits.push({ from: b.speaker, to: fixed, kind: 'char' });
+            b.speaker = fixed;
+          }
+        });
+      });
+    } else if (scene.type === 'swipe') {
+      scene.cards.forEach((c, ci) => {
+        c.asset = fixRef(c.asset, `${scene.id}.cards[${ci}].asset`);
+      });
+    } else if (scene.type === 'pick') {
+      scene.options.forEach((o, oi) => {
+        if (o.asset) o.asset = fixRef(o.asset, `${scene.id}.options[${oi}].asset`);
+      });
+    } else if (scene.type === 'hidden_object') {
+      scene.background = fixRef(scene.background, `${scene.id}.background`);
+      scene.objects.forEach((o, oi) => {
+        o.asset = fixRef(o.asset, `${scene.id}.objects[${oi}].asset`);
+      });
+    } else if (scene.type === 'chat') {
+      scene.messages.forEach((m, mi) => {
+        const fixed = aliasEntity(m.from);
+        if (fixed) {
+          fixes.push(`${scene.id}.messages[${mi}]：按别名表把说话者 ${m.from} 换成 ${fixed}`);
+          aliasHits.push({ from: m.from, to: fixed, kind: 'char' });
+          m.from = fixed;
+        }
+      });
+      if (scene.reply) {
+        for (const side of ['on_correct', 'on_wrong'] as const) {
+          const fixed = aliasEntity(scene.reply[side].from);
+          if (fixed) {
+            fixes.push(`${scene.id}.reply.${side}：按别名表把说话者 ${scene.reply[side].from} 换成 ${fixed}`);
+            aliasHits.push({ from: scene.reply[side].from, to: fixed, kind: 'char' });
+            scene.reply[side].from = fixed;
+          }
+        }
+      }
+    } else if (scene.type === 'story') {
+      // ink 的说话者前缀（`Mouse: ...`）也要跟着换，否则换完 cast 反而对不上
+      scene.ink = scene.ink.replace(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/gm, (all, indent: string, name: string, tail: string) => {
+        const fixed = aliasEntity(name);
+        if (!fixed) return all;
+        fixes.push(`${scene.id}.ink：按别名表把说话者 ${name} 换成 ${fixed}`);
+        aliasHits.push({ from: name, to: fixed, kind: 'char' });
+        return `${indent}${fixed}${tail}`;
+      });
+    }
+    if (scene.cast) {
+      scene.cast = scene.cast.map((id) => {
+        const fixed = aliasEntity(id);
+        return fixed ?? id;
+      });
+    }
+  }
+  next.cast = next.cast.map((id) => aliasEntity(id) ?? id);
+  // 替换只改了引用、没改批次 cast 的补进去：不补就是「说话者不在 cast」（E-ENTITY-UNKNOWN）
+  for (const id of renamedChars) {
+    if (next.cast.includes(id)) continue;
+    next.cast.push(id);
+    fixes.push(`batch.cast：补入按别名表替换后的角色 ${id}（引用已指向它，不补就对不上）`);
+  }
+  if (next.new_entities) {
+    // 自造实体如果其实是某个已知角色的别名，删掉声明（角色本来就在注册表里）
+    const kept = next.new_entities.filter((e) => {
+      const fixed = aliasEntity(e.id);
+      if (!fixed) return true;
+      fixes.push(`new_entities：删掉「${e.id}」的声明（别名表指向已存在的角色 ${fixed}）`);
+      aliasHits.push({ from: e.id, to: fixed, kind: 'char' });
+      return false;
+    });
+    if (kept.length === 0) delete next.new_entities;
+    else next.new_entities = kept;
+  }
 
   // ---------- 1. uses 定位失败 ----------
   const units = batchTextUnits(next);
@@ -163,5 +310,5 @@ export function autoFixBatch(batch: Batch, ctx: ValidationContext): AutoFixResul
     }
   }
 
-  return { batch: next, fixes };
+  return { batch: next, fixes, aliasHits };
 }

@@ -7,3 +7,4 @@ export * from './validate.js';
 export * from './autofix.js';
 export * from './compile.js';
 export * from './hash.js';
+export * from './patch.js';

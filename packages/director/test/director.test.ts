@@ -528,3 +528,136 @@ describe('请求缓存', () => {
     expect(res.cacheHit).toBe(false);
   });
 });
+
+describe('会话窗口（Session Window）与偏离重置', () => {
+  const STANDARD_TEMPLATES: PromptTemplates = {
+    system: 'SYS',
+    showrunner: `[静态规范示例]\n[学习者画像]\n{{learner_profile}}\n[频道圣经]\n{{channel_bible}}\n[当前事实]\n{{cast_facts}}\n[LearningBrief]（本批频道：{{channel}}）\n{{brief}}{{retry_note}}`,
+    writer: `[ESL 静态规范与长示例]\n[角色规格表摘要]\n{{char_specs}}\n[素材标签摘要]\n{{asset_tags}}\n[允许词表]\n{{allowed_words}}\n[本批角色事实]\n{{cast_facts}}\n[梗台账（禁止复用）]\n{{trope_ledger}}\n[LearningBrief]\n{{brief}}\n[编剧室方案]\n{{plan}}\n[本批学习任务（逐条落实，缺一条整批不通过）]\n{{learning_checklist}}{{retry_note}}`,
+    single: 'SINGLE {{brief}} {{retry_note}}',
+    repair: 'REPAIR {{problems}} {{scenes}}',
+    judge: 'JUDGE',
+  };
+
+  it('连续无偏离批次在同一 messages[] 中追加增量，省略已发静态表且保持前序前缀不变', async () => {
+    const counters: Record<string, number> = {};
+    const stub = new StubLlmClient((req) => {
+      counters[req.stage] = (counters[req.stage] ?? 0) + 1;
+      return req.stage === 'showrunner' ? PLAN_YAML : GOOD_BATCH;
+    });
+    const svc = new DirectorService(
+      {
+        llm: stub,
+        templates: STANDARD_TEMPLATES,
+        validateEs: makeValidateEs(),
+        entityExists: (id) => id === 'duck',
+        formsOf: (i) => LEX[i] ?? [],
+      },
+      { mode: 'two-stage', encoding: 'yaml', showrunnerTier: 'fast', maxPrecheckRetries: 2, maxRepairRounds: 2, sessionWindow: 3 },
+    );
+
+    // 第 1 批：首轮输出完整模板（含静态规范、角色规格表、完整允许词表）
+    const b1 = await svc.generate({
+      batchId: 'tt-0001',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: { char_specs: 'CHAR_SPEC_BIG_TABLE', asset_tags: 'ASSET_TAG_BIG_LIST', allowed_words: 'behind, hat, look, table' },
+    });
+    expect(b1.calls.map((c) => c.sessionTurn)).toEqual([1, 1]);
+    const writerCall1 = stub.calls.find((c) => c.stage === 'writer')!;
+    expect(writerCall1.messages).toHaveLength(1);
+    expect(writerCall1.messages![0]!.content).toContain('[ESL 静态规范与长示例]');
+    expect(writerCall1.messages![0]!.content).toContain('CHAR_SPEC_BIG_TABLE');
+
+    // 第 2 批：同窗口第 2 轮，messages 为 [u1, a1, u2]，u1 完全不变，u2 只含增量与新增词
+    const b2 = await svc.generate({
+      batchId: 'tt-0002',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: { char_specs: 'CHAR_SPEC_BIG_TABLE', asset_tags: 'ASSET_TAG_BIG_LIST', allowed_words: 'behind, hat, look, table, borrow' },
+    });
+    expect(b2.calls.map((c) => c.sessionTurn)).toEqual([2, 2]);
+    const writerCalls = stub.calls.filter((c) => c.stage === 'writer');
+    const writerCall2 = writerCalls[1]!;
+    expect(writerCall2.messages).toHaveLength(3);
+    expect(writerCall2.messages![0]!.content).toBe(writerCall1.messages![0]!.content);
+    expect(writerCall2.messages![2]!.content).toContain('[续写下一批');
+    expect(writerCall2.messages![2]!.content).not.toContain('CHAR_SPEC_BIG_TABLE');
+    expect(writerCall2.messages![2]!.content).toContain('borrow');
+    expect(writerCall2.messages![2]!.content).not.toContain('behind, hat');
+
+    // 第 3 批：同窗口第 3 轮（满窗 = 3）
+    const b3 = await svc.generate({
+      batchId: 'tt-0003',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: { char_specs: 'CHAR_SPEC_BIG_TABLE', asset_tags: 'ASSET_TAG_BIG_LIST', allowed_words: 'behind, hat, look, table, borrow' },
+    });
+    expect(b3.calls.map((c) => c.sessionTurn)).toEqual([3, 3]);
+
+    // 第 4 批：超过 sessionWindow=3，自动重置会话并重新输出完整模板（sessionTurn=1, sessionReset=true）
+    const b4 = await svc.generate({
+      batchId: 'tt-0004',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: { char_specs: 'CHAR_SPEC_BIG_TABLE', asset_tags: 'ASSET_TAG_BIG_LIST', allowed_words: 'behind, hat, look, table, borrow' },
+    });
+    expect(b4.calls.map((c) => [c.sessionTurn, c.sessionReset])).toEqual([
+      [1, true],
+      [1, true],
+    ]);
+    const writerCall4 = stub.calls.filter((c) => c.stage === 'writer')[3]!;
+    expect(writerCall4.messages).toHaveLength(1);
+    expect(writerCall4.messages![0]!.content).toContain('CHAR_SPEC_BIG_TABLE');
+  });
+
+  it('检测到偏离（校验失败）时立即清空会话并在重写/下一批重新输出完整模板', async () => {
+    const missingUses = GOOD_BATCH.replace('    uses: [lx:behind#prep.location]\n', '');
+    let writerIdx = 0;
+    const stub = new StubLlmClient((req) => {
+      if (req.stage === 'showrunner') return PLAN_YAML;
+      writerIdx++;
+      // 第 1 批正常；第 2 批首轮漏 uses（触发整批重写），重写轮给好批次
+      return writerIdx === 2 ? missingUses : GOOD_BATCH;
+    });
+    const svc = new DirectorService(
+      {
+        llm: stub,
+        templates: STANDARD_TEMPLATES,
+        validateEs: makeValidateEs(),
+        entityExists: (id) => id === 'duck',
+        formsOf: (i) => LEX[i] ?? [],
+      },
+      { mode: 'two-stage', encoding: 'yaml', showrunnerTier: 'fast', maxPrecheckRetries: 2, maxRepairRounds: 2, sessionWindow: 5 },
+    );
+
+    await svc.generate({
+      batchId: 'tt-0001',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: { char_specs: 'CHAR_SPEC_BIG_TABLE', asset_tags: 'ASSET_TAG_BIG_LIST' },
+    });
+
+    const b2 = await svc.generate({
+      batchId: 'tt-0002',
+      channel: 'duck_detective',
+      brief: BRIEF,
+      ledger: new TropeLedger(),
+      vars: { char_specs: 'CHAR_SPEC_BIG_TABLE', asset_tags: 'ASSET_TAG_BIG_LIST' },
+    });
+    expect(b2.batchFailed).toBe(false);
+    expect(b2.sessionResets).toBeGreaterThan(0);
+    const writerCalls = stub.calls.filter((c) => c.stage === 'writer');
+    // 第 2 批首轮原本在 turn=2（messages 长度 3），检测到偏离后重写轮立即重置为 turn=1（messages 长度 1，含完整模板）
+    expect(writerCalls[1]!.messages).toHaveLength(3);
+    expect(writerCalls[2]!.messages).toHaveLength(1);
+    expect(writerCalls[2]!.messages![0]!.content).toContain('CHAR_SPEC_BIG_TABLE');
+    expect(writerCalls[2]!.messages![0]!.content).toContain('整批重写');
+  });
+});
+

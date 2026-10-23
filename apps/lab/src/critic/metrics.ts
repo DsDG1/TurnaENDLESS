@@ -3,8 +3,9 @@
  * N1–N4 新颖度、C1/C2 一致性、L1–L3 学习、V1–V5 可执行性、K1/K2/K3/K5 成本延迟。
  * 人工评分项（N5、L4、L5、C3、C1 的人工确认部分）与 LLM 评审不在此处。
  */
-import { batchTextUnits, tokenize, EVIDENCE_RANK } from '@endless/esl';
+import { tokenize, EVIDENCE_RANK } from '@endless/esl';
 import { threadHygiene, type WorldStore } from '@endless/world';
+import { contentCoverage, TEST_ANGLES } from '../sampler.js';
 import type { RunResult } from '../pipeline.js';
 import { percentile } from '../sim/rng.js';
 
@@ -47,6 +48,13 @@ export interface MetricsJson {
     v5Revalidation: { checked: number; regenerated: number };
     /** 重写/修复的净效果：首版带阻塞错误的批次里救回多少、丢掉多少 */
     rewriteEffect: { firstDraftDirty: number; recovered: number; lost: number; cleanButFailed: number };
+    /** 传输失败（E-TRANSPORT）批次：V2 分母剔除，单列失败率（A4） */
+    transport: { failed: number; rate: number; retries: number; incompleteCalls: number; evaluableBatches: number };
+    /**
+     * 名字出路（A2）：首版里被别名表救回的名字数、靠别名解析的 needs 项数、受影响批次。
+     * 这三个数只作归因用 —— V0 仍是「别名命中前」口径，别名替换不许把 V0 抬虚。
+     */
+    alias: { hits: number; needs: number; batchesWithHits: number };
   };
   cost: {
     /** K1：每批 / 每卡 token（按阶段拆分见 calls.jsonl） */
@@ -58,35 +66,61 @@ export interface MetricsJson {
     pricesConfigured: boolean;
     /** K3：每批时延 P50/P95（毫秒） */
     k3BatchLatency: { p50: number; p95: number };
+    /** K3 含传输重试等待的版本（A4 风险表：重试会掩盖供应商的不稳定，两列分开看） */
+    k3BatchLatencyWithRetry: { p50: number; p95: number };
     /** K5：演绎倍数 = 用户可见卡片数 / LLM 调用次数（不含评审） */
     k5DerivationFactor: number;
+  };
+  /** 覆盖矩阵（B2）：两张表都从已落盘批次算，只做报告、不改调度 */
+  coverage: {
+    learning: {
+      items: number;
+      cells: { item: string; evidence: string; scene: string; count: number }[];
+      /** 只用过一种「证据类型 × 场景类型」形态的条目：记忆可能绑在这一个形态上 */
+      singleShapeItems: string[];
+    };
+    content: { enabled: boolean; used: { cell: string; count: number }[]; empty: string[] };
   };
   thresholds: { name: string; value: string; threshold: string; pass: boolean | null }[];
 }
 
 export interface MetricsOptions {
   store?: WorldStore;
+  /** 预计算的伏笔卫生快照（C2 离线重算用：不打开 world 库也能对齐原值） */
+  threadHygiene?: ReturnType<typeof threadHygiene> | null;
   card?: number;
   prices?: { inputPerMtok: number; outputPerMtok: number };
   budgetPer100Cards?: number;
 }
 
+/** 真 tf-idf 余弦（方案 6.1：1 − max cos 相对最近 W 批）；此前是按词集合的二元余弦，非 tf-idf。 */
 function tfidfNovelty(docs: string[][], window = 20): number[] {
+  const n = docs.length;
+  const df = new Map<string, number>();
+  for (const d of docs) for (const w of new Set(d)) df.set(w, (df.get(w) ?? 0) + 1);
+  const vecs = docs.map((doc) => {
+    const v = new Map<string, number>();
+    if (doc.length === 0) return v;
+    const tf = new Map<string, number>();
+    for (const w of doc) tf.set(w, (tf.get(w) ?? 0) + 1);
+    for (const [w, c] of tf) v.set(w, (c / doc.length) * Math.log(n / (df.get(w) ?? 1)));
+    return v;
+  });
+  const norm = (v: Map<string, number>) => Math.sqrt([...v.values()].reduce((s, x) => s + x * x, 0));
   const out: number[] = [];
-  for (let i = 0; i < docs.length; i++) {
-    const prev = docs.slice(Math.max(0, i - window), i);
-    if (prev.length === 0) {
+  for (let i = 0; i < n; i++) {
+    const ni = norm(vecs[i]!);
+    if (i === 0 || ni === 0) {
       out.push(1);
       continue;
     }
-    const docSet = new Set(docs[i]!);
     let maxSim = 0;
     for (let j = Math.max(0, i - window); j < i; j++) {
-      const other = new Set(docs[j]!);
+      const nj = norm(vecs[j]!);
+      if (nj === 0) continue;
       let dot = 0;
-      for (const w of docSet) if (other.has(w)) dot++;
-      const sim = dot / Math.sqrt(docSet.size * other.size);
-      maxSim = Math.max(maxSim, sim);
+      for (const [w, x] of vecs[i]!) dot += x * (vecs[j]!.get(w) ?? 0);
+      maxSim = Math.max(maxSim, dot / (ni * nj));
     }
     out.push(1 - maxSim);
   }
@@ -104,10 +138,10 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
   const { records, played, briefs, feedbacks, ledgerEntries, totals } = result;
 
   // ---------- 新颖度 ----------
-  const docs = played.map(({ batch, seq }) => {
-    const unitTexts = batchTextUnits(batch).map((u) => u.text);
+  // N1 语料按方案限定为「梗概 + 节拍 gist」（第 6.1 节），不是全部台词文本
+  const docs = played.map(({ seq }) => {
     const meta = records.find((r) => r.seq === seq);
-    return tokenize([meta?.logline ?? '', ...unitTexts].join(' '));
+    return tokenize([meta?.logline ?? '', meta?.gistText ?? ''].join(' '));
   });
   const n1 = tfidfNovelty(docs);
   const tropeSeries = ledgerEntries.map((e) => e.tropes);
@@ -128,7 +162,12 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
   const factRefs = records.reduce((s, r) => s + r.factRefs, 0);
   const eFactConflicts = records.reduce((s, r) => s + r.issues.filter((i) => i.code === 'E-FACT-CONFLICT').length, 0);
   const c1Program = factRefs > 0 ? eFactConflicts / factRefs : null;
-  const hygiene = opts.store ? threadHygiene(opts.store, opts.card ?? totals.cards) : null;
+  const hygiene =
+    opts.threadHygiene !== undefined
+      ? opts.threadHygiene
+      : opts.store
+        ? threadHygiene(opts.store, opts.card ?? totals.cards)
+        : null;
 
   // ---------- 学习 ----------
   let reviewTotal = 0;
@@ -159,14 +198,65 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
     p95: percentile(oovs, 95),
   };
 
+  // ---------- 覆盖矩阵（B2）----------
+  // 学习侧：条目 × 证据类型 × 场景类型。回答「某个条目是不是永远只在一个形态里被考」。
+  const learningCounts = new Map<string, { item: string; evidence: string; scene: string; count: number }>();
+  for (const { batch } of played) {
+    for (const scene of batch.scenes) {
+      const ev = scene.evidence;
+      if (!ev) continue;
+      const key = `${ev.item}|${ev.type}|${scene.type}`;
+      const row = learningCounts.get(key) ?? { item: ev.item, evidence: ev.type, scene: scene.type, count: 0 };
+      row.count++;
+      learningCounts.set(key, row);
+    }
+  }
+  const learningCells = [...learningCounts.values()].sort(
+    (a, b) => a.item.localeCompare(b.item) || b.count - a.count,
+  );
+  const shapesPerItem = new Map<string, number>();
+  for (const c of learningCells) shapesPerItem.set(c.item, (shapesPerItem.get(c.item) ?? 0) + 1);
+  const singleShapeItems = [...shapesPerItem.entries()].filter(([, n]) => n === 1).map(([i]) => i);
+
+  // 内容侧：频道 × set_piece × 梗族 × 检测角度（只有开了 B1 采样的运行才有数据）
+  const samplingHistory = ledgerEntries
+    .filter((e) => e.setPiece && e.tropeFamily && e.testAngle)
+    .map((e) => ({
+      channel: e.channel ?? 'unknown',
+      setPiece: e.setPiece!,
+      tropeFamily: e.tropeFamily!,
+      testAngle: e.testAngle! as (typeof TEST_ANGLES)[number],
+    }));
+  // 台账条目没有频道字段时，退化成「样本数」而不是伪造空格
+  const contentEnabled = samplingHistory.length > 0;
+  const observed = {
+    channels: [...new Set(samplingHistory.map((c) => c.channel))],
+    setPieces: [...new Set(samplingHistory.map((c) => c.setPiece))],
+    families: [...new Set(samplingHistory.map((c) => c.tropeFamily))],
+  };
+  const contentCoverageResult = contentCoverage({
+    history: samplingHistory,
+    universe: contentEnabled
+      ? observed.channels.map((channel) => ({ channel, setPieces: observed.setPieces, families: observed.families }))
+      : [],
+  });
+
   // ---------- 可执行性 ----------
   const okCount = records.filter((r) => r.ok).length;
+  const transportFailed = records.filter((r) => r.transportFailed).length;
+  // V2 的分母剔除传输失败：它量的是「ESL 好不好写」，不是「供应商稳不稳」
+  const evaluable = records.length - transportFailed;
   const v5Checked = records.filter((r) => r.v5Revalidated).length;
   const v5Regen = records.filter((r) => r.v5Regenerated).length;
 
   // ---------- 成本与延迟 ----------
   const latencies = records.flatMap((r) => {
     const perBatch = r.calls.reduce((s, c) => s + c.latencyMs, 0);
+    return r.ok ? [perBatch] : [];
+  }).sort((a, b) => a - b);
+  // 含重试：把退避等待也算进批次时延（K3 的两列口径）
+  const latenciesWithRetry = records.flatMap((r) => {
+    const perBatch = r.calls.reduce((s, c) => s + c.latencyMs + (c.transportWaitMs ?? 0), 0);
     return r.ok ? [perBatch] : [];
   }).sort((a, b) => a - b);
   const prices = opts.prices ?? { inputPerMtok: 0, outputPerMtok: 0 };
@@ -180,7 +270,17 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
   const thresholds: MetricsJson['thresholds'] = [];
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   const batchesPlayed = Math.max(1, records.length);
-  thresholds.push({ name: 'V2 修复后通过率', value: pct(okCount / batchesPlayed), threshold: '≥ 97%', pass: okCount / batchesPlayed >= 0.97 });
+  // V2 的分母是可判定批次（剔除传输失败）；全部批次都传输失败时退回总批次数，避免 NaN
+  const v2Denominator = Math.max(1, evaluable);
+  thresholds.push({ name: 'V2 修复后通过率', value: pct(okCount / v2Denominator), threshold: '≥ 97%', pass: okCount / v2Denominator >= 0.97 });
+  if (transportFailed > 0) {
+    thresholds.push({
+      name: '传输失败率（不计入 V2）',
+      value: pct(transportFailed / batchesPlayed),
+      threshold: '0%（出现即需续跑补齐）',
+      pass: transportFailed === 0,
+    });
+  }
   if (c1Program !== null) {
     thresholds.push({ name: 'C1 矛盾率（程序部分）', value: pct(c1Program), threshold: '≤ 2%（另加人工确认）', pass: c1Program <= 0.02 });
   }
@@ -234,11 +334,23 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
      * V1/V2 都是在 autoFixBatch 之后算的，看不出机械修复贡献了多少；V0 才代表「模型自己写对了」。
      */
     v0RawFirstPassRate: records.length ? records.filter((r) => r.rawFirstPass).length / records.length : 0,
-      v2AfterRepairRate: okCount / batchesPlayed,
+      v2AfterRepairRate: okCount / v2Denominator,
       v3AvgRepairRounds: records.reduce((s, r) => s + r.repairRounds, 0) / batchesPlayed,
       v4SceneDropRate: played.length ? totals.droppedScenes / played.reduce((s, p) => s + p.batch.scenes.length, 0) : 0,
       v5Revalidation: { checked: v5Checked, regenerated: v5Regen },
       rewriteEffect,
+      transport: {
+        failed: transportFailed,
+        rate: batchesPlayed > 0 ? transportFailed / batchesPlayed : 0,
+        retries: totals.transportRetries ?? 0,
+        incompleteCalls: totals.incompleteCalls ?? 0,
+        evaluableBatches: evaluable,
+      },
+      alias: {
+        hits: totals.aliasHits ?? 0,
+        needs: totals.aliasNeeds ?? 0,
+        batchesWithHits: records.filter((r) => (r.aliasHits ?? 0) > 0).length,
+      },
     },
     cost: {
       k1PerBatch: { input: records.length ? totals.tokensIn / records.length : 0, output: records.length ? totals.tokensOut / records.length : 0 },
@@ -246,7 +358,16 @@ export function computeMetrics(result: RunResult, opts: MetricsOptions = {}): Me
       k2Per100Cards: k2,
       pricesConfigured,
       k3BatchLatency: { p50: percentile(latencies, 50), p95: percentile(latencies, 95) },
+      k3BatchLatencyWithRetry: { p50: percentile(latenciesWithRetry, 50), p95: percentile(latenciesWithRetry, 95) },
       k5DerivationFactor: totals.calls > 0 ? totals.cards / totals.calls : 0,
+    },
+    coverage: {
+      learning: {
+        items: shapesPerItem.size,
+        cells: learningCells,
+        singleShapeItems,
+      },
+      content: { enabled: contentEnabled, used: contentCoverageResult.used, empty: contentCoverageResult.empty },
     },
     thresholds,
   };
@@ -287,11 +408,44 @@ export function metricsMarkdown(m: MetricsJson): string {
   lines.push(`- L2 合格证据占比：${pct(m.learning.l2QualifiedRatio)}`);
   lines.push(`- L3 OOV：中位数 ${pct(m.learning.l3Oov.median)}，P95 ${pct(m.learning.l3Oov.p95)}`);
   lines.push('');
+  lines.push('### 覆盖矩阵（B2）');
+  {
+    const l = m.coverage.learning;
+    lines.push(`- 学习侧：${l.items} 个条目进入过检测，共 ${l.cells.length} 个（条目 × 证据类型 × 场景类型）格子`);
+    if (l.singleShapeItems.length > 0) {
+      lines.push(
+        `  · 只在一种形态里被考过的条目 ${l.singleShapeItems.length} 个（前 10：${l.singleShapeItems.slice(0, 10).join(', ')}）` +
+          '——记忆可能绑在场景形态上，规划器可据此换形态',
+      );
+    }
+    const c = m.coverage.content;
+    if (!c.enabled) {
+      lines.push('- 内容侧：本运行未开采样轴（B1），无内容覆盖数据（只有 R3s 这类对照行会开）');
+    } else {
+      const coldest = c.used.slice(0, 3).map((u) => `${u.cell}（${u.count}）`).join('；');
+      lines.push(`- 内容侧（频道 × set_piece × 梗族 × 检测角度）：已用 ${c.used.length} 格，空格 ${c.empty.length} 个`);
+      if (coldest) lines.push(`  · 最冷 3 格：${coldest}`);
+      if (c.empty.length > 0) lines.push(`  · 空格样例：${c.empty.slice(0, 5).join('；')}`);
+    }
+  }
+  lines.push('');
   lines.push('### 可执行性（V1–V5）');
   lines.push(`- V1 首次通过率：${pct(m.executability.v1FirstPassRate)}；V2 修复后通过率：${pct(m.executability.v2AfterRepairRate)}`);
   lines.push(`- V0 模型原始首轮零错误率：${pct(m.executability.v0RawFirstPassRate)}（机械修复前；V1 与它的差就是程序化自检的贡献）`);
   lines.push(`- V3 平均修复轮数：${m.executability.v3AvgRepairRounds.toFixed(2)}；V4 场景丢弃率：${pct(m.executability.v4SceneDropRate)}`);
   lines.push(`- V5 状态失效重校验：检查 ${m.executability.v5Revalidation.checked} 批，重生成 ${m.executability.v5Revalidation.regenerated} 批`);
+  {
+    const t = m.executability.transport;
+    lines.push(
+      `- 传输层（A4）：失败 ${t.failed} 批（${pct(t.rate)}，不计入 V2 分母）｜重试 ${t.retries} 次｜不完整输出 ${t.incompleteCalls} 次｜可判定批次 ${t.evaluableBatches}`,
+    );
+  }
+  {
+    const a = m.executability.alias;
+    lines.push(
+      `- 名字出路（A2）：别名表救回 ${a.hits} 个名字（涉及 ${a.batchesWithHits} 批）｜needs 靠别名解析 ${a.needs} 项｜V0 仍按别名命中前口径，不因替换抬高`,
+    );
+  }
   {
     const w = m.executability.rewriteEffect;
     lines.push(
@@ -303,7 +457,10 @@ export function metricsMarkdown(m: MetricsJson): string {
   lines.push('### 成本与延迟（K1/K2/K3/K5）');
   lines.push(`- K1 每批：输入 ${m.cost.k1PerBatch.input.toFixed(0)} / 输出 ${m.cost.k1PerBatch.output.toFixed(0)} token；每卡：输入 ${m.cost.k1PerCard.input.toFixed(0)} / 输出 ${m.cost.k1PerCard.output.toFixed(0)}`);
   lines.push(`- K2 每 100 张卡成本：${m.cost.pricesConfigured ? `$${m.cost.k2Per100Cards.toFixed(4)}（单价来自 config/prices.yaml）` : '不可判定（config/prices.yaml 单价未配置，K2 记 —）'}`);
-  lines.push(`- K3 批时延：P50 ${(m.cost.k3BatchLatency.p50 / 1000).toFixed(1)}s / P95 ${(m.cost.k3BatchLatency.p95 / 1000).toFixed(1)}s`);
+  lines.push(
+    `- K3 批时延（不含重试）：P50 ${(m.cost.k3BatchLatency.p50 / 1000).toFixed(1)}s / P95 ${(m.cost.k3BatchLatency.p95 / 1000).toFixed(1)}s；` +
+      `含重试：P50 ${(m.cost.k3BatchLatencyWithRetry.p50 / 1000).toFixed(1)}s / P95 ${(m.cost.k3BatchLatencyWithRetry.p95 / 1000).toFixed(1)}s`,
+  );
   lines.push(`- K5 演绎倍数：${m.cost.k5DerivationFactor.toFixed(2)} 卡/调用`);
   lines.push('');
   lines.push('> 人工评分项（N5、L4、L5、C3、C1 人工确认）按第 7.4 节规程另行收集；LLM 评审先校准（第 5.12 节）。');

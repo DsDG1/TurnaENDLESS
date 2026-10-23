@@ -42,6 +42,8 @@ export interface PlannerInput {
   maxIntroduce?: number;
   /** 本批允许的额外词数量上限（默认 8）。种子词库远小于方案规模时由调用方放大并记录偏差。 */
   allowedExtraCount?: number;
+  /** brief 里告诉导演的 OOV 预算目标（默认 0.02）；应与校验器实际执行的告警阈值一致 */
+  oovBudget?: number;
 }
 
 export class Planner {
@@ -104,7 +106,7 @@ export class Planner {
       vocab: {
         allowed_extra: pool,
         max_words_per_line: input.level === 'A2' ? 16 : 12,
-        oov_budget: 0.02,
+        oov_budget: input.oovBudget ?? 0.02,
       },
       avoid_before_test: [...avoid],
     };

@@ -501,6 +501,28 @@ describe('反例', () => {
   });
 });
 
+// ---------- D4：选项长度泄露 ----------
+
+describe('D4 选项长度泄露（建议级）', () => {
+  it('正确选项比干扰项均值长 50% 以上时报 W-OPTION-LENGTH-LEAK，且不阻断', () => {
+    const b = mutate((x) => {
+      const s = sceneOf(x, 's3', 'chat');
+      s.reply!.options = [
+        { label: 'Where was your hat last night before the show?', correct: true },
+        { label: 'Who was it?' },
+        { label: 'When was it?' },
+        { label: 'How was it?' },
+      ];
+    });
+    expect(warns(b).has('W-OPTION-LENGTH-LEAK')).toBe(true);
+    expect([...codes(b).codes]).toEqual([]); // 建议级不改变通过率
+  });
+
+  it('长度相近的选项不报警（基准批次）', () => {
+    expect(warns(loadBaseBatch()).has('W-OPTION-LENGTH-LEAK')).toBe(false);
+  });
+});
+
 // ---------- 覆盖率自检：全部阻断码都有反例 ----------
 
 describe('阻断码覆盖自检', () => {

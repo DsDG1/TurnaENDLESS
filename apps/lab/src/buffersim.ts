@@ -19,6 +19,12 @@ export interface BufferSimInput {
   genSigma: number;
   concurrent: 1 | 2;
   seed: number;
+  /**
+   * B3 派生填空：每生成 1 批可攒下几张派生卡（0 = 关闭）。
+   * 派生卡不调 LLM、从更早批次的台词挖空生成，所以补货速度只受「每批能派生几张」限制
+   * （B3 的上限是每批 1 张、占比 ≤ 25%）。这里量它能把 K4 卡顿概率压下多少。
+   */
+  derivePerBatch?: number;
 }
 
 export interface BufferSimResult {
@@ -28,6 +34,10 @@ export interface BufferSimResult {
   avgStallMs: number;
   p95StallMs: number;
   firstScreenWaitMs: number;
+  /** 开了派生填空时的卡顿概率（未开等于 stallProbability） */
+  stallProbabilityWithDerive: number;
+  /** 被派生卡覆盖掉的等待时间占比 */
+  deriveCoveredRatio: number;
 }
 
 export function simulateBuffer(input: BufferSimInput): BufferSimResult {
@@ -72,12 +82,38 @@ export function simulateBuffer(input: BufferSimInput): BufferSimResult {
     if (ready[j]! > at) stalls.push(ready[j]! - at);
   }
   const sorted = [...stalls].sort((a, b) => a - b);
+
+  // B3 派生填空：卡顿发生时先播派生卡（零生成成本），每张顶掉一次停留时间。
+  // 供给按「已生成的批次 × 每批可派生张数」累加 —— 派生卡只能从更早批次的文本里挖，
+  // 所以补货速度受生成速度约束，这正是要量的那件事。
+  const derivePerBatch = input.derivePerBatch ?? 0;
+  let supply = 0;
+  let coveredTotal = 0;
+  let stallTotal = 0;
+  let coveredBatches = 0;
+  for (let j = 0; j < input.batches; j++) {
+    supply += derivePerBatch;
+    const cardIdx = j * input.cardsPerBatch;
+    const wait = ready[j]! - arrival[cardIdx]!;
+    if (wait <= 0) continue;
+    stallTotal += wait;
+    const usable = Math.min(Math.floor(supply), input.cardsPerBatch);
+    if (usable <= 0) continue;
+    supply -= usable;
+    const covered = Math.min(wait, usable * persona.dwellMedianMs);
+    coveredTotal += covered;
+    // 这一批的等待被派生卡完全顶掉才算「不卡」：部分覆盖只是缩短卡顿
+    if (covered >= wait) coveredBatches++;
+  }
+
   return {
     input,
     stallProbability: stalls.length / input.batches,
     avgStallMs: stalls.length ? stalls.reduce((s, x) => s + x, 0) / stalls.length : 0,
     p95StallMs: percentile(sorted, 95),
     firstScreenWaitMs: ready[0] ?? 0,
+    stallProbabilityWithDerive: Math.max(0, stalls.length - coveredBatches) / input.batches,
+    deriveCoveredRatio: stallTotal > 0 ? coveredTotal / stallTotal : 0,
   };
 }
 
@@ -91,6 +127,8 @@ export interface BufferSweepOptions {
   genSigma: number;
   concurrent: 1 | 2;
   seed: number;
+  /** B3 派生填空：每批可派生的张数（0 = 关闭） */
+  derivePerBatch: number;
 }
 
 /** K4 判定矩阵（第 9.1 节）：P1、缓冲 2、3 个预制批 → 卡顿概率 ≤ 5%。 */
@@ -105,6 +143,7 @@ export function sweepBuffer(opts: Partial<BufferSweepOptions> = {}): { results: 
     genSigma: 0.5,
     concurrent: 1,
     seed: 7,
+    derivePerBatch: 0,
     ...opts,
   };
   const results: BufferSimResult[] = [];
@@ -118,11 +157,19 @@ export function sweepBuffer(opts: Partial<BufferSweepOptions> = {}): { results: 
   lines.push('');
   lines.push(`画像 ${full.persona}（${PERSONAS[full.persona].name}），${full.batches} 批 × ${full.cardsPerBatch} 卡，单批生成中位 ${full.genMedianMs / 1000}s，并发 ${full.concurrent}。`);
   lines.push('');
-  lines.push('| 缓冲 B | 预制批 | 卡顿概率 | 平均卡顿(s) | P95 卡顿(s) | 首屏等待(s) |');
-  lines.push('|---|---|---|---|---|---|');
+  const withDerive = full.derivePerBatch > 0;
+  lines.push(
+    withDerive
+      ? '| 缓冲 B | 预制批 | 卡顿概率 | 平均卡顿(s) | P95 卡顿(s) | 首屏等待(s) | 派生填空后卡顿概率 | 派生覆盖等待 |'
+      : '| 缓冲 B | 预制批 | 卡顿概率 | 平均卡顿(s) | P95 卡顿(s) | 首屏等待(s) |',
+  );
+  lines.push(withDerive ? '|---|---|---|---|---|---|---|---|' : '|---|---|---|---|---|---|');
   for (const r of results) {
+    const base = `| ${r.input.buffer} | ${r.input.prefetched} | ${(r.stallProbability * 100).toFixed(1)}% | ${(r.avgStallMs / 1000).toFixed(1)} | ${(r.p95StallMs / 1000).toFixed(1)} | ${(r.firstScreenWaitMs / 1000).toFixed(1)} |`;
     lines.push(
-      `| ${r.input.buffer} | ${r.input.prefetched} | ${(r.stallProbability * 100).toFixed(1)}% | ${(r.avgStallMs / 1000).toFixed(1)} | ${(r.p95StallMs / 1000).toFixed(1)} | ${(r.firstScreenWaitMs / 1000).toFixed(1)} |`,
+      withDerive
+        ? `${base} ${(r.stallProbabilityWithDerive * 100).toFixed(1)}% | ${(r.deriveCoveredRatio * 100).toFixed(0)}% |`
+        : base,
     );
   }
   lines.push('');
@@ -131,6 +178,12 @@ export function sweepBuffer(opts: Partial<BufferSweepOptions> = {}): { results: 
     lines.push(
       `判定格（P1 / 缓冲 2 / 3 预制批）：卡顿概率 **${(key.stallProbability * 100).toFixed(1)}%**，阈值 ≤ 5% → ${key.stallProbability <= 0.05 ? '✅ 达标（H7 成立）' : '❌ 未达标（H7 不成立）'}。`,
     );
+    if (withDerive) {
+      lines.push(
+        `同格开派生填空（每批 ${full.derivePerBatch} 张）：卡顿概率 **${(key.stallProbabilityWithDerive * 100).toFixed(1)}%**，` +
+          `派生卡覆盖了 ${(key.deriveCoveredRatio * 100).toFixed(0)}% 的等待时间 —— 这是 B3 对 K4 的贡献上限。`,
+      );
+    }
   }
   return { results, markdown: lines.join('\n') };
 }

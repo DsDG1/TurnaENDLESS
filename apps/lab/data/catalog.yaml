@@ -1,0 +1,161 @@
+# 组件目录（A1 第 2 步）：场景类型、effect 操作、素材类别的单一来源。
+#
+# 借 Sekai 的「能力目录」：一项能力 = 给人看的标题 + 给模型看的说明片段 + 治理开关。
+# 这里加一条硬规矩：`example` 必须是能过校验器的合法写法 —— `apps/lab/test/catalog.test.ts`
+# 会把每个场景的 example 拼成批次跑 `validateBatch`，示例自己违反规则就红。
+#
+# writer_selectable=false 的项只出现在提示词的「写手不可选」一句里：
+# 借 Sekai 的 planner 开关，让「写手不能选 derive 与 production 证据」变成数据，而不是散在散文里。
+scenes:
+  - id: comic
+    title: 漫画格
+    writer_selectable: true
+    required: [setting, panels]
+    note: 纯叙事，不写 evidence；每格最多 2 个气泡
+    example: |
+      - id: s1
+        type: comic
+        setting: "@tag:agency_office"
+        cast: [duck]
+        uses: ["lx:behind#prep.location"]
+        panels:
+          - shot: wide
+            actors: ["@char:duck{expr=suspicious}"]
+            props: ["@emoji:magnifying_glass"]
+            caption: "Monday. No cases."
+            bubbles:
+              - {speaker: duck, text: "Is it behind the door?"}
+  - id: chat
+    title: 聊天界面
+    writer_selectable: true
+    required: [skin, messages, reply]
+    note: 写了 evidence 就必须有 reply（选项 + on_correct + on_wrong）
+    example: |
+      - id: s2
+        type: chat
+        skin: messenger
+        cast: [duck, cat]
+        uses: ["lx:under#prep.location"]
+        evidence: {item: "ck:where-is", type: recognition-4}
+        messages:
+          - {from: cat, text: "The key is not here."}
+          - {from: duck, text: "Where is it?"}
+        reply:
+          options:
+            - {label: "under the box", correct: true, effect: set_key_found}
+            - {label: "behind the door"}
+            - {label: "on the table"}
+            - {label: "on the shelf"}
+          on_correct: {from: cat, text: "Yes! Under the box."}
+          on_wrong: {from: cat, text: "No. Look again."}
+        effects:
+          set_key_found:
+            - set_fact: {subject: cat, predicate: location, object: under_box, standing: stated}
+  - id: swipe
+    title: 左右滑卡
+    writer_selectable: true
+    required: [prompt, mode, cards]
+    note: mode=judge 可带 evidence（只到 recognition-2）；mode=preference 不写 evidence
+    example: |
+      - id: s3
+        type: swipe
+        prompt: "Which one is behind the door?"
+        mode: judge
+        cast: [duck]
+        evidence: {item: "lx:behind#prep.location", type: recognition-2}
+        cards:
+          - {asset: "@emoji:top_hat", caption: "behind the door", side: right}
+          - {asset: "@emoji:sock", caption: "under the table", side: left}
+  - id: pick
+    title: 选择题
+    writer_selectable: true
+    required: [question, options, feedback]
+    note: 恰好 4 个选项才能写 recognition-4；2–3 个或带 hint 只能 recognition-2
+    example: |
+      - id: s4
+        type: pick
+        question: "Where is the key?"
+        cast: [cat]
+        uses: ["lx:under#prep.location"]
+        evidence: {item: "lx:under#prep.location", type: recognition-2}
+        options:
+          - {label: "under the box", asset: "@emoji:box", correct: true}
+          - {label: "behind the door", asset: "@emoji:door"}
+        feedback: {on_correct: "Right. Under the box.", on_wrong: "Not quite. Try again."}
+  - id: hidden_object
+    title: 找东西
+    writer_selectable: true
+    required: [background, instruction, spots, objects]
+    note: spots 只能从该背景的位置表里选，3–6 个；spots ≥ 4 才能写 recognition-4
+    example: |
+      - id: s5
+        type: hidden_object
+        background: "@tag:living_room"
+        cast: [duck]
+        evidence: {item: "lx:under#prep.location", type: recognition-4}
+        instruction: "Find the key."
+        spots: [sofa_behind, table_under, lamp_top, shelf_top]
+        objects:
+          - {asset: "@emoji:key", spot: table_under, target: true}
+          - {asset: "@emoji:sock", spot: sofa_behind}
+  - id: story
+    title: 多轮故事
+    writer_selectable: true
+    required: [ink]
+    note: ink 只用 knot/stitch、选项、gather、-> 跳转、-> END、访问计数
+    example: |
+      - id: s6
+        type: story
+        cast: [duck, cat]
+        ink: |
+          -> start
+          === start ===
+          The duck opens the box. # effect:set_key_found
+          * [Ask about the old case]
+              The old case is closed.
+              -> END
+        effects:
+          set_key_found:
+            - set_fact: {subject: cat, predicate: location, object: under_box, standing: stated}
+  - id: derive
+    title: 跨批派生检测
+    writer_selectable: false
+    required: [item, from]
+    note: 程序派生（从更早批次的台词挖空），写手不写
+
+effects:
+  - id: set_fact
+    fields: [subject, predicate, object, standing]
+    note: 建立或更新一条事实；standing 是 stated（台词里说过）或 inferred（推断）
+    example: "{set_fact: {subject: cat, predicate: location, object: under_box, standing: stated}}"
+  - id: end_fact
+    fields: [subject, predicate, object]
+    note: 结束一条当前仍成立的事实（不存在的「当前事实」结束不了）
+    example: "{end_fact: {subject: cat, predicate: suspect_status}}"
+  - id: open_thread
+    fields: [id, title, priority]
+    note: 开一条伏笔；**没有 subject / predicate / object**（那是 set_fact 的字段）
+    example: '{open_thread: {id: hat_owner, title: "Who really owns the hat?", priority: 2}}'
+  - id: advance_thread
+    fields: [id]
+    note: 推进一条已开的伏笔；id 只能来自 [开放伏笔]
+    example: "{advance_thread: {id: missing_hat}}"
+  - id: resolve_thread
+    fields: [id]
+    note: 收掉一条已开的伏笔；id 只能来自 [开放伏笔]
+    example: "{resolve_thread: {id: old_case}}"
+  - id: user_fact
+    fields: [predicate, object]
+    note: 记录关于学习者的一条事实（没有 subject）
+    example: "{user_fact: {predicate: accused, object: cat}}"
+
+assets:
+  - id: emoji
+    ref: "@emoji:<name>"
+    note: 名字必须来自 [本批可用名字] 里的道具清单
+  - id: tag
+    ref: "@tag:<tag>"
+    note: 背景标签；位置名另见 [背景] 块里的 spots
+  - id: char
+    ref: "@char:<id>{k=v,...}"
+    note: 属性的可选值见 [角色规格表摘要]（expr / hat / props_allowed）

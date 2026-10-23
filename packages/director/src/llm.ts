@@ -8,10 +8,20 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { fnv1a64, stableStringify } from '@endless/esl';
 import { estimateTokens } from './context.js';
 
+export interface LlmMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface LlmRequest {
   stage: string;
   system: string;
   prompt: string;
+  /**
+   * 多轮会话消息列表（含前序轮次与当前 user 消息）。
+   * 提供时按多轮对话发送以复用上下文与供应商前缀缓存；未提供或仅单条时与单轮 prompt 等价。
+   */
+  messages?: LlmMessage[];
   modelTier: 'fast' | 'premium';
   temperature?: number;
   maxTokens?: number;
@@ -20,6 +30,8 @@ export interface LlmRequest {
 export interface LlmUsage {
   inputTokens: number;
   outputTokens: number;
+  /** 供应商报告的命中缓存输入 token 数（若有） */
+  cachedInputTokens?: number;
 }
 
 export interface LlmResponse {
@@ -32,6 +44,10 @@ export interface LlmResponse {
   finishReason?: string;
   /** 推理模型花在思考上的 token；供应商标注时才有 */
   reasoningTokens?: number;
+  /** 传输类失败的重试次数（A4；由 RetryingLlmClient 填，缓存命中为 0） */
+  transportRetries?: number;
+  /** 重试累计等待（毫秒），用于把 K3 拆成「含重试 / 不含重试」两列 */
+  transportWaitMs?: number;
 }
 
 export interface LlmCache {
@@ -58,6 +74,7 @@ export const requestHash = (req: LlmRequest, modelId: string, salt = ''): string
     stableStringify({
       s: req.system,
       p: req.prompt,
+      ...(req.messages && req.messages.length > 1 ? { msgs: req.messages } : {}),
       m: modelId,
       t: req.temperature ?? 0,
       n: req.maxTokens ?? 0,
@@ -134,7 +151,7 @@ export class AiSdkLlmClient implements LlmClient {
       const res = await generateText({
         model: this.provider.chatModel(modelId),
         system: req.system,
-        prompt: req.prompt,
+        ...(req.messages && req.messages.length > 0 ? { messages: req.messages } : { prompt: req.prompt }),
         temperature: req.temperature ?? 0.8,
         maxOutputTokens: req.maxTokens ?? 4096,
         abortSignal: controller.signal,
@@ -147,6 +164,7 @@ export class AiSdkLlmClient implements LlmClient {
         usage: {
           inputTokens: res.usage.inputTokens ?? 0,
           outputTokens: res.usage.outputTokens ?? 0,
+          ...(res.usage.cachedInputTokens !== undefined ? { cachedInputTokens: res.usage.cachedInputTokens } : {}),
         },
         latencyMs: Date.now() - started,
         cacheHit: false,
@@ -174,12 +192,16 @@ export class StubLlmClient implements LlmClient {
     this.calls.push(req);
     const text = this.script(req, this.calls.length - 1);
     if (text === undefined) throw new Error(`Stub LLM：没有为第 ${this.calls.length} 次调用（stage=${req.stage}）准备脚本`);
+    const inTokens =
+      req.messages && req.messages.length > 0
+        ? req.messages.reduce((sum, m) => sum + estimateTokens(m.content), 0)
+        : estimateTokens(req.prompt);
     return {
       text,
-      usage: { inputTokens: estimateTokens(req.prompt), outputTokens: estimateTokens(text) },
+      usage: { inputTokens: inTokens, outputTokens: estimateTokens(text) },
       latencyMs: 5,
       cacheHit: false,
-      requestHash: fnv1a64(stableStringify({ s: req.system, p: req.prompt, m: 'stub', t: 0 })),
+      requestHash: requestHash(req, 'stub', ''),
     };
   }
 }

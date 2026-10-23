@@ -2,6 +2,8 @@
 # 正式版从 microsoft/fluentui-emoji 元数据生成约 600 个（oss-reuse 待核实项 1）；
 # 种子版手工收录渲染所需的 Unicode 字形（glyph）与英文标签。
 # backgrounds 声明每个背景标签与它的具名位置表（位置名不显示给用户）。
+# aliases（A2）：人事先声明的等价关系，只用于「解析需求清单」与 autofix 的别名替换，
+# 不改变渲染名字。模型爱写的口语名字放这里，比在提示词里列反例有效（结果 §5 #11）。
 emojis:
   - {name: duck, glyph: "🦆", tags: [duck, bird, animal, character]}
   - {name: cat, glyph: "🐱", tags: [cat, animal, character, pet]}
@@ -9,7 +11,7 @@ emojis:
   - {name: badger, glyph: "🦡", tags: [badger, animal, character, shopkeeper]}
   - {name: mouse, glyph: "🐭", tags: [mouse, animal, courier]}
   - {name: person, glyph: "🧑", tags: [person, human, character, adult]}
-  - {name: top_hat, glyph: "🎩", tags: [hat, top_hat, clothes, fancy]}
+  - {name: top_hat, glyph: "🎩", tags: [hat, top_hat, clothes, fancy], aliases: [hat]}
   - {name: cap, glyph: "🧢", tags: [hat, cap, clothes]}
   - {name: crown, glyph: "👑", tags: [hat, crown, royal, fancy]}
   - {name: sock, glyph: "🧦", tags: [sock, clothes, laundry]}
@@ -17,7 +19,7 @@ emojis:
   - {name: teapot, glyph: "🫖", tags: [teapot, tea, kitchen]}
   - {name: key, glyph: "🔑", tags: [key, metal, tool]}
   - {name: box, glyph: "📦", tags: [box, package, container]}
-  - {name: bag, glyph: "👜", tags: [bag, handbag, container]}
+  - {name: bag, glyph: "👜", tags: [bag, handbag, container], aliases: [handbag]}
   - {name: umbrella, glyph: "☂️", tags: [umbrella, rain, weather]}
   - {name: magnifying_glass, glyph: "🔍", tags: [search, clue, detective, tool]}
   - {name: notebook, glyph: "📓", tags: [notebook, notes, paper, case_file]}
@@ -39,14 +41,14 @@ emojis:
   - {name: envelope, glyph: "✉️", tags: [letter, mail, envelope, clue]}
   - {name: newspaper, glyph: "📰", tags: [news, paper, article, headline]}
   - {name: camera, glyph: "📷", tags: [camera, photo, evidence]}
-  - {name: trash, glyph: "🗑️", tags: [bin, trash, waste, clue]}
+  - {name: trash, glyph: "🗑️", tags: [bin, trash, waste, clue], aliases: [bin]}
   - {name: door, glyph: "🚪", tags: [door, entrance, exit]}
   - {name: window, glyph: "🪟", tags: [window, glass, shop]}
-  - {name: stairs, glyph: "🪜", tags: [stairs, ladder, up]}
+  - {name: stairs, glyph: "🪜", tags: [stairs, ladder, up], aliases: [ladder]}
   - {name: roof, glyph: "🏚️", tags: [roof, house, ruin, top]}
   - {name: sofa, glyph: "🛋️", tags: [sofa, couch, furniture, living_room]}
   - {name: table, glyph: "🪑", tags: [table, chair, furniture]}
-  - {name: shelf, glyph: "🗄️", tags: [shelf, cabinet, furniture, drawer]}
+  - {name: shelf, glyph: "🗄️", tags: [shelf, cabinet, furniture, drawer], aliases: [cabinet, drawer]}
   - {name: counter, glyph: "🏪", tags: [counter, store, shop, kiosk]}
   - {name: basket, glyph: "🧺", tags: [basket, laundry, container]}
   - {name: price_tag, glyph: "🏷️", tags: [price, tag, label, shop]}
@@ -96,23 +98,30 @@ backgrounds:
     emoji: door
     description: 侦探事务所：一张桌子、一扇门、一个柜子和一盆植物
     spots: [desk_top, door_behind, shelf_top, plant_under, bin_under]
+    aliases: [office, agency, detective_office]
   - tag: living_room
     emoji: sofa
     description: 客厅：沙发、小桌、台灯和置物架
     spots: [sofa_behind, table_under, lamp_top, shelf_top]
+    # Apartment 7 是 duck_detective 圣经 premise 里的说法，而清单里只有 living_room（A3）
+    aliases: [apartment, flat, home, room]
   - tag: rooftop
     emoji: roof
     description: 屋顶：水塔、烟囱和一排盆栽
     spots: [tank_behind, chimney_top, plant_under, drain_under]
+    aliases: [roof, roof_top]
   - tag: shop_counter
     emoji: counter
     description: 商店柜台：柜台、货架、抽屉和橱窗
     spots: [counter_top, shelf_under, drawer_in, window_top]
+    aliases: [counter, shop, store]
   - tag: stockroom
     emoji: box
     description: 库房：成排的箱子和一只高梯子
     spots: [box_behind, ladder_top, crate_under, shelf_top]
+    aliases: [storage, back_room]
   - tag: shop_window
     emoji: window
     description: 橱窗：玻璃、展示台和价签
     spots: [glass_front, display_top, tag_under, sill_top]
+    aliases: [window, shopfront]

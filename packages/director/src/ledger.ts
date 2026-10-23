@@ -7,6 +7,12 @@ export interface LedgerEntry {
   cast: string[];
   punchlineType?: string;
   location?: string;
+  /** 本批所属频道（B2 内容侧覆盖矩阵用） */
+  channel?: string;
+  /** 采样格（B1）：本批被指定的 set_piece / 梗族 / 检测角度；没开采样时为空 */
+  setPiece?: string;
+  tropeFamily?: string;
+  testAngle?: string;
 }
 
 export const LEDGER_WINDOW = 20;

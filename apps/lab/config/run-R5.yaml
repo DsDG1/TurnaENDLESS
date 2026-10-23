@@ -1,4 +1,8 @@
 # R5：派生场景的作用（K5；编码取 R3/R4 胜出者，先按 YAML）（第 7.1 节）
+# 语义（2026-10-23 起，B3）：derive: true 会启用**程序派生器** —— 对到期复习条目，
+# 若它的某个形式出现在更早已播放批次的台词里，就用那句原文挖空生成一张跨批 cloze 卡
+# （每批最多 1 张、占比 ≤ 25%、错题回插优先、不调 LLM）。提示词仍不要求模型写 derive。
+# 所以 R5 与 R3 的差别现在是「多了一条不出调用就能产出的检索题」，不再只是「不剔除」。
 # 60 批 × 3 画像：pnpm lab run --config apps/lab/config/run-R5.yaml --persona P1
 run_id: r5-60-p1
 director: two-stage

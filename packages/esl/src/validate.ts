@@ -31,6 +31,14 @@ export interface AssetCatalog {
   emojis: Set<string>;
   tags: Set<string>;
   chars: Map<string, CharSpec>;
+  /** 背景标签 → 具名位置表（第 5.8.4 节：hidden_object 的 spots 必须来自该表） */
+  backgroundSpots?: Map<string, string[]>;
+  /**
+   * 别名表（A2）：人事先声明的等价关系（`apartment → living_room`、`hat → top_hat`、
+   * `mouse → delivery_mouse`）。**校验器不认别名**（合法名字集合不变），只有 autofix 用它做替换，
+   * 所以 V0（机械修复前口径）仍然把「写了别名」算作模型没写对。
+   */
+  aliases?: Map<string, { kind: 'background' | 'emoji' | 'char'; target: string }>;
 }
 
 export interface BriefSpec {
@@ -277,22 +285,54 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
   }
 
   // ---------- 6. 答案唯一性与重复 ----------
+  /**
+   * 选项长度泄露（D4，借 ScrollToStudy「短答案保证干扰项不泄露长度」）。
+   * 猜对率 g 按选项数取值（recognition-4 = 0.25）的前提是选项之间看不出哪个对；
+   * 正确选项明显更长时真实猜对率更高，BKT 与 FSRS 的输入都会偏。建议级，不阻断。
+   */
+  const checkLengthLeak = (labels: string[], correctIndex: number, sceneId: string, where: string) => {
+    if (correctIndex < 0 || labels.length < 2) return;
+    const counts = labels.map((l) => wordCount(l));
+    const correctWords = counts[correctIndex]!;
+    const others = counts.filter((_, i) => i !== correctIndex);
+    const mean = others.reduce((s, x) => s + x, 0) / others.length;
+    // 阈值先取 50%：正确项比干扰项均值长一半以上就报
+    if (mean > 0 && correctWords > mean * 1.5) {
+      warn(
+        'W-OPTION-LENGTH-LEAK',
+        `${where} 正确选项 ${correctWords} 词，干扰项均值 ${mean.toFixed(1)} 词：长度泄露答案（会抬高真实猜对率 g）`,
+        sceneId,
+        where,
+      );
+    }
+  };
   for (const scene of batch.scenes) {
     if (scene.type === 'pick') {
       const n = scene.options.filter((o) => o.correct).length;
       if (n !== 1) err('E-ANSWER-COUNT', `pick 正确答案数为 ${n}，须恰好 1`, scene.id);
       const labels = scene.options.map((o) => o.label.trim().toLowerCase());
       if (new Set(labels).size !== labels.length) err('E-ANSWER-DUP', 'pick 选项重复', scene.id);
+      checkLengthLeak(scene.options.map((o) => o.label), scene.options.findIndex((o) => o.correct), scene.id, 'options');
     }
     if (scene.type === 'chat' && scene.reply) {
       const n = scene.reply.options.filter((o) => o.correct).length;
       if (n !== 1) err('E-ANSWER-COUNT', `chat 回复正确答案数为 ${n}，须恰好 1`, scene.id);
       const labels = scene.reply.options.map((o) => o.label.trim().toLowerCase());
       if (new Set(labels).size !== labels.length) err('E-ANSWER-DUP', 'chat 选项重复', scene.id);
+      checkLengthLeak(scene.reply.options.map((o) => o.label), scene.reply.options.findIndex((o) => o.correct), scene.id, 'reply.options');
     }
     if (scene.type === 'hidden_object') {
       const n = scene.objects.filter((o) => o.target).length;
       if (n !== 1) err('E-ANSWER-COUNT', `hidden_object 目标数为 ${n}，须恰好 1`, scene.id);
+      // spots 必须来自该背景的位置表（第 5.8.4 节）：模型不能自造位置名
+      const bgRef = parseAssetRef(scene.background);
+      const bgTag = bgRef?.kind === 'tag' ? bgRef.tag : undefined;
+      const bgSpots = bgTag ? ctx.assets.backgroundSpots?.get(bgTag) : undefined;
+      if (bgSpots) {
+        for (const s of scene.spots) {
+          if (!bgSpots.includes(s)) err('E-SCHEMA', `位置 ${s} 不在背景 @tag:${bgTag} 的位置表（${bgSpots.join(' / ')}）中`, scene.id, 'spots');
+        }
+      }
       for (const o of scene.objects) {
         if (!scene.spots.includes(o.spot)) err('E-SCHEMA', `物体位置 ${o.spot} 不在该背景的位置表中`, scene.id);
       }
@@ -332,8 +372,9 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
       const correct = labels.find((l, i) =>
         (scene.type === 'pick' && scene.options[i]?.correct) ||
         (scene.type === 'chat' && scene.reply?.options[i]?.correct));
+      const correctNorm = correct?.trim().toLowerCase();
       for (const label of labels) {
-        if (label === correct) continue;
+        if (label.trim().toLowerCase() === correctNorm) continue;
         const norm = label.trim().toLowerCase();
         if (answerForms.has(norm)) {
           err('E-ANSWER-DUP', `干扰项 "${label}" 与答案是同一条目 ${item} 的不同形式`, scene.id);
@@ -381,12 +422,24 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
   // 之前的文本 ＝ 更早场景的全部文本 ＋ 检测场景的叙述部分（题面/选项属于检测本身）。
   // 注意：某条目检测之后的复用是允许的，所以窗口按条目各自计算，avoid_before_test
   // 只是规划器给的提示（其形式已包含在 formsOf 里），不单独全局检查。
+  //
+  // 跨批 derive（from 指向更早批次）按第 5.8.4 节计作 recognition-4 检索证据，
+  // 与声明了 evidence 的场景同等参与覆盖/防启动/早测判定；同批 derive 仍是 practice。
+  const isCrossBatchRef = (from: string) => /^[a-z]+-\d+$/.test(from.split('.')[0]!);
+  const testEvidenceOf = (s: (typeof batch.scenes)[number]): { item: string; type: EvidenceType } | null => {
+    if (s.evidence) return s.evidence;
+    if (s.type === 'derive' && isCrossBatchRef(s.from)) return { item: s.item, type: 'recognition-4' };
+    return null;
+  };
+  const isRetrievalEvidence = (t: { item: string; type: EvidenceType } | null) =>
+    t !== null && isRetrieval(t.type) && t.type !== 'practice';
   const brief = ctx.brief;
   if (brief) {
     const evidenceSceneOf = (item: string) =>
-      batch.scenes.find(
-        (s) => s.evidence?.item === item && isRetrieval(s.evidence.type) && s.evidence.type !== 'practice',
-      );
+      batch.scenes.find((s) => {
+        const ev = testEvidenceOf(s);
+        return ev?.item === item && isRetrievalEvidence(ev);
+      });
     for (const r of brief.review) {
       const evScene = evidenceSceneOf(r.item);
       if (!evScene) continue; // 覆盖缺口由 E-BRIEF-UNCOVERED 报
@@ -406,9 +459,10 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
   // ---------- 10. 新条目过早检测（E-NEW-TESTED-EARLY，R1） ----------
   if (brief && ctx.exposureCounts) {
     for (const item of brief.introduce) {
-      const tested = batch.scenes.some(
-        (s) => s.evidence?.item === item && isRetrieval(s.evidence.type),
-      );
+      const tested = batch.scenes.some((s) => {
+        const ev = testEvidenceOf(s);
+        return ev?.item === item && isRetrieval(ev.type);
+      });
       if (!tested) continue;
       const seen = ctx.exposureCounts.get(item) ?? 0;
       if (seen < 2) err('E-NEW-TESTED-EARLY', `新条目 ${item} 曝光 ${seen} 次（<2）就被检测`, undefined, undefined);
@@ -418,13 +472,10 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
   // ---------- 11. brief 覆盖（E-BRIEF-UNCOVERED） ----------
   if (brief) {
     for (const r of brief.review) {
-      const covered = batch.scenes.some(
-        (s) =>
-          s.evidence?.item === r.item &&
-          isRetrieval(s.evidence.type) &&
-          s.evidence.type !== 'practice' &&
-          EVIDENCE_RANK[s.evidence.type] >= EVIDENCE_RANK[r.minEvidence],
-      );
+      const covered = batch.scenes.some((s) => {
+        const ev = testEvidenceOf(s);
+        return ev?.item === r.item && isRetrievalEvidence(ev) && EVIDENCE_RANK[ev.type] >= EVIDENCE_RANK[r.minEvidence];
+      });
       if (!covered) err('E-BRIEF-UNCOVERED', `review 条目 ${r.item} 没有达到 ${r.minEvidence} 的合格证据`);
     }
     for (const ex of brief.expose) {
@@ -496,9 +547,13 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
     if ((ctx.recentCastCounts?.get(id) ?? 0) >= 8) warn('W-CAST-OVERUSE', `角色 ${id} 在最近 10 批中出场过 ${(ctx.recentCastCounts?.get(id) ?? 0)} 次`);
   }
 
-  // ---------- 14. 事实引用计数（C1 分母的程序部分：带说话者的叙述 + 旁白） ----------
+  // ---------- 14. 事实引用计数（C1 分母的程序部分：对出场实体当前属性的陈述） ----------
+  // 方案口径是「陈述实体属性」的句子数；程序能判的近似 = 叙述性文本行里提及了已知实体。
   const factRefs = textUnits.filter(
-    (u) => u.role === 'narrative' && (u.speaker !== undefined || u.path.includes('caption')),
+    (u) =>
+      u.role === 'narrative' &&
+      (u.speaker !== undefined || u.path.includes('caption')) &&
+      tokenize(u.text).some((t) => ctx.entities.exists(t)),
   ).length;
 
   const ok = !issues.some((i) => i.level === 'error');

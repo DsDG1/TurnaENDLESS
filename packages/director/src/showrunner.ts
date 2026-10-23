@@ -30,6 +30,17 @@ export const ShowrunnerPlan = z.object({
   learning_placement: z
     .array(z.object({ item: z.string(), beat: z.number().int(), as: z.string() }))
     .default([]),
+  /**
+   * 本批需要的背景 / 道具 / 配角（A2）：用人话写，程序按别名表解析成合法名字。
+   * 这是「把名字从生成挪到选择」的入口 —— 编剧室声明意图，写手只从解析结果里引用。
+   */
+  needs: z
+    .object({
+      background: z.string().optional(),
+      props: z.array(z.string()).default([]),
+      cast: z.array(z.string()).default([]),
+    })
+    .optional(),
   hook_out: z.string().optional(),
 });
 export type ShowrunnerPlan = z.infer<typeof ShowrunnerPlan>;
@@ -42,6 +53,12 @@ export interface PrecheckInput {
   entityExists: (id: string) => boolean;
   /** 条目 → 形式（防启动粗查：gist 里不得提前出现复习条目的形式） */
   formsOf: (item: string) => string[];
+  /**
+   * 名字解析（A2）：把 `needs` 里的人话名字解析成合法名字。
+   * 解析不了的项作为预检失败原因退回编剧室 —— 这一步纯程序、不花 token，
+   * 正符合两段式「问题在第一步就拦下」的设计初衷。
+   */
+  resolveNeed?: (kind: 'background' | 'prop' | 'cast', asked: string) => { ok: boolean; value?: string; reason?: string };
 }
 
 /** 预检（5.7.2 表）。不合格附原因重试，最多 2 次；仍不合格记一次「预检失败」用最后一次继续。 */
@@ -82,6 +99,18 @@ export function precheckPlan(input: PrecheckInput): { ok: boolean; failures: str
   // 角色合法：cast 里的未知实体
   for (const id of plan.cast) {
     if (!entityExists(id)) failures.push(`cast 实体 ${id} 未知（新角色须在 new_entities 声明）`);
+  }
+  // 名字解析（A2）：needs 里每一项都必须解析成合法名字；解析不了退回编剧室换方案
+  if (input.resolveNeed && plan.needs) {
+    const { resolveNeed } = input;
+    const check = (kind: 'background' | 'prop' | 'cast', word: string) => {
+      const r = resolveNeed(kind, word);
+      if (!r.ok) failures.push(r.reason ?? `needs.${kind} 的「${word}」解析不了`);
+    };
+    if (plan.needs.background) check('background', plan.needs.background);
+    // zod 的 default([]) 只在 parse 后生效：手写计划（测试、插件）可能缺字段，这里兜一层空数组
+    for (const p of plan.needs.props ?? []) check('prop', p);
+    for (const c of plan.needs.cast ?? []) check('cast', c);
   }
   return { ok: failures.length === 0, failures };
 }

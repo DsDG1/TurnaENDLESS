@@ -1,4 +1,23 @@
-# 预算（第 9.1 节 K2 阈值）：每 100 张卡的成本上限（美元）。
-# 判定标准：K2 每 100 张卡成本 ≤ 此值。
+# 预算与调用策略（第 9.1 节 K2 阈值 + D1 调用策略表）。
+# K2 判定：每 100 张卡成本 ≤ budget.per_100_cards。
+# 调用策略借 Sekai 宿主的四类策略：budget（配额，这里是每分钟请求）/ memo（已有请求哈希缓存）/
+# trailing（实验 1 的学习事件写入，暂不实现）/ min_interval（由 requests_per_minute 换算）。
 budget:
   per_100_cards: 0.5
+  llm:
+    # 每分钟请求上限（0 = 不限）。按两段式每批 2–4 次调用估算，24 相当于约 6–12 批/分钟。
+    requests_per_minute: 0
+    # 单批 token 上限（输入 + 输出；0 = 不限）。触顶说明提示词或上限配置出了问题，停跑而不是继续烧。
+    max_tokens_per_batch: 0
+    retry:
+      # A4：最多尝试 4 次（首次 + 3 次重试），指数退避从 800ms 起，单次上限 20s
+      max_attempts: 4
+      base_delay_ms: 800
+      max_delay_ms: 20000
+  run:
+    # 全量 token 上限（0 = 不限）；触顶即停，防全量跑批跑飞
+    max_total_tokens: 0
+    # 连续 3 批传输失败就熔断（迁移方案 §3.3「批次失败三次就停」）
+    max_consecutive_failures: 3
+    # buffer-sim 用的生成并发（1 = 单任务串行，2 = 双任务并发）
+    concurrency: 1

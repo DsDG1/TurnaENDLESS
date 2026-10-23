@@ -260,6 +260,8 @@ export const ISSUE_CODES = [
   'W-GRAMMAR',
   'W-NO-HOOK',
   'W-SENSE-UNSURE',
+  /** 正确选项明显长于干扰项：长度本身会泄露答案，猜对率 g 高于按选项数取的值（D4） */
+  'W-OPTION-LENGTH-LEAK',
 ] as const;
 export type IssueCode = (typeof ISSUE_CODES)[number];
 export const BLOCKING_CODES: readonly string[] = ISSUE_CODES.filter((c) => c.startsWith('E-'));
