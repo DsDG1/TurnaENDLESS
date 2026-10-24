@@ -8,9 +8,9 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { edition } from '@endless/content';
-import { EditionConflictError, EditionStore, isEditionRef } from './store.js';
+import { EditionConflictError, EditionStore, EditionStoreBusyError, isEditionRef } from './store.js';
 import { EditionJobError, EditionJobManager } from './jobs.js';
-import { editionRunnerCapabilities, verifyReleaseForPublication } from './runner.js';
+import { editionRunnerCapabilities, putDraftUnit, verifyReleaseForPublication, type DraftUnitRecord } from './runner.js';
 
 const CONTROL_LIMIT = 1 * 1024 * 1024;
 const IMPORT_LIMIT = 8 * 1024 * 1024;
@@ -217,6 +217,32 @@ export function createEditionRouter(options: EditionRouterOptions) {
         return true;
       }
 
+      // ---------- 已批准草稿登记 ----------
+      const draftMatch = /^\/api\/editions\/([a-z0-9_:-]+)\/drafts$/.exec(path);
+      if (draftMatch && method === 'POST') {
+        requireOrigin();
+        requireJson();
+        const editionId = draftMatch[1]!;
+        if (!isEditionRef(editionId)) throw new EditionJobError(400, '编辑项目 ID 不合法');
+        if (!store.getEdition(editionId)) throw new EditionJobError(404, '找不到编辑项目');
+        const body = await readJson(request, IMPORT_LIMIT);
+        const unitId = stringField(body, 'unitId', 80);
+        const revision = edition.UnitRevisionSchema.parse(body.revision);
+        if (revision.unitId !== unitId) throw new EditionJobError(400, 'unitId 与修订不一致');
+        if (revision.basis.editionId !== editionId) throw new EditionJobError(400, '修订不属于该编辑项目');
+        const context = body.context as DraftUnitRecord['context'] | undefined;
+        if (!context || typeof context !== 'object' || Array.isArray(context)) {
+          throw new EditionJobError(400, '缺少草稿复核依据（context）');
+        }
+        if (context.editorial?.id && context.editorial.id !== revision.basis.editorialRevisionId) {
+          throw new EditionJobError(400, '草稿依据与修订的目录不一致');
+        }
+        // 这里只做结构登记；完整复核（重编译 + 逐项比对 + 目录审批摘要）在 compile_issue 执行器里
+        putDraftUnit(store, unitId, { revision, context });
+        send(response, 201, { unitId, revisionId: revision.id, digest: revision.digest });
+        return true;
+      }
+
       const jobMatch = /^\/api\/edition-jobs\/([a-z0-9_:-]+)$/.exec(path);
       if (jobMatch && method === 'GET') {
         const row = store.getJob(jobMatch[1]!);
@@ -372,6 +398,8 @@ export function createEditionRouter(options: EditionRouterOptions) {
     } catch (error) {
       if (error instanceof EditionJobError) {
         send(response, error.status, { error: error.message, code: error.code ?? 'E-EDITION-API' });
+      } else if (error instanceof EditionStoreBusyError) {
+        send(response, 503, { error: error.message, code: 'E-EDITION-BUSY' });
       } else if (error instanceof EditionConflictError) {
         send(response, 409, { error: error.message, code: 'E-EDITION-CONFLICT' });
       } else if (error instanceof Error && /Zod|invalid|Invalid/i.test(`${error.name} ${error.message}`)) {

@@ -126,6 +126,40 @@ describe('本机 Edition 路由（M2 / S05–S06）', () => {
     expect(forged.status).toBe(409);
   });
 
+  it('已批准草稿可以通过受保护路由登记，随后 compile_issue 能确定性复核', async () => {
+    const id = sample.edition.id;
+    store.putEdition({
+      id, title: '草稿登记', subtitle: '', description: '', headEditorialRevisionId: sample.editorial.id,
+      revision: 0, createdAt: sample.release.publishedAt, updatedAt: sample.release.publishedAt,
+      status: 'review', cefr: 'A2', searchAvailable: false,
+    });
+    const unit = sample.units[0]!;
+    const passage = sample.corpus.passages.find((entry) => unit.basis.passageRevisionIds.includes(entry.id))!;
+    const context = {
+      revision: unit, editorial: sample.editorial,
+      levelPlan: sample.levelPlans.find((plan) => plan.unitId === unit.unitId)!,
+      targets: sample.targets[unit.unitId]!, pack: sample.pack,
+      passages: [{ alias: 'p1', revision: passage }], corpus: sample.corpus, rights: sample.rights,
+      allowedCharacters: ['shopkeeper', 'cat', 'guide'],
+    };
+    const registered = await call('POST', `/api/editions/${id}/drafts`, {
+      body: { unitId: unit.unitId, revision: unit, context },
+    });
+    expect(registered.status).toBe(201);
+    expect(registered.json).toMatchObject({ unitId: unit.unitId, revisionId: unit.id });
+    expect(store.objectsById('unit-draft', unit.unitId)).toHaveLength(1);
+
+    // 缺少 Origin / 非 JSON / 修订与 unitId 不一致都被拒绝
+    const noOrigin = await call('POST', `/api/editions/${id}/drafts`, {
+      body: { unitId: unit.unitId, revision: unit, context }, headers: { Origin: '' },
+    });
+    expect(noOrigin.status).toBe(403);
+    const mismatch = await call('POST', `/api/editions/${id}/drafts`, {
+      body: { unitId: 'unt_11111111-1111-4111-8111-111111111111', revision: unit, context },
+    });
+    expect(mismatch.status).toBe(400);
+  });
+
   it('审批绑定摘要，发布要求当前摘要的审批；取消明确不保证退费', async () => {
     const id = sample.edition.id;
     store.putEdition({

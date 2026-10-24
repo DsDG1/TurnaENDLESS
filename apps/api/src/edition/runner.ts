@@ -106,10 +106,12 @@ export function verifyReleaseForPublication(store: EditionStore, release: editio
 /** 供路由/文档展示：当前执行器支持的能力与明确缺口。 */
 export const editionRunnerCapabilities = {
   deterministicCompile: true,
+  /** 已批准草稿可以通过 `POST /api/editions/:id/drafts` 登记，随后 compile_issue 做确定性复核。 */
+  draftRegistration: true,
   modelDrafts: false,
   /** 研究与抓取是库级能力：已有实现与测试，但还没有 HTTP 路由与界面。 */
   research: 'library-only',
   fetch: 'library-only',
   fetchTransport: 'node-https（固定 IP + 原域名 SNI）',
-  note: '模型草稿需要显式配置 EditorialModel；未配置时任务安全失败，不调用外部服务。',
+  note: '正文草稿需先登记（POST /api/editions/:id/drafts）才能确定性复核；模型自动写作仍需显式配置 EditorialModel。',
 } as const;
