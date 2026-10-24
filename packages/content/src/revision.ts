@@ -57,12 +57,13 @@ export function previewRevision(content: Content, workspace: Workspace, entry: C
   } catch (error) {
     return { ok: false, issues: [{ code: 'E-REVISION', level: 'error', message: `生成依据无法恢复：${error instanceof Error ? error.message : error}` }] };
   }
-  const task = content.planCreative(prefix.session, prefix.library, new Date(head.plannedAt));
+  // 复现学习任务必须用生成当时的计划时间（basis.plannedAt），不是文档生成时间
+  const task = content.planCreative(prefix.session, prefix.library, new Date(head.basis.plannedAt));
   const compiled = content.compileDraft(draftText, task, prefix.library, head.episodeId);
   if (!compiled.ok) return { ok: false, issues: compiled.issues, before: { scenes: scenesOf(head.batch) } };
   // 路径验收：把前缀 + 新修订还原成库，验证该集全部选项与跳过路径
   const save: SavedPlayer = { ...prefix.save, generated: [...prefix.save.generated, {
-    version: 1, generatedAt: head.plannedAt,
+    version: 1, generatedAt: head.basis.plannedAt,
     basedOn: { eventCount: head.basis.eventCount, hash: head.basis.eventHash },
     title: compiled.title, subtitle: compiled.subtitle, description: compiled.description,
     batch: compiled.batch, hash: contentHash(compiled.batch),

@@ -21,8 +21,10 @@ export interface ArchiveContextEntry {
 export interface GenerationContext {
   save: SavedPlayer;
   archives: ArchiveContextEntry[];
-  /** 被摘要替代的 episode id（生成提示词中改用卷摘要） */
-  summarized: Set<string>;
+  /**
+   * 提示词体积诊断：只用于观察上下文是否过大，不做静默截断。
+   * 摘要替换由服务端按 `archives[].episodeIds` 完成，丢掉内容会让模型漏掉必守的约束。
+   */
   estimatedPromptBytes: number;
 }
 
@@ -44,8 +46,7 @@ export function buildGenerationContext(workspace: Workspace, runtime: WorkspaceR
       .map((m) => workspace.revisions.find((r) => r.id === m.revisionId)?.episodeId)
       .filter((id): id is string => !!id),
   }));
-  const summarized = new Set(covered.keys());
   const estimatedPromptBytes = JSON.stringify(save).length +
     archives.reduce((sum, a) => sum + a.narrative.length + a.facts.length * 40, 0);
-  return { save, archives, summarized, estimatedPromptBytes };
+  return { save, archives, estimatedPromptBytes };
 }

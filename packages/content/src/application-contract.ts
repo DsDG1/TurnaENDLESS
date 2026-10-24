@@ -260,6 +260,12 @@ export const StampedPlayerEventSchema = z.intersection(
 );
 export type StampedPlayerEvent = z.infer<typeof StampedPlayerEventSchema>;
 
+/**
+ * 分支会话必须用 stamped 事件：否则 Zod 会把 contentId/revisionId 剥掉，
+ * 备份往返之后事件就丢失了「这条玩法属于哪个修订」的绑定。
+ */
+export const StampedSessionSchema = SessionSchema.extend({ events: z.array(StampedPlayerEventSchema) });
+
 export const BranchSchema = z.object({
   id: BranchIdSchema,
   label: z.string().min(1).max(60),
@@ -269,7 +275,7 @@ export const BranchSchema = z.object({
   /** 该分支采用的内容修订（内容 ID → 修订 ID）。一个分支对每个内容只采用一个修订。 */
   adopted: z.array(z.object({ contentId: ContentIdSchema, revisionId: RevisionIdSchema })).max(500),
   /** 分支的玩法会话：有序事件、当前内容、界面偏好。 */
-  session: SessionSchema,
+  session: StampedSessionSchema,
   createdAt: z.string().datetime(),
 });
 export type Branch = z.infer<typeof BranchSchema>;
@@ -484,6 +490,11 @@ export function assertWorkspace(data: Workspace): Workspace {
     }
     if (!parent && revision.ordinal !== 1) fail('E-CONTRACT-REVISION', '首个修订的序号必须为 1');
     if (!contents.has(revision.contentId)) fail('E-CONTRACT-REVISION', '修订引用了不存在的内容');
+    // 每条修订都必须被它所属内容的 revisionIds 收录：否则会出现谁都不认领的孤儿修订，
+    // 后续编辑仍按旧的 head 编译，分叉分支上采纳的修订永远看不到。
+    if (!contents.get(revision.contentId)?.revisionIds.includes(revision.id)) {
+      fail('E-CONTRACT-REVISION', '修订未被其内容收录');
+    }
     if (revision.origin !== 'bundled' && !branches.has(revision.basis.branchId)) {
       fail('E-CONTRACT-BASIS', '修订的生成依据引用了不存在的分支');
     }

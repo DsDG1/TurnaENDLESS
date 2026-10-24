@@ -172,7 +172,21 @@ describe('endless-workspace 运行时', () => {
     const adopted2 = adoptRevision(content, played, entry2, preview2.revision!);
     expect(adopted2.mode).toBe('fork');
     expect(adopted2.workspace.branches.length).toBe(2);
+    // 分叉出的修订必须登记到条目，否则成为谁都不认领的孤儿修订
+    const forked = adopted2.workspace.entries.find((e: ContentEntry) => e.id === entry.id)!;
+    expect(forked.revisionIds).toContain(preview2.revision!.id);
+    expect(forked.headRevisionId).toBe(preview2.revision!.id);
+    const forkedRevision = adopted2.workspace.revisions.find((r: AnyRevision) => r.id === preview2.revision!.id)!;
+    expect(forkedRevision.ordinal).toBeGreaterThan(head2.ordinal);
+    expect(forkedRevision.parentRevisionId).toBe(head2.id);
     expect(() => adoptRevisionInPlace(played, entry.id, preview2.revision!)).toThrow(/新分支/);
+  });
+
+  it('v3 文档不能写入工作区：给出契约错误而不是 TypeError', () => {
+    const { ws, doc } = generatedDoc(playedPilot());
+    const tampered = { ...doc, learningVersion: 3, creation: undefined } as unknown as GeneratedEpisode;
+    const { workspace: reserved, ticket } = reserveTicket(ws, new Date(at));
+    expect(() => commitTicketResult(content, reserved, ticket.id, tampered)).toThrow(/v4 创作草稿/);
   });
 
   it('归档卷只覆盖真实读完的集；生成上下文用摘要替代原文', () => {
@@ -191,7 +205,7 @@ describe('endless-workspace 运行时', () => {
     const archived = attachVolume(ws, volume);
     const ctx2 = buildGenerationContext(archived, bridge(content, archived));
     expect(ctx2.archives).toHaveLength(1);
-    expect(ctx2.summarized.size).toBe(3);
+    expect(ctx2.estimatedPromptBytes).toBeGreaterThan(0);
     const detached = detachVolume(archived, volume.id);
     expect(detached.volumes).toHaveLength(0);
   });
@@ -231,6 +245,17 @@ describe('endless-workspace 运行时', () => {
       ws = applyPlayerCommand(content, ws, { type: 'advance', scene: scene.id, skip: false }, new Date(at));
     }
     expect(ws.obligations.every((o: ReadingObligation) => !!o.waivedAt)).toBe(true);
+  });
+
+  it('备份往返后事件仍保留内容与修订绑定', () => {
+    const ws = playedPilot();
+    const restored = parseBackup(JSON.parse(JSON.stringify(buildBackup(ws))), ws).backup.workspace.data;
+    const original = ws.branches[0]!.session.events.at(-1) as { contentId?: string; revisionId?: string };
+    const round = restored.branches[0]!.session.events.at(-1) as { contentId?: string; revisionId?: string };
+    expect(original.contentId).toBeTruthy();
+    // BranchSchema 用 StampedSessionSchema：否则 Zod 会把这两个字段剥掉
+    expect(round.contentId).toBe(original.contentId);
+    expect(round.revisionId).toBe(original.revisionId);
   });
 
   it('完整备份可导出、清单校验、重复导入不产生第二身份', () => {

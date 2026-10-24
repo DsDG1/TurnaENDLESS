@@ -159,7 +159,7 @@ function basis(workspace: Workspace, branch: Branch, plannedAt: string): Generat
     .map((o) => o.contentId);
   const normalized = SessionSchema.parse(branch.session);
   return {
-    contract: 'endless-draft-v1', catalogVersion: 'pilot-v1', branchId: branch.id,
+    contract: 'endless-draft-v1', catalogVersion: normalized.catalog, branchId: branch.id,
     adopted: clone(branch.adopted), eventCount: normalized.events.length,
     eventHash: contentHash({ catalog: normalized.catalog, events: normalized.events }),
     obligations, plannedAt,
@@ -327,23 +327,35 @@ export function forkForRevision(workspace: Workspace, parentBranchId: string, co
   if (index < 0) throw new Error('该分支未采用此内容');
   const forkRevision = workspace.revisions.find((r) => r.id === parent.adopted[index]!.revisionId);
   const boundary = forkRevision && isGenerated(forkRevision) ? forkRevision.basis.eventCount : 0;
-  const adopted = parent.adopted.slice(0, index).concat([{ contentId, revisionId: revision.id }]);
+  const entry = workspace.entries.find((e) => e.id === contentId);
+  if (!entry) throw new Error('内容条目不存在');
+  const branchId = newId('branch', uuid);
+  // 分叉出来的修订必须登记到条目：否则它不被任何内容收录，后续编辑仍按旧 head 编译
+  const ordinal = Math.max(0, ...entry.revisionIds.map((id) => workspace.revisions.find((r) => r.id === id)?.ordinal ?? 0)) + 1;
+  const registered: ContentRevision = {
+    ...revision,
+    ordinal,
+    parentRevisionId: forkRevision?.id ?? revision.parentRevisionId,
+    basis: { ...revision.basis, branchId },
+  };
+  const adopted = parent.adopted.slice(0, index).concat([{ contentId, revisionId: registered.id }]);
   const session: PlayerSession = {
     ...parent.session,
     events: parent.session.events.slice(0, boundary),
-    current: parent.adopted[0]
-      ? workspace.revisions.find((r) => r.id === parent.adopted[0]!.revisionId)!.episodeId
-      : parent.session.current,
+    // 分叉后直接停在被修订的这集，而不是回到第一集
+    current: revision.episodeId,
     revision: parent.session.revision + 1,
   };
   const branch: Branch = {
-    id: newId('branch', uuid), label: `${revision.title} · 修订线`,
+    id: branchId, label: `${revision.title} · 修订线`,
     parentBranchId: parent.id, forkAtEventCount: boundary, adopted,
     session, createdAt: at.toISOString(),
   };
   const next: Workspace = {
     ...workspace,
-    revisions: [...workspace.revisions, { ...revision, basis: { ...revision.basis, branchId: branch.id } }],
+    revisions: [...workspace.revisions, registered],
+    entries: workspace.entries.map((e) => e.id === contentId
+      ? { ...e, revisionIds: [...e.revisionIds, registered.id], headRevisionId: registered.id, updatedAt: at.toISOString() } : e),
     branches: [...workspace.branches, branch],
     activeBranchId: branch.id,
     management: [...workspace.management, manage(workspace, 'branch', [contentId, branch.id], at.toISOString(), parent.id)],
@@ -405,6 +417,10 @@ export function cancelTicket(workspace: Workspace, ticketId: string, at = new Da
 export function commitTicketResult(content: Content, workspace: Workspace, ticketId: string, document: GeneratedEpisode, at = new Date()): Workspace {
   const ticket = workspace.tickets.find((t) => t.id === ticketId);
   if (!ticket || (ticket.status !== 'reserved' && ticket.status !== 'submitted')) throw new Error('生成任务不存在或已结束');
+  // 应用层只接受 v4 创作草稿契约；legacy 文档在这里会缺 creation，不能靠 TypeError 兜底
+  if (document.learningVersion !== 4 || !document.creation) {
+    throw new Error('生成结果不是 v4 创作草稿契约，拒绝写入工作区');
+  }
   const branch = workspace.branches.find((b) => b.id === ticket.branchId);
   if (!branch) throw new Error('任务绑定的分支不存在');
   const runtime = bridge(content, workspace, branch.id);

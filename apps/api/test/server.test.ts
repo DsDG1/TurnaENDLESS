@@ -5,7 +5,7 @@ import { createContent } from '@endless/content';
 import { createSession, getScenes, transition } from '@endless/player';
 import { JobManager, MemoryJobStore } from '../src/jobs.js';
 import { createApiServer } from '../src/server.js';
-import { complete } from './fixtures.js';
+import { complete, generated } from './fixtures.js';
 
 const content = createContent(readFileSync(new URL('../../lab/data/lexicon/a1_a2.yaml', import.meta.url), 'utf8'));
 const servers: ReturnType<typeof createApiServer>[] = [];
@@ -93,6 +93,20 @@ describe('本机 API 安全与数据边界', () => {
     expect(jobs.count()).toBe(1);
     const status = await fetch(`${url}/api/status`);
     expect(await status.json()).toMatchObject({ configured: false, acceptsUserKey: true });
+  });
+
+  it('含旧版生成内容的存档在入口被拒绝，不创建计费任务', async () => {
+    const { url, jobs } = await start();
+    const save = complete();
+    const restored = content.restore(save);
+    const legacy = generated(save, `ai-${crypto.randomUUID()}`, new Date(), 3);
+    const withLegacy = content.snapshot(restored.session, [...restored.generated, legacy]);
+    const response = await fetch(`${url}/api/generations`, { method: 'POST', headers, body: JSON.stringify({
+      requestId: crypto.randomUUID(), save: withLegacy,
+    }) });
+    expect(response.status).toBe(422);
+    expect(await response.text()).toContain('只接受 v4');
+    expect(jobs.count()).toBe(0);
   });
 
   it('非法的网页 Key 不进入任务或错误响应', async () => {

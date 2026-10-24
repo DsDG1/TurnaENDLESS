@@ -85,8 +85,13 @@ export function createApiServer(options: {
         if (!parsed.success) throw new ApiError(400, '生成请求或存档格式无法识别，已有数据未修改');
         try {
           const restored = content.restore(parsed.data.save);
-          content.plan(restored.session, restored.library);
-        } catch {
+          // 应用只接受 v4 创作草稿契约：不可信输入不能靠 legacy 文档把任意正文塞进生成上下文
+          if (parsed.data.save.generated.some((document) => document.learningVersion !== 4)) {
+            throw new ApiError(422, '当前应用只接受 v4 创作草稿生成的内容；旧版存档不会被自动升级，请先导出备份');
+          }
+          content.planCreative(restored.session, restored.library);
+        } catch (error) {
+          if (error instanceof ApiError) throw error;
           throw new ApiError(422, '存档内容不合法、版本不匹配或仍有未看完的故事');
         }
         const job = await jobs.submit(parsed.data, { apiKey: suppliedKey, allowNew: configured || !!suppliedKey });
