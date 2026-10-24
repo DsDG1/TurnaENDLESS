@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { EditionConflictError, EditionStorageLowError, EditionStore } from '../src/edition/store.js';
+import { EditionConflictError, EditionStorageLowError, EditionStore, EditionStoreBusyError } from '../src/edition/store.js';
 import { EditionJobManager } from '../src/edition/jobs.js';
 import { edition } from '@endless/content';
 
@@ -213,5 +213,59 @@ describe('Edition 本机数据库（M2）', () => {
     expect(reopened.listReleases(sample.release.editionId)).toHaveLength(2);
     expect(reopened.getRelease(sample.release.id)?.status).toBe('published');
     reopened.close();
+  });
+
+  it('外部进程持写锁时给 busy 错误，而不是挂死或误报存储损坏', async () => {
+    const path = join(await mkdtemp(join(tmpdir(), 'edition-busy-')), 'edition.sqlite');
+    const first = new EditionStore(path);
+    const second = new EditionStore(path);
+    first.db.exec('BEGIN IMMEDIATE');
+    const started = Date.now();
+    expect(() => second.transaction(() => 1)).toThrow(EditionStoreBusyError);
+    // busy_timeout 生效：等一会儿再抛，而不是立刻失败
+    expect(Date.now() - started).toBeGreaterThan(100);
+    first.db.exec('ROLLBACK');
+    second.close();
+    first.close();
+  }, 20_000);
+
+  it('任务转为成功时清空上一次的失败码', () => {
+    const store = new EditionStore(':memory:');
+    store.putEdition({ ...baseEdition });
+    const unitId = 'unt_11111111-1111-4111-8111-111111111111';
+    const job = jobOf('job_33333333-3333-4333-8333-333333333333', 'req-code', 'sha256:' + 'a'.repeat(64));
+    store.createJob({ job, expectedProjectRevision: 1, intent: 'initial', unitIds: [unitId], approvalDigest: 'sha256:' + 'b'.repeat(64) });
+    store.updateJob({ ...job, status: 'failed' }, 'storage');
+    expect(store.jobFailureCode(job.id)).toBe('storage');
+    store.updateJob({ ...job, status: 'succeeded' });
+    expect(store.jobFailureCode(job.id)).toBeNull();
+    store.close();
+  });
+
+  it('主动取消的任务在重启后是 cancelled，不是 interrupted', () => {
+    const store = new EditionStore(':memory:');
+    store.putEdition({ ...baseEdition });
+    const unitId = 'unt_11111111-1111-4111-8111-111111111112';
+    const job = jobOf('job_44444444-4444-4444-8444-444444444444', 'req-cancel', 'sha256:' + 'c'.repeat(64));
+    store.createJob({ job, expectedProjectRevision: 1, intent: 'initial', unitIds: [unitId], approvalDigest: 'sha256:' + 'd'.repeat(64) });
+    store.updateJob({ ...job, status: 'cancel_requested' });
+    const report = new EditionJobManager(store, null).initialize();
+    expect(report.interrupted).toBe(0);
+    expect(store.getJob(job.id)?.job.status).toBe('cancelled');
+    store.close();
+  });
+
+  it('同一 workKey 的第二个预留被数据库唯一约束拒绝', () => {
+    const store = new EditionStore(':memory:');
+    store.putEdition({ ...baseEdition });
+    const unitId = 'unt_11111111-1111-4111-8111-111111111113';
+    const job = jobOf('job_55555555-5555-4555-8555-555555555555', 'req-unique', 'sha256:' + 'e'.repeat(64));
+    store.createJob({ job, expectedProjectRevision: 1, intent: 'initial', unitIds: [unitId], approvalDigest: 'sha256:' + 'f'.repeat(64) });
+    const reserve = () => store.reserveAttempt({
+      jobId: job.id, unitId, workKey: 'wk-1', status: 'reserved', startedAt: new Date().toISOString(), failureCode: null,
+    });
+    reserve();
+    expect(reserve).toThrow(/UNIQUE|constraint/i);
+    store.close();
   });
 });

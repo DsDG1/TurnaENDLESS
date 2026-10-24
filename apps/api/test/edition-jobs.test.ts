@@ -194,6 +194,14 @@ describe('编纂任务状态机（M2 / J01–J09）', () => {
     gate.release('edition');
   });
 
+  it('目录审批摘要过期时拒绝提交，不创建注定失败的任务', () => {
+    const { store, manager } = setup();
+    // 编辑修订换版：审批仍绑定旧摘要
+    store.putObject('editorial', editorialId, digest('b'), { digest: digest('b') });
+    expect(() => submit(manager, { unitIds: [] })).toThrow(/审批对应的摘要已过期/);
+    expect(store.listJobs(editionId)).toHaveLength(0);
+  });
+
   it('执行槽：同模式第二次 acquire 也拒绝，释放不清别人的槽', () => {
     const gate = new ExecutionGate();
     gate.acquire('endless');

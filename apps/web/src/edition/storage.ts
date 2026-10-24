@@ -178,6 +178,17 @@ export class EditionRepository {
             supersededBy: release.supersededBy,
           };
           installs.put(row, release.id);
+          // 补正关系要双向可见：安装一份 supersedes 旧版的发行时，旧行要记下被谁取代
+          const supersedes = release.supersedes;
+          if (supersedes) {
+            const previousInstall = installs.get(supersedes);
+            previousInstall.onsuccess = () => {
+              const old = previousInstall.result as InstalledIssue | undefined;
+              if (old && old.supersededBy !== release.id) {
+                installs.put({ ...old, supersededBy: release.id }, supersedes);
+              }
+            };
+          }
           const putImmutable = (key: string, type: string, id: string, digest: string, body: unknown) => {
             const objects = tx.objectStore('objects');
             const stored = objects.get(key);

@@ -295,4 +295,15 @@ describe('endless-editions 安装与提交', () => {
     expect(await repo.load()).toEqual(before);
     await repo.close();
   });
+
+  it('未知信任根的阅读备份即使勾选确认也被隔离', async () => {
+    const { repo } = await seeded();
+    const text = await repo.exportBackup();
+    const records = edition.parseContainer(text).records;
+    const foreign = edition.serializeContainer(
+      edition.buildContainer('edition-backup/1', records, { trustRoot: 'someone-else' }),
+    );
+    await expect(repo.importBackup(foreign, { trustReviewed: true })).rejects.toThrow(/未知信任根/);
+    await repo.close();
+  });
 });

@@ -22,6 +22,13 @@ export function prepareReaderRestore(
   now = new Date(),
 ): ReaderRestorePlan {
   const parsed = edition.parseContainer(text);
+  // 信任根必须来自本地已知集合：文件自己声明的 trustRoot 不能当作证据
+  const knownRoots: readonly string[] = ['local'];
+  const trustRoot = parsed.manifest.trustRoot;
+  const knownRoot = knownRoots.includes(trustRoot);
+  if (trustReviewed && !knownRoot) {
+    throw new Error(`未知信任根（${trustRoot}）；已隔离，需人工审阅来源与授权后再导入`);
+  }
   // 与 importContainer 的去重键一致：`type:id`；Run 不走去重，走事件前缀合并。
   const existing = new Map<string, string>();
   for (const pkg of current.packages) {
@@ -32,7 +39,7 @@ export function prepareReaderRestore(
   for (const row of current.management) existing.set(`management:${row.id}`, edition.digestOf(row));
   const imported = edition.importContainer(text, {
     existing, accept: ['edition-backup/1'],
-    trustedRoots: trustReviewed ? [parsed.manifest.trustRoot] : [],
+    trustedRoots: trustReviewed && knownRoot ? [trustRoot] : [],
   });
   if (imported.issues.length) throw new Error(imported.issues.map((issue) => issue.message).join('；'));
   const unsupported = imported.accepted.filter((record) => !['install', 'pack', 'run', 'review', 'management'].includes(record.type));

@@ -112,13 +112,15 @@ export class EditionJobManager {
           this.store.markAttempt(attempt.seq, 'failed', 'interrupted');
         }
       }
+      // 用户主动取消的任务在重启后应显示为已取消，而不是「服务端中断、可能已计费」
+      const cancelled = job.status === 'cancel_requested';
       this.store.updateJob({
         ...job,
-        status: 'interrupted',
+        status: cancelled ? 'cancelled' : 'interrupted',
         updatedAt: nowIso(),
         attempts: this.attemptWindow(job.id),
       });
-      interrupted += 1;
+      if (!cancelled) interrupted += 1;
     }
     return { interrupted, unknown };
   }
@@ -179,6 +181,15 @@ export class EditionJobManager {
     if (input.kind === 'compile_issue') {
       const approval = this.store.latestApproval(input.editionId, 'plan', input.editorialRevisionId ?? '');
       if (!approval) throw new EditionJobError(409, '目录尚未批准，不能开始正文编纂', 'E-JOB-APPROVAL');
+      // 只查「存在审批」不够：编辑修订改过之后，旧审批的摘要必须失效，
+      // 否则会白跑一个注定失败的任务并留下 attempt 记录。
+      const currentDigest = this.store.objectsById('editorial', input.editorialRevisionId ?? '')
+        .map((record) => (record.body as { digest?: string }).digest)
+        .filter((value): value is string => !!value)
+        .at(-1);
+      if (currentDigest && approval.digest !== currentDigest) {
+        throw new EditionJobError(409, '目录审批对应的摘要已过期；请重新审阅并批准当前版本', 'E-JOB-APPROVAL-DIGEST');
+      }
     }
     const createdAt = nowIso();
     const job: CompileJob = {
@@ -285,8 +296,10 @@ export class EditionJobManager {
           attempt = this.store.reserveAttempt({
             jobId: id, unitId, workKey, status: 'reserved', startedAt: nowIso(), failureCode: null,
           });
-        } catch {
-          this.fail(id, 'storage');
+        } catch (error) {
+          // 同一个 workKey 已有未结束尝试是「冲突」，不是磁盘坏了
+          const message = error instanceof Error ? error.message : '';
+          this.fail(id, /unique|constraint/i.test(message) ? 'conflict' : 'storage');
           return;
         }
         try {
@@ -375,9 +388,13 @@ export class EditionJobManager {
             : code === 'basis-changed'
               ? '编纂依据已改变；已保存结果仍属于原依据，后续单元未开始，请重新审阅计划'
             : code === 'unconfigured'
-              ? '服务端未配置编纂执行器；任务未开始，也没有调用任何外部服务'
-              : safeMessage(code),
-      next: '只对未完成单元手动重新提交；不要整期重跑，避免重复计费',
+              ? '服务端未配置编纂模型；任务已预留，但没有发出任何供应商调用'
+              : code === 'conflict'
+                ? '同一单元已有未结束的调用记录；本次未开始，也不会重复计费'
+                : safeMessage(code),
+      next: code === 'unconfigured' || code === 'busy' || code === 'conflict'
+        ? '可直接重新提交，不会重复计费'
+        : '只对未完成单元手动重新提交；不要整期重跑，避免重复计费',
     };
   }
 }

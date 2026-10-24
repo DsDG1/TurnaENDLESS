@@ -169,6 +169,8 @@ export class EditionStore {
   constructor(readonly path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
+    // 外部进程（另一个 API 实例、sqlite CLI）持写锁时先等一会儿，而不是立刻 503
+    this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(SCHEMA);
     this.db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)')
       .run('schema_version', String(EDITION_DB_SCHEMA_VERSION));
@@ -197,7 +199,12 @@ export class EditionStore {
   /** 显式事务：只包住纯数据库操作，绝不跨外部调用。 */
   transaction<T>(operation: () => T): T {
     if (this.depth) return operation();
-    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+    } catch (error) {
+      if (/busy|locked/i.test((error as Error)?.message ?? '')) throw new EditionStoreBusyError();
+      throw error;
+    }
     this.depth += 1;
     try {
       const result = operation();
@@ -247,9 +254,18 @@ export class EditionStore {
     if (!ids.length) return [];
     const placeholders = ids.map(() => '?').join(', ');
     const rows = this.db.prepare(`SELECT digest, type, id, body, created_at FROM objects
-      WHERE type = 'unit' AND id IN (${placeholders})`).all(...ids) as
+      WHERE type = 'unit' AND id IN (${placeholders}) ORDER BY created_at, digest`).all(...ids) as
       { digest: string; type: string; id: string; body: string; created_at: string }[];
-    return rows.map((row) => ({ digest: row.digest, type: row.type, id: row.id, body: JSON.parse(row.body), createdAt: row.created_at }));
+    const byId = new Map<string, ObjectRecord>();
+    for (const row of rows) {
+      const existing = byId.get(row.id);
+      // 同一单元 ID 出现两个摘要说明数据不一致：宁可报错也不能随机取一条
+      if (existing && existing.digest !== row.digest) {
+        throw new Error(`单元 ${row.id} 存在多个摘要，数据不一致；请先修复再导出`);
+      }
+      byId.set(row.id, { digest: row.digest, type: row.type, id: row.id, body: JSON.parse(row.body), createdAt: row.created_at });
+    }
+    return ids.map((id) => byId.get(id)).filter((record): record is ObjectRecord => !!record);
   }
 
   putUnit(unit: UnitRevision): void {
@@ -311,12 +327,8 @@ export class EditionStore {
     });
   }
 
-  updateJob(job: CompileJob, failureCode?: string | null): void {
-    if (failureCode === undefined) {
-      this.db.prepare('UPDATE jobs SET status = ?, body = ?, updated_at = ? WHERE id = ?')
-        .run(job.status, JSON.stringify(job), job.updatedAt, job.id);
-      return;
-    }
+  updateJob(job: CompileJob, failureCode: string | null = null): void {
+    // 成功/重试路径必须把上一次的失败码清掉，否则任务会一直背着旧原因
     this.db.prepare('UPDATE jobs SET status = ?, body = ?, updated_at = ?, failure_code = ? WHERE id = ?')
       .run(job.status, JSON.stringify(job), job.updatedAt, failureCode, job.id);
   }
@@ -516,6 +528,14 @@ export class EditionConflictError extends Error {}
 export class EditionStorageLowError extends Error {
   constructor(readonly freeBytes: number, readonly requiredBytes: number) {
     super(`本机磁盘可用空间约 ${Math.round(freeBytes / 1024 / 1024)} MB，低于 ${Math.round(requiredBytes / 1024 / 1024)} MB 水位；请先备份或清理后再开始编纂`);
+  }
+}
+
+/** 本机 SQLite 被外部进程持有写锁：本次未写入，可稍后重试（不是数据错误）。 */
+export class EditionStoreBusyError extends Error {
+  constructor(message = '本机 Edition 数据库正被另一个进程占用；本次未写入，可稍后重试') {
+    super(message);
+    this.name = 'EditionStoreBusyError';
   }
 }
 
