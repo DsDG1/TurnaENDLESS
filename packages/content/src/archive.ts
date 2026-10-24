@@ -4,7 +4,7 @@
  * 不得被描述为实际完成阅读。合并多卷时从结构化来源重建，避免摘要套摘要漂移。
  */
 import { contentHash } from '@endless/esl';
-import { getScenes, projectSession, type PlayerView } from '@endless/player';
+import { episodeCompletion, getScenes, projectSession, type PlayerView } from '@endless/player';
 import { newId, type ArchiveQuote, type ArchiveVolume, type Workspace } from './index.js';
 import type { WorkspaceRuntime } from './workspace.js';
 
@@ -24,9 +24,10 @@ const statusOf = (workspace: Workspace, runtime: WorkspaceRuntime, view: PlayerV
   const episode = runtime.library.episodes.find((e) => e.id === revision.episodeId);
   if (!episode) return 'unread' as const;
   const progress = view.episodes[episode.id];
-  const total = getScenes(episode).length;
-  if ((progress?.cursor ?? 0) >= total) return 'read' as const;
-  if (Object.values(progress?.scenes ?? {}).some((s) => s.skipped)) return 'skipped' as const;
+  // 跳过也会推进 cursor，所以「走到末尾」不等于「读完」——先看真实完成状态。
+  const { read, skipped } = episodeCompletion(progress, getScenes(episode).length);
+  if (read) return 'read' as const;
+  if (skipped > 0) return 'skipped' as const;
   return 'unread' as const;
 };
 

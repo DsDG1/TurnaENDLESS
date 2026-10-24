@@ -133,6 +133,19 @@ export interface PlayerView {
   exposed: Set<string>;
 }
 
+/**
+ * 一集的真实完成状态。
+ *
+ * `cursor` 只表示「推进到第几段」——跳过也会推进，所以不能单独当作「读完了」。
+ * 只有走到末尾且没有任何跳过，才算真正完成；这与 AGENTS.md 的
+ * 「未看、跳过与仅生成的内容不算学过」一致。
+ */
+export function episodeCompletion(progress: EpisodeProgress | undefined, sceneCount: number) {
+  const cursor = progress?.cursor ?? 0;
+  const skipped = Object.values(progress?.scenes ?? {}).filter((state) => state.skipped).length;
+  return { cursor, total: sceneCount, skipped, read: sceneCount > 0 && cursor >= sceneCount && skipped === 0 };
+}
+
 export function createSession(library: Library): PlayerSession {
   const first = library.episodes[0];
   if (!first) throw new Error('内容库为空');

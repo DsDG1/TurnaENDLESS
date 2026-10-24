@@ -6,7 +6,7 @@ import { contentHash } from '@endless/esl';
 import { createContent, type GeneratedEpisode } from '../src/index.js';
 import {
   adoptRevisionInPlace, applyPlayerCommand, attachVolume, bridge, cancelTicket, commitTicketResult,
-  createWorkspace, detachVolume, purgePreview, reserveTicket, restoreContent, switchBranch,
+  createWorkspace, detachVolume, markTicketFailed, purgePreview, reserveTicket, restoreContent, switchBranch,
   trashContent, updateDisplay, waiveObligation,
 } from '../src/workspace.js';
 import { adoptRevision, previewRevision } from '../src/revision.js';
@@ -18,15 +18,18 @@ import type { AnyRevision, ContentEntry, GenerationTicket, ReadingObligation, Wo
 const content = createContent(readFileSync(new URL('../../../apps/lab/data/lexicon/a1_a2.yaml', import.meta.url), 'utf8'));
 const at = '2026-10-24T08:00:00.000Z';
 
-/** 完成三集试播并返回工作区。 */
-function playedPilot(): Workspace {
+/** 完成三集试播并返回工作区；`skip` 可以让指定场景走「跳过」。 */
+function playedPilot(options: { skip?: (episodeId: string, sceneId: string) => boolean } = {}): Workspace {
   let ws = createWorkspace(content, new Date(at));
   for (const episode of content.pilot.episodes) {
     ws = applyPlayerCommand(content, ws, { type: 'select', episode: episode.id }, new Date(at));
     for (const scene of getScenes(episode)) {
-      const options = getOptions(scene);
-      if (options.length) ws = applyPlayerCommand(content, ws, { type: 'answer', scene: scene.id, choice: options.findIndex((o) => o.correct) }, new Date(at));
-      ws = applyPlayerCommand(content, ws, { type: 'advance', scene: scene.id, skip: false }, new Date(at));
+      const choices = getOptions(scene);
+      const skip = options.skip?.(episode.id, scene.id) ?? false;
+      if (!skip && choices.length) {
+        ws = applyPlayerCommand(content, ws, { type: 'answer', scene: scene.id, choice: choices.findIndex((o) => o.correct) }, new Date(at));
+      }
+      ws = applyPlayerCommand(content, ws, { type: 'advance', scene: scene.id, skip }, new Date(at));
     }
   }
   return ws;
@@ -191,6 +194,28 @@ describe('endless-workspace 运行时', () => {
     expect(ctx2.summarized.size).toBe(3);
     const detached = detachVolume(archived, volume.id);
     expect(detached.volumes).toHaveLength(0);
+  });
+
+  it('整集跳过会推进 cursor 但不算读完：不成卷、不计已读', () => {
+    const ws = playedPilot({ skip: () => true });
+    const runtime = bridge(content, ws);
+    const view = projectSession(runtime.session, runtime.library);
+    for (const episode of runtime.library.episodes) {
+      // 跳过同样推进 cursor——这正是不能拿 cursor 当「读完」的原因
+      expect(view.episodes[episode.id]!.cursor).toBe(getScenes(episode).length);
+    }
+    expect(suggestVolumes(ws, runtime)).toHaveLength(0);
+    const ids = ws.entries.map((entry: ContentEntry) => entry.id);
+    const volume = buildVolume(ws, runtime, ids, '跳过卷');
+    expect(volume.reading.every((entry: { status: string }) => entry.status === 'skipped')).toBe(true);
+  });
+
+  it('已结束的生成任务不能再取消或标记失败', () => {
+    const ws = generatedDoc(playedPilot()).ws;
+    const ticket = ws.tickets[0]!;
+    expect(ticket.status).toBe('succeeded');
+    expect(() => cancelTicket(ws, ticket.id)).toThrow(/已结束/);
+    expect(() => markTicketFailed(ws, ticket.id, 'unknown')).toThrow(/已结束/);
   });
 
   it('读完生成集自动解除阅读义务，恢复生成资格', () => {

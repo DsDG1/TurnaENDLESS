@@ -8,7 +8,7 @@
  * 全部校验（创作绑定、哈希前缀、可玩路径），不在此另建一套规则。
  */
 import { contentHash, stableStringify } from '@endless/esl';
-import { getScenes, SessionSchema, transition, type Library, type PlayerCommand, type PlayerSession } from '@endless/player';
+import { episodeCompletion, getScenes, SessionSchema, transition, type Library, type PlayerCommand, type PlayerSession } from '@endless/player';
 import {
   assertWorkspace, newId,
   WorkspaceSchema,
@@ -185,7 +185,7 @@ export function applyPlayerCommand(content: Content, workspace: Workspace, comma
     return adopted ? { ...event, contentId: adopted.contentId, revisionId: adopted.revisionId } : event;
   });
   let next = checked(replaceBranch(workspace, { ...branch, session: { ...nextSession, events } }));
-  // 读完一集自动解除其阅读义务（未读才阻塞继续生成）
+  // 真正读完一集才自动解除其阅读义务（跳过会推进 cursor，不能算读完）
   if (next.obligations.some((o) => !o.waivedAt)) {
     const view = content.stateContext(nextSession, runtime.library).view;
     const time = at.toISOString();
@@ -194,9 +194,9 @@ export function applyPlayerCommand(content: Content, workspace: Workspace, comma
         if (o.waivedAt) return false;
         const revision = next.revisions.find((r) => r.id === o.revisionId);
         if (!revision) return false;
-        const progress = view.episodes[episodeIdOf(revision)];
-        const total = progress ? Object.keys(progress.scenes).length : 0;
-        return !!progress && total > 0 && progress.cursor >= total;
+        const episode = runtime.library.episodes.find((e) => e.id === episodeIdOf(revision));
+        if (!episode) return false;
+        return episodeCompletion(view.episodes[episode.id], getScenes(episode).length).read;
       }).map((o) => `${o.contentId}|${o.revisionId}`));
     if (fulfilled.size) {
       next = checked({
@@ -367,14 +367,21 @@ export function reserveTicket(workspace: Workspace, plannedAt = new Date()): { w
 }
 
 export function markTicketSubmitted(workspace: Workspace, ticketId: string): Workspace {
+  const ticket = workspace.tickets.find((t) => t.id === ticketId);
+  if (!ticket) throw new Error('生成任务不存在');
+  if (ticket.status !== 'reserved') throw new Error('生成任务不在预留状态，不能重复提交');
   return checked({
     ...workspace,
-    tickets: workspace.tickets.map((t) => t.id === ticketId && t.status === 'reserved'
+    tickets: workspace.tickets.map((t) => t.id === ticketId
       ? { ...t, status: 'submitted' as const, updatedAt: new Date().toISOString() } : t),
   });
 }
 
+/** 只有进行中的任务可以被标记失败；已结束的任务不能被改写状态。 */
 export function markTicketFailed(workspace: Workspace, ticketId: string, category: string | null, at = new Date()): Workspace {
+  const ticket = workspace.tickets.find((t) => t.id === ticketId);
+  if (!ticket) throw new Error('生成任务不存在');
+  if (ticket.status !== 'reserved' && ticket.status !== 'submitted') throw new Error('生成任务已结束，不能再标记失败');
   return checked({
     ...workspace,
     tickets: workspace.tickets.map((t) => t.id === ticketId
@@ -382,7 +389,11 @@ export function markTicketFailed(workspace: Workspace, ticketId: string, categor
   });
 }
 
+/** 只有进行中的任务可以被取消；已结束的任务保持原状。 */
 export function cancelTicket(workspace: Workspace, ticketId: string, at = new Date()): Workspace {
+  const ticket = workspace.tickets.find((t) => t.id === ticketId);
+  if (!ticket) throw new Error('生成任务不存在');
+  if (ticket.status !== 'reserved' && ticket.status !== 'submitted') throw new Error('生成任务已结束，不能取消');
   return checked({
     ...workspace,
     tickets: workspace.tickets.map((t) => t.id === ticketId
