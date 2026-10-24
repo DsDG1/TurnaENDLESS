@@ -87,6 +87,11 @@ export class SrsStore {
     return [...this.cards.entries()].map(([key, card]) => ({ key, card }));
   }
 
+  /** 检查点恢复：直接放回一张已验证的卡片（不评分，不产生学习证据）。 */
+  restoreCard(key: string, card: Card): void {
+    this.cards.set(key, card);
+  }
+
   size(): number {
     return this.cards.size;
   }

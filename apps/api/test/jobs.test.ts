@@ -41,14 +41,15 @@ describe('生成任务的幂等性和费用护栏', () => {
     expect(calls).toBe(0);
   });
 
-  it('同 ID 不同请求拒绝；达到日额度后不调用模型', async () => {
-    const jobs = new JobManager(new MemoryJobStore(), async () => { throw new Error('provider secret'); }, { dailyLimit: 1 });
+  it('同 ID 不同请求拒绝；无日额度限制，新任务仍可创建', async () => {
+    const jobs = new JobManager(new MemoryJobStore(), async () => { throw new Error('provider secret'); });
     await jobs.initialize();
     const input = request();
     await jobs.submit(input);
     await flush();
     await expect(jobs.submit({ ...input, save: { ...input.save, revision: 1 } })).rejects.toThrow(/ID/);
-    await expect(jobs.submit({ ...input, requestId: randomUUID() })).rejects.toThrow(/额度/);
+    const another = await jobs.submit({ ...input, requestId: randomUUID() });
+    expect(jobs.get(another.id)).toBeTruthy();
     expect(jobs.get(input.requestId)?.error).not.toContain('secret');
   });
 
@@ -101,13 +102,13 @@ describe('生成任务的幂等性和费用护栏', () => {
     await jobs.initialize();
     const input = request();
     await expect(jobs.submit(input, { allowNew: false })).rejects.toThrow(/Key/);
-    expect(jobs.quota().used).toBe(0);
+    expect(jobs.count()).toBe(0);
     await jobs.submit(input, { apiKey: 'synthetic-key', allowNew: true });
     await flush();
     expect((await jobs.submit(input, { allowNew: false })).id).toBe(input.requestId);
     expect((await jobs.submit({ ...input, requestId: randomUUID() }, { allowNew: false })).id).toBe(input.requestId);
     expect(calls).toBe(1);
-    expect(jobs.quota().used).toBe(1);
+    expect(jobs.count()).toBe(1);
   });
 
   it('即使供应商在成功结果中回显 Key，也不会将它写入缓存', async () => {

@@ -113,7 +113,7 @@ export function compileBatch(batch: Batch, output: ValidateOutput, ctx: CompileC
       push(`${sid}.skin`, 'skin', { skin: scene.skin }, sid);
       scene.messages.forEach((m, mi) => push(`${sid}.m${mi}`, 'message', { from: m.from, text: m.text }, sid));
       if (scene.reply) {
-        push(`${sid}.reply`, 'reply', { on_correct: scene.reply.on_correct, on_wrong: scene.reply.on_wrong }, sid);
+        push(`${sid}.reply`, 'reply', { prompt: scene.reply.prompt ?? null, on_correct: scene.reply.on_correct, on_wrong: scene.reply.on_wrong }, sid);
         scene.reply.options.forEach((o, oi) =>
           push(`${sid}.reply.o${oi}`, 'option', { label: o.label, correct: o.correct === true, effect: o.effect ?? null }, `${sid}.reply`),
         );

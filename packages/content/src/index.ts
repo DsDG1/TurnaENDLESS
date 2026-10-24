@@ -1,52 +1,87 @@
 import { z } from 'zod';
-import { Batch, batchTextUnits, contentHash, locateForm, validateBatch, type ValidationContext, type ValidationIssue } from '@endless/esl';
+import {
+  Batch, batchTextUnits, contentHash, locateForm, stableStringify, validateBatch,
+  type ValidationContext, type ValidationIssue,
+} from '@endless/esl';
 import { Planner, type PlannerInput } from '@endless/learning';
 import {
   createEpisode, getOptions, getScenes, projectSession, restoreSession, SessionSchema, transition,
-  type Library, type PlayerSession,
+  type EpisodePresentation, type Library, type PlayerSession,
 } from '@endless/player';
 import { createPilotContent } from './pilot.js';
 import { buildExerciseScenes } from './exercises.js';
+import {
+  creativeKinds, creativeSeries, creativeComponents, creativeScenePolicy, creativeProperNames, rankCreativeOptions,
+  creativeIntroductionPolicy, creativeIntroductionCount, selectCreativeIntroductions,
+  type CreativeKind, type CreativeSeriesId, type CreativeHistory,
+} from './creative-policy.js';
+import {
+  GeneratedEpisodeSchema, type GeneratedEpisode,
+} from './application-contract.js';
+import { materialAssetCatalog, materialEntityExists, materialEntityRows, materialItemPictures, materialProps, materialCharacters, materialBackgrounds } from './materials.js';
+import { tokenize } from '@endless/esl';
+import { compileDraft as compileCreativeDraft, DRAFT_PROTOCOL, type CreativeTarget, type CreativeTask, type DraftResult } from './creative.js';
 
-export const MAX_GENERATED_EPISODES = 50;
+export * from './creative-policy.js';
+export * from './materials.js';
+export * from './application-contract.js';
+export * from './archive.js';
+export * from './backup.js';
+export * from './context.js';
+export * from './lifecycle.js';
+export * from './revision.js';
+export * from './workspace.js';
+/**
+ * Edition 是独立契约的第二种模式：命名空间导出，避免与 ENDLESS 的 ID/摘要/校验
+ * 名称冲突，也让「旧验收器不接受 Edition 文档」在类型层面可见。
+ */
+export * as edition from './edition/index.js';
+export { DRAFT_HEADER, DRAFT_PROTOCOL } from './creative.js';
+export type { CreativeTask, DraftResult, DraftSuccess } from './creative.js';
 
-export const GeneratedEpisodeSchema = z.object({
-  version: z.literal(1),
-  generatedAt: z.string().datetime(),
-  basedOn: z.object({ eventCount: z.number().int().nonnegative(), hash: z.string().regex(/^[a-f0-9]{16}$/) }),
-  title: z.string().min(1).max(100),
-  subtitle: z.string().min(1).max(160),
-  description: z.string().min(1).max(400),
-  batch: Batch,
-  hash: z.string().regex(/^[a-f0-9]{16}$/),
-  /** v2 = 学习任务契约（introduce/expose/review 覆盖规则）；v3 = v2 + 可含程序练习卡（quiz/card 场景） */
-  learningVersion: z.union([z.literal(2), z.literal(3)]).optional(),
-  usage: z.object({
-    inputTokens: z.number().int().nonnegative(),
-    outputTokens: z.number().int().nonnegative(),
-    calls: z.number().int().min(1).max(3),
-  }).optional(),
-});
-export type GeneratedEpisode = z.infer<typeof GeneratedEpisodeSchema>;
+/**
+ * 应用层统一契约（`endless-workspace`）在 `./application-contract.js`：
+ * `GeneratedEpisodeSchema`、`DraftCreationSchema`、工作区快照与跨对象不变量都由它导出。
+ * 下面保留的 `SavedPlayer` 只是实验/过渡期的请求信封，应用运行时使用 `WorkspaceSnapshot`。
+ */
 
 export const SavedPlayerSchema = z.object({
   version: z.literal(2),
   revision: z.number().int().nonnegative(),
   session: SessionSchema,
-  generated: z.array(GeneratedEpisodeSchema).max(MAX_GENERATED_EPISODES),
+  generated: z.array(GeneratedEpisodeSchema),
 });
 export type SavedPlayer = z.infer<typeof SavedPlayerSchema>;
+
+/** 归档上下文：覆盖卷的成员在提示词中走摘要；校验仍以 save 中的完整原件为准。 */
+export const ArchiveContextEntrySchema = z.object({
+  volumeId: z.string().min(1),
+  series: z.string().min(1),
+  title: z.string().min(1).max(100),
+  narrative: z.string().min(1).max(2000),
+  facts: z.array(z.object({ subject: z.string(), predicate: z.string(), object: z.string() })).max(200),
+  choices: z.array(z.object({ chosen: z.string() })).max(500),
+  threads: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })).max(200),
+  episodeIds: z.array(z.string()).max(500),
+});
+export type ArchiveContextEntryWire = z.infer<typeof ArchiveContextEntrySchema>;
 
 export const GenerationRequestSchema = z.object({
   requestId: z.string().uuid(),
   save: SavedPlayerSchema,
+  archives: z.array(ArchiveContextEntrySchema).max(50).optional(),
 });
 export type GenerationRequest = z.infer<typeof GenerationRequestSchema>;
 
 export const ApiStatusSchema = z.object({
   configured: z.boolean(), model: z.string(), token: z.string().min(1),
   acceptsUserKey: z.boolean().default(false),
-  quota: z.object({ dailyLimit: z.number().int(), used: z.number().int(), remaining: z.number().int() }),
+  quota: z.object({ dailyLimit: z.number().int(), used: z.number().int(), remaining: z.number().int() }).optional(),
+  /** 预留能力状态：服务端权威判定，全部默认 false */
+  features: z.object({
+    accounts: z.boolean(), cloudSync: z.boolean(), usageLedger: z.boolean(),
+    pricing: z.boolean(), payments: z.boolean(),
+  }).optional(),
 });
 export type ApiStatus = z.infer<typeof ApiStatusSchema>;
 
@@ -96,10 +131,7 @@ export function createContent(lexiconText: string) {
     return { view, exposureCounts, context };
   }
 
-  function plan(session: PlayerSession, library: Library, now = new Date(), learningVersion: 1 | 2 | 3 = 3) {
-    if (library.episodes.length >= pilot.episodes.length + MAX_GENERATED_EPISODES) {
-      throw new Error('已达到本机 MVP 的 50 集 AI 内容上限，请先导出备份');
-    }
+  function plan(session: PlayerSession, library: Library, now = new Date(), learningVersion: 1 | 2 | 3 | 4 = 3) {
     const state = stateContext(session, library);
     if (library.episodes.some((episode) => state.view.episodes[episode.id]!.cursor < getScenes(episode).length)) {
       throw new Error('请先看完已有故事，再生成下一集');
@@ -108,17 +140,28 @@ export function createContent(lexiconText: string) {
     const input: PlannerInput = {
       now, level: 'A2', srs: state.view.srs, ability: state.view.ability,
       exposureCounts: state.exposureCounts, introduced: state.view.exposed,
-      allowedExtraPool: [], maxReviews: 1, maxIntroduce: 1,
+      allowedExtraPool: [], maxReviews: 1,
+      maxIntroduce: learningVersion === 4 ? creativeIntroductionPolicy.max : 1,
     };
     const brief = planner.nextBrief(input, library.episodes.length + 1);
     if (learningVersion >= 2) {
-      const candidate = planner.nextCandidates(input, lexicon.entries.size)
-        .find((item) => lexicon.entries.get(item)?.kind === 'sense') ?? brief.introduce[0];
+      const candidates = planner.nextCandidates(input, lexicon.entries.size);
+      const entryFor = (id: string) => {
+        const entry = lexicon.entries.get(id);
+        return entry ? { kind: entry.kind, forms: lexicon.forms.get(id) ?? [], example: entry.example } : undefined;
+      };
+      const allowedForms = new Set([...state.context.vocab.allowedForms, ...creativeProperNames]);
+      // v4 每批引入 2–5 个新词/知识点；v2–3 仍是单条教学契约，存档不重解释。
+      const selected = learningVersion === 4
+        ? selectCreativeIntroductions(candidates, entryFor, allowedForms, creativeIntroductionCount(library.episodes.length + 1))
+        : [
+            candidates.find((item) => lexicon.entries.get(item)?.kind === 'sense') ?? brief.introduce[0],
+          ].filter((item): item is string => !!item);
       const previous = new Set(brief.introduce);
-      brief.introduce = candidate ? [candidate] : [];
+      brief.introduce = selected;
       brief.expose = [
         ...brief.introduce.map((item) => ({ item, exposures_so_far: 0, need: 2 })),
-        ...brief.expose.filter((entry) => !previous.has(entry.item) && entry.item !== candidate),
+        ...brief.expose.filter((entry) => !previous.has(entry.item) && !brief.introduce.includes(entry.item)),
       ];
       brief.review = state.view.srs.dueItems(now, 'meaning')
         .filter((entry) => (state.exposureCounts.get(entry.item) ?? 0) >= 2).slice(0, 1)
@@ -150,10 +193,11 @@ export function createContent(lexiconText: string) {
     };
   }
 
-  function validatePlayable(batch: Batch, context: ValidationContext): ValidationIssue[] {
+  function validatePlayable(batch: Batch, context: ValidationContext, allowCreative = false): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
-    if (batch.channel !== 'duck_detective' || batch.new_entities?.length) {
-      issues.push({ code: 'E-SCHEMA', level: 'error', message: '本版只支持 Duck Detective 和既有角色，不允许新实体' });
+    const channelOk = batch.channel === 'duck_detective' || (allowCreative && batch.channel in creativeSeries);
+    if (!channelOk || batch.new_entities?.length) {
+      issues.push({ code: 'E-SCHEMA', level: 'error', message: '不支持的频道或声明了新实体；v4 只允许注册系列与既有角色' });
     }
     for (const scene of batch.scenes) {
       // 写手只交叙事场景（comic/chat/pick）；quiz/card 是程序练习卡，由拼接器产出、校验放行
@@ -212,6 +256,131 @@ export function createContent(lexiconText: string) {
     });
   }
 
+  /** v4 校验上下文：应用素材注册表 + 注册角色 + 1–10 场口径；旧契约上下文不变。
+   *  词表只在原 allowedForms 之上加注册专有名词（badger/mouse/guide）；
+   *  来源文本（fact/example）同样接受 5% OOV 与行长校验，不通过即为真实内容问题。 */
+  function creativeContext(context: ValidationContext): ValidationContext {
+    const allowed = new Set(context.vocab.allowedForms);
+    for (const name of creativeProperNames) allowed.add(name);
+    return {
+      ...context,
+      vocab: { ...context.vocab, allowedForms: allowed },
+      assets: materialAssetCatalog(),
+      entities: { exists: materialEntityExists },
+      sceneCountPolicy: { ...creativeScenePolicy },
+    };
+  }
+
+  function creativePresentation(kind: string, series: string, sceneSources?: Record<string, string>): EpisodePresentation {
+    const registered = (creativeSeries as Record<string, { label: string }>)[series];
+    return { kind, series, label: registered?.label ?? '鸭侦探事务所', ...(sceneSources && Object.keys(sceneSources).length ? { sceneSources } : {}) };
+  }
+
+  function episodePresentation(library: Library) {
+    return (episode: { presentation?: EpisodePresentation }) =>
+      episode.presentation ?? creativePresentation('story', 'duck_detective');
+  }
+
+  /**
+   * v4 创作规划：与 plan(...,4) 同一学习契约，另给出短名目标、素材目录与冷门推荐。
+   */
+  function planCreative(session: PlayerSession, library: Library, now = new Date()) {
+    const task = plan(session, library, now, 4);
+    const aliases = new Map<string, string>();
+    const order = [
+      ...task.brief.introduce,
+      ...task.brief.expose.map((entry) => entry.item),
+      ...task.detection.map((entry) => entry.item),
+      ...task.practice.map((entry) => entry.item),
+    ];
+    for (const item of order) if (!aliases.has(item)) aliases.set(item, `t${aliases.size + 1}`);
+    const required = new Map<string, string>();
+    for (const entry of task.detection) required.set(entry.item, entry.type);
+    for (const entry of task.practice) required.set(entry.item, 'practice');
+    const history: CreativeHistory[] = library.episodes.map((episode) => {
+      const presentation = episodePresentation(library)(episode);
+      return {
+        kind: presentation.kind as CreativeKind,
+        series: presentation.series as CreativeSeriesId,
+        components: getScenes(episode).map((scene) => scene.type),
+      };
+    });
+    const allowedForms = new Set([...task.context.vocab.allowedForms, ...creativeProperNames]);
+    const usableExample = (item: string) => {
+      const entry = lexicon.entries.get(item);
+      return !!entry?.example &&
+        (lexicon.forms.get(item) ?? []).some((form) => locateForm(entry.example!, form).length) &&
+        tokenize(entry.example).every((token) => allowedForms.has(token));
+    };
+    const introduceSet = new Set(task.brief.introduce);
+    const reviewSet = new Set(task.brief.review.map((entry) => entry.item));
+    const targets: (CreativeTarget & {
+      forms: string[];
+      gloss: string;
+      materials: { gloss: boolean; example: boolean; picture: boolean };
+    })[] = [...aliases.entries()].map(([item, alias]) => {
+      const entry = lexicon.entries.get(item);
+      return {
+        alias, item,
+        /** 给创作提示词区分：introduce 要两处正文语境加一个 practice，review 要独立检索，expose 只需出现 */
+        role: introduceSet.has(item) ? 'introduce' as const
+          : reviewSet.has(item) ? 'review' as const : 'expose' as const,
+        forms: lexicon.forms.get(item) ?? [],
+        gloss: entry?.gloss_zh ?? '',
+        interaction: (required.get(item) ?? null) as import('@endless/esl').EvidenceType | null,
+        materials: {
+          gloss: !!entry?.gloss_zh,
+          example: usableExample(item),
+          picture: Object.values(materialItemPictures).includes(item),
+        },
+      };
+    });
+    return {
+      ...task,
+      context: creativeContext(task.context),
+      targets,
+      ranked: rankCreativeOptions(history),
+      history,
+      catalog: {
+        kinds: creativeKinds,
+        series: Object.entries(creativeSeries).map(([id, s]) => ({ id, ...s })),
+        components: creativeComponents,
+        characters: materialCharacters.map((c) => ({ id: c.id, label: c.label, expressions: c.spec.expr })),
+        backgrounds: materialBackgrounds,
+        props: materialProps,
+        itemPictures: materialItemPictures,
+      },
+    };
+  }
+
+  /** 严格编译创作草稿；task 必须来自 planCreative（带短名目标与 v4 上下文）。 */
+  function compileDraft(text: string, task: ReturnType<typeof planCreative>, library: Library, batchId: string): DraftResult {
+    return compileCreativeDraft(text, task, library, batchId, lexicon, (batch) => validatePlayable(batch, task.context, true));
+  }
+
+  /** v4 创作绑定复核：确定性重编译并逐项比较，伪造 kind/series/来源或篡改正文都会失配。 */
+  function verifyCreation(document: GeneratedEpisode, session: PlayerSession, library: Library): DraftResult {
+    const creation = document.creation;
+    if (!creation || creation.protocol !== DRAFT_PROTOCOL) return { ok: false, issues: [{ code: 'E-DRAFT', level: 'error', message: '缺少合法的创作绑定' }] };
+    const series = creativeSeries[creation.series];
+    if (!series || series.kind !== creation.kind || document.batch.channel !== creation.series) {
+      return { ok: false, issues: [{ code: 'E-DRAFT', level: 'error', message: '形态、系列或频道不匹配' }] };
+    }
+    const task = planCreative(session, library, new Date(document.generatedAt));
+    if (document.batch.brief !== task.brief.brief) {
+      return { ok: false, issues: [{ code: 'E-DRAFT', level: 'error', message: '学习任务版本不匹配' }] };
+    }
+    const compiled = compileDraft(creation.draft, task, library, document.batch.batch);
+    if (!compiled.ok) return compiled;
+    const mismatched = stableStringify(compiled.batch) !== stableStringify(document.batch) ||
+      stableStringify(compiled.creation) !== stableStringify(creation) ||
+      compiled.title !== document.title || compiled.subtitle !== document.subtitle || compiled.description !== document.description;
+    if (mismatched) {
+      return { ok: false, issues: [{ code: 'E-DRAFT', level: 'error', message: '创作绑定与已编译内容不一致' }] };
+    }
+    return compiled;
+  }
+
   function validatePaths(session: PlayerSession, library: Library) {
     const episode = library.episodes.at(-1)!;
     let paths = [transition(session, { type: 'select', episode: episode.id }, library)];
@@ -229,6 +398,26 @@ export function createContent(lexiconText: string) {
           ...diverging.map((branch) => transition(branch, { type: 'advance', scene: scene.id, skip: false }, library)),
         ];
       });
+    }
+  }
+
+  /** v4 全路径校验：compiler 保证效果只是「记录所选选项」的 append-only user_fact，
+   *  没有依赖先前分支的前置条件，因此各选项对应的安全状态完全等价——
+   *  每个选项与跳过各验证一次，再用一个代表分支推进前缀即可，无需枚举笛卡尔积。 */
+  function validatePathsCreative(session: PlayerSession, library: Library) {
+    const episode = library.episodes.at(-1)!;
+    let prefix = transition(session, { type: 'select', episode: episode.id }, library);
+    for (const scene of getScenes(episode)) {
+      const options = getOptions(scene);
+      for (let choice = 0; choice < options.length; choice++) {
+        transition(prefix, { type: 'answer', scene: scene.id, choice }, library);
+      }
+      transition(prefix, { type: 'advance', scene: scene.id, skip: true }, library);
+      let working = prefix;
+      if (scene.type === 'card') working = transition(working, { type: 'reveal', scene: scene.id }, library);
+      const correct = options.findIndex((option) => option.correct === true);
+      if (correct >= 0) working = transition(working, { type: 'answer', scene: scene.id, choice: correct }, library);
+      prefix = transition(working, { type: 'advance', scene: scene.id, skip: false }, library);
     }
   }
 
@@ -254,10 +443,25 @@ export function createContent(lexiconText: string) {
       if (library.episodes.some((episode) => view.episodes[episode.id]!.cursor < getScenes(episode).length)) {
         throw new Error('AI 内容生成时仍有未看完的故事');
       }
-      const errors = validatePlayable(document.batch, context).filter((issue) => issue.level === 'error');
+      const isCreative = document.learningVersion === 4;
+      if (isCreative) {
+        const compiled = verifyCreation(document, prefix, library);
+        if (!compiled.ok) throw new Error(`AI 创作绑定校验失败：${compiled.issues.map((i) => i.message).join('；')}`);
+      }
+      const errors = validatePlayable(document.batch, isCreative ? creativeContext(context) : context, isCreative)
+        .filter((issue) => issue.level === 'error');
       if (errors.length) throw new Error(errors.map((issue) => issue.message).join('；'));
-      const episode = createEpisode(document.batch, context, document);
-      library = { ...library, episodes: [...library.episodes, episode] };
+      const presentation = isCreative
+        ? creativePresentation(document.creation!.kind, document.creation!.series,
+            Object.fromEntries(document.creation!.sources.map((s) => [s.sceneId,
+              `${s.field === 'gloss' ? '本地词库 · 词义' : s.field === 'example' ? '本地词库 · 例句'
+                : s.reference.startsWith('draft.') ? '本集前文原句' : '已读故事原句'}（${lexicon.forms.get(s.item)?.[0] ?? s.item}）`])))
+        : { ...creativePresentation('story', 'duck_detective'), legacy: true };
+      const episode = createEpisode(document.batch, isCreative ? creativeContext(context) : context, { ...document, presentation });
+      const entities = isCreative
+        ? [...library.entities, ...materialEntityRows.filter((row) => !library.entities.some((e) => e.id === row.id))]
+        : library.entities;
+      library = { ...library, entities, episodes: [...library.episodes, episode] };
     }
     return { session: restoreSession(session, library), generated, library };
   }
@@ -268,6 +472,18 @@ export function createContent(lexiconText: string) {
     if (historyKey(restored.session).hash !== document.basedOn.hash ||
       document.basedOn.eventCount !== restored.session.events.length) throw new Error('生成内容不属于当前进度，请勿覆盖存档');
     const learningVersion = document.learningVersion ?? 1;
+    if (learningVersion === 4) {
+      const compiled = verifyCreation(document, restored.session, restored.library);
+      if (!compiled.ok) throw new Error(`AI 创作绑定校验失败：${compiled.issues.map((i) => i.message).join('；')}`);
+      const task = planCreative(restored.session, restored.library, new Date(document.generatedAt));
+      const report = validateBatch(document.batch, task.context);
+      if (!report.detectionScenes && [...task.detection, ...task.practice].length) {
+        throw new Error('AI 内容必须包含有效学习互动');
+      }
+      const next = restore(snapshot(restored.session, [...restored.generated, document]));
+      validatePathsCreative(restored.session, next.library);
+      return { ...next, document };
+    }
     const task = plan(restored.session, restored.library, new Date(document.generatedAt), learningVersion);
     const { context } = task;
     if (document.batch.brief !== context.brief!.id) throw new Error('生成内容的学习任务版本不匹配');
@@ -294,7 +510,7 @@ export function createContent(lexiconText: string) {
     });
   }
 
-  return { pilot, lexicon, pilotContext, historyKey, snapshot, stateContext, plan, learningIssues, learningNotes, validatePlayable, exerciseScenes, restore, accept };
+  return { pilot, lexicon, pilotContext, historyKey, snapshot, stateContext, plan, planCreative, compileDraft, verifyCreation, creativeContext, creativePresentation, learningIssues, learningNotes, validatePlayable, exerciseScenes, restore, accept, validatePathsCreative };
 }
 
 export type Content = ReturnType<typeof createContent>;

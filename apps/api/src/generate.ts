@@ -1,28 +1,23 @@
 import {
-  DirectorService, TropeLedger, estimateTokens, type LlmClient, type LlmRequest, type LlmResponse,
+  DirectorService, TropeLedger, type LlmClient, type LlmRequest, type LlmResponse,
 } from '@endless/director';
 import { autoFixBatch, batchTextUnits, contentHash, locateForm, parseBatch, stripThinking, type Batch, type ValidationIssue } from '@endless/esl';
-import { SavedPlayerSchema, type Content, type GeneratedEpisode } from '@endless/content';
-import { getScenes } from '@endless/player';
+import { creativeHistoryPolicy, creativeKindLabels, creativeSeries, SavedPlayerSchema, type Content, type GeneratedEpisode } from '@endless/content';
+import { getOptions, getScenes } from '@endless/player';
 import { ApiError } from './jobs.js';
 import { templates } from './prompts.js';
+import { buildCreativePrompt, creativeSystem } from './creative-prompts.js';
 
-export class BudgetLlmClient implements LlmClient {
+export class MeteredLlmClient implements LlmClient {
   private calls = 0;
-  private tokens = 0;
   private inputTokens = 0;
   private outputTokens = 0;
   constructor(private inner: LlmClient, private phase: (value: string) => void) {}
   modelId(tier: 'fast' | 'premium') { return this.inner.modelId(tier); }
   async complete(request: LlmRequest): Promise<LlmResponse> {
-    const estimatedInput = estimateTokens(`${request.system}\n${JSON.stringify(request.messages ?? request.prompt)}`);
-    if (this.calls >= 3 || this.tokens + estimatedInput + (request.maxTokens ?? 8192) > 40_000) {
-      throw new ApiError(429, '本次生成达到调用或 token 预算，已停止；不会无限重试', { category: 'budget', codes: [] });
-    }
     this.calls++;
     this.phase(this.calls === 1 ? '正在生成剧情与互动' : '正在校验并修复内容');
     const response = await this.inner.complete(request);
-    this.tokens += response.usage.inputTokens + response.usage.outputTokens;
     this.inputTokens += response.usage.inputTokens;
     this.outputTokens += response.usage.outputTokens;
     return response;
@@ -30,7 +25,128 @@ export class BudgetLlmClient implements LlmClient {
   usage() { return { calls: this.calls, inputTokens: this.inputTokens, outputTokens: this.outputTokens }; }
 }
 
+/**
+ * v4 创作草稿生成器：模型只写 ENDLESS-DRAFT/1 草稿（形态/系列/组件/正文），
+ * 程序编译成可执行批次并整稿修复；不接受可执行 JSON。
+ */
 export function createGenerator(content: Content, llm: LlmClient) {
+  return async (raw: unknown, requestId: string, phase: (value: string) => void, _apiKey?: string, archives?: import('@endless/content').ArchiveContextEntryWire[]): Promise<GeneratedEpisode> => {
+    const save = SavedPlayerSchema.parse(raw);
+    const { session, library } = content.restore(save);
+    const archivedByEpisode = new Map<string, import('@endless/content').ArchiveContextEntryWire>();
+    for (const archive of archives ?? []) for (const episodeId of archive.episodeIds) archivedByEpisode.set(episodeId, archive);
+    const generatedAt = new Date().toISOString();
+    const task = content.planCreative(session, library, new Date(generatedAt));
+    const batchId = `ai-${requestId}`;
+    const view = task.view;
+    const { episodesPerSeries, maxCharsPerScene, maxCharsPerEpisode } = creativeHistoryPolicy;
+    const userFacts = view.world.userFacts();
+    const canon = view.world.currentFacts();
+    const threads = view.world.openThreads();
+    const bySeries = new Map<string, typeof library.episodes>();
+    for (const episode of library.episodes) {
+      const series = episode.presentation?.series ?? 'duck_detective';
+      bySeries.set(series, [...(bySeries.get(series) ?? []), episode]);
+    }
+    const seriesHistory = Object.fromEntries([...bySeries].map(([series, episodes]) => {
+      const cast = new Set<string>(series in creativeSeries ? creativeSeries[series as keyof typeof creativeSeries].cast : ['duck', 'cat', 'moon']);
+      const history = episodes.slice(-episodesPerSeries).map((episode) => {
+        const progress = view.episodes[episode.id];
+        const volume = archivedByEpisode.get(episode.id);
+        if (volume) {
+          // 已归档的集在提示词中走程序化摘要；校验仍使用 save 中的完整原件
+          return { title: episode.title, archived: true as const, summary: volume.narrative, facts: volume.facts.slice(0, 20), choices: volume.choices.slice(0, 20) };
+        }
+        let remaining = maxCharsPerEpisode;
+        const scenes = getScenes(episode).map((scene) => {
+          const state = progress?.scenes[scene.id];
+          const status = state?.completed ? 'read' : state?.skipped ? 'skipped' : 'unread';
+          const raw = scene.type === 'comic'
+            ? scene.panels.flatMap((panel) => [
+                ...(panel.caption ? [panel.caption] : []),
+                ...panel.bubbles.map((bubble) => `${bubble.speaker}: ${bubble.text}`),
+              ]).join(' ')
+            : scene.type === 'chat'
+              ? scene.messages.map((message) => `${message.from}: ${message.text}`).join(' ')
+              : scene.type === 'pick' ? scene.question
+                : scene.type === 'quiz' ? scene.prompt : scene.front;
+          const text = status === 'unread' ? '' : raw.slice(0, Math.max(0, Math.min(maxCharsPerScene, remaining)));
+          remaining -= text.length;
+          const options = getOptions(scene);
+          const answer = state?.answer
+            ? { chosen: options[state.answer.choice]?.label ?? null, correct: state.answer.correct }
+            : null;
+          return { id: scene.id, type: scene.type, status, text, ...(answer ? { answer } : {}) };
+        });
+        const recorded = userFacts.filter((fact) => fact.batch === episode.id)
+          .map((fact) => `${fact.predicate} ${fact.object}`);
+        return { title: episode.title, scenes, ...(recorded.length ? { recordedChoices: recorded } : {}) };
+      });
+      return [series, {
+        canon: canon.filter((fact) => cast.has(fact.subject))
+          .map((fact) => `${fact.subject} ${fact.predicate} ${fact.object}`),
+        openThreads: threads.filter((thread) => thread.owner_channel === series)
+          .map((thread) => ({ id: thread.id, title: thread.title, status: thread.status })),
+        episodes: history,
+      }];
+    }));
+    const input = {
+      catalog: JSON.stringify({
+        kinds: task.catalog.kinds, kindLabels: creativeKindLabels,
+        series: task.catalog.series.map((s) => ({ id: s.id, kind: s.kind, label: s.label, premise: s.premise, cast: s.cast, backgrounds: s.backgrounds })),
+        components: task.catalog.components,
+        characters: task.catalog.characters,
+        backgrounds: task.catalog.backgrounds,
+        props: task.catalog.props,
+        itemPictures: task.catalog.itemPictures,
+        coldRecommendations: task.ranked,
+      }),
+      learning: JSON.stringify(task.targets),
+      allowedWords: [...task.context.vocab.allowedForms].join(','),
+      history: JSON.stringify(seriesHistory),
+      recent: JSON.stringify(task.history.slice(-6)),
+      feedback: JSON.stringify({ answers: view.answers.slice(-8), completed: view.completed, skipped: view.skipped }),
+    };
+    const budget = new MeteredLlmClient(llm, phase);
+    let draft = '';
+    let compiled: ReturnType<Content['compileDraft']> | null = null;
+    let problems = '';
+    // 不设调用/token 预算；连续两次产出相同的失败签名即停止，避免无限修复烧费
+    for (let attempt = 1; ; attempt++) {
+      const response = await budget.complete({
+        stage: attempt === 1 ? 'single' : 'repair',
+        system: creativeSystem,
+        prompt: buildCreativePrompt(attempt === 1 ? input : { ...input, previousDraft: draft, problems }),
+        modelTier: 'fast',
+        maxTokens: attempt === 1 ? 8192 : 4096,
+      });
+      draft = response.text;
+      compiled = content.compileDraft(draft, task, library, batchId);
+      if (compiled.ok) break;
+      const nextProblems = compiled.issues.map((issue) => `${issue.code}${issue.scene ? ` ${issue.scene}` : ''}：${issue.message}`).join('\n');
+      if (nextProblems === problems) break;
+      problems = nextProblems;
+    }
+    if (!compiled?.ok) throw contentFailure(compiled?.issues ?? [{ code: 'E-DRAFT', level: 'error', message: '草稿编译失败' }]);
+    const document: GeneratedEpisode = {
+      version: 1, generatedAt, basedOn: content.historyKey(session), batch: compiled.batch,
+      hash: contentHash(compiled.batch), title: compiled.title, subtitle: compiled.subtitle,
+      description: compiled.description, learningVersion: 4, creation: compiled.creation,
+      usage: budget.usage(),
+    };
+    phase('正在验证所有选项并保存内容');
+    try {
+      content.accept(document, save);
+    } catch {
+      throw contentFailure([{ code: 'E-PLAYER-PATH', level: 'error', message: 'final acceptance failed' }]);
+    }
+    return document;
+  };
+}
+
+
+/** 旧版整批 JSON 生成器（learningVersion 1–3 契约），保留给旧契约测试。 */
+export function createLegacyGenerator(content: Content, llm: LlmClient) {
   return async (raw: unknown, requestId: string, phase: (value: string) => void): Promise<GeneratedEpisode> => {
     const save = SavedPlayerSchema.parse(raw);
     const { session, library } = content.restore(save);
@@ -76,7 +192,7 @@ export function createGenerator(content: Content, llm: LlmClient) {
       }
       return { ok: !issues.some((issue) => issue.level === 'error'), batch, issues, rawHash, fixedHash: contentHash(batch) };
     };
-    const budget = new BudgetLlmClient(llm, phase);
+    const budget = new MeteredLlmClient(llm, phase);
     const director = new DirectorService({
       llm: budget, templates,
       validateEs: (text) => validate(text),
@@ -128,8 +244,6 @@ export function createGenerator(content: Content, llm: LlmClient) {
     if (!outcome.batch || outcome.batchFailed || outcome.droppedScenes.length) {
       throw contentFailure(outcome.issues);
     }
-    // 双层生成下半层：叙事批次校验通过后，按学习任务拼入程序练习卡（单词卡/填空/选句等），
-    // 再对完整批次整体复验——练习卡由程序构造，材料来自词库与已播放文本，零额外模型调用。
     const spliced: Batch = { ...outcome.batch, scenes: content.exerciseScenes(outcome.batch, task, library, library.episodes.length) };
     const exerciseIssues = [...content.validatePlayable(spliced, context), ...content.learningIssues(spliced, task)];
     if (exerciseIssues.some((issue) => issue.level === 'error')) throw contentFailure(exerciseIssues);
@@ -160,6 +274,7 @@ function contentFailure(issues: ValidationIssue[]) {
     'E-LEARNING-TASK': '未完成指定的新词教学或复习', 'E-BRIEF-UNCOVERED': '学习任务未覆盖',
     'E-PRIMED': '复习题提前透露了答案', 'E-PARSE': '模型输出格式无法解析',
     'E-SCHEMA': '内容结构不符合播放器要求', 'E-PLAYER-PATH': '部分选项无法安全播放',
+    'E-DRAFT': '创作草稿不符合协议或学习契约',
   };
   const reasons = codes.slice(0, 4).map((code) => labels[code] ?? code).join('；');
   return new ApiError(422, `AI 内容未通过校验：${reasons || '内容不完整'}${codes.length ? `（${codes.join(', ')}）` : ''}。本次未加入内容库，可手动重试；可能产生费用。`,

@@ -33,6 +33,7 @@ export function batchTextUnits(batch: Batch): TextUnit[] {
       case 'chat':
         scene.messages.forEach((m, mi) => add(`messages[${mi}]`, 'narrative', m.text, m.from));
         if (scene.reply) {
+          add('reply.prompt', 'prompt', scene.reply.prompt);
           add('reply.on_correct', 'feedback', scene.reply.on_correct.text, scene.reply.on_correct.from);
           add('reply.on_wrong', 'feedback', scene.reply.on_wrong.text, scene.reply.on_wrong.from);
           scene.reply.options.forEach((o, oi) => add(`reply.options[${oi}]`, 'option', o.label));

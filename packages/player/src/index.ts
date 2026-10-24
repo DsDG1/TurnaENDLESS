@@ -21,12 +21,24 @@ export type PlayableScene = ComicSceneT | ChatSceneT | PickSceneT | QuizSceneT |
 /** 播放器可呈现的场景：三种叙事场景 + 程序练习卡（quiz/card）。 */
 const PLAYABLE_TYPES = new Set(['comic', 'chat', 'pick', 'quiz', 'card']);
 
+/** 呈现元数据：内容形态 / 系列 / 展示标签与每场景来源说明（由内容层注入，播放器不自查目录）。 */
+export interface EpisodePresentation {
+  kind: string;
+  series: string;
+  label: string;
+  /** sceneId → 来源说明（如「本地词库 · 词义」「本集前文原句」）；无来源的场景不列出 */
+  sceneSources?: Record<string, string>;
+  /** 旧契约（learningVersion 1–3）生成集；试播集无 presentation，靠缺省识别 */
+  legacy?: boolean;
+}
+
 export interface Episode {
   id: string;
   title: string;
   subtitle: string;
   description: string;
   ast: RuntimeAst;
+  presentation?: EpisodePresentation;
 }
 
 export interface Library {
@@ -40,7 +52,7 @@ export interface Library {
 export function createEpisode(
   batch: Batch,
   context: ValidationContext,
-  meta: Pick<Episode, 'title' | 'subtitle' | 'description'>,
+  meta: Pick<Episode, 'title' | 'subtitle' | 'description'> & { presentation?: EpisodePresentation },
 ): Episode {
   if (batch.scenes.some((s) => !PLAYABLE_TYPES.has(s.type) || (s.type === 'chat' && s.ink))) {
     throw new Error('当前播放器仅支持漫画、无 Ink 分支的聊天、选择题与程序练习卡场景');
@@ -263,3 +275,5 @@ export function transition(
   projectSession(next, library);
   return next;
 }
+
+export * from './checkpoint.js';

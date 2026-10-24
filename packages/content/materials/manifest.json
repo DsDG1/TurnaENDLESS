@@ -1,0 +1,669 @@
+{
+  "version": 1,
+  "total": 64,
+  "counts": {
+    "characters": 12,
+    "backgrounds": 12,
+    "props": 40
+  },
+  "materials": [
+    {
+      "id": "duck",
+      "category": "character",
+      "label": "鸭侦探",
+      "tags": [
+        "侦探",
+        "主角"
+      ],
+      "svgPath": "characters/duck.svg"
+    },
+    {
+      "id": "cat",
+      "category": "character",
+      "label": "猫",
+      "tags": [
+        "紧张",
+        "搭档"
+      ],
+      "svgPath": "characters/cat.svg"
+    },
+    {
+      "id": "moon",
+      "category": "character",
+      "label": "月亮",
+      "tags": [
+        "客户",
+        "帽子"
+      ],
+      "svgPath": "characters/moon.svg"
+    },
+    {
+      "id": "shopkeeper",
+      "category": "character",
+      "label": "獾店主",
+      "tags": [
+        "店主",
+        "商店"
+      ],
+      "svgPath": "characters/shopkeeper.svg"
+    },
+    {
+      "id": "delivery_mouse",
+      "category": "character",
+      "label": "快递鼠",
+      "tags": [
+        "快递",
+        "包裹"
+      ],
+      "svgPath": "characters/delivery_mouse.svg"
+    },
+    {
+      "id": "guide",
+      "category": "character",
+      "label": "向导机器人",
+      "tags": [
+        "向导",
+        "知识"
+      ],
+      "svgPath": "characters/guide.svg"
+    },
+    {
+      "id": "owl",
+      "category": "character",
+      "label": "猫头鹰学者",
+      "tags": [
+        "学者",
+        "顾问",
+        "书籍"
+      ],
+      "svgPath": "characters/owl.svg"
+    },
+    {
+      "id": "dog",
+      "category": "character",
+      "label": "警犬巡警",
+      "tags": [
+        "警官",
+        "巡逻",
+        "搭档"
+      ],
+      "svgPath": "characters/dog.svg"
+    },
+    {
+      "id": "rabbit",
+      "category": "character",
+      "label": "兔烘焙师",
+      "tags": [
+        "烘焙",
+        "甜品",
+        "店员"
+      ],
+      "svgPath": "characters/rabbit.svg"
+    },
+    {
+      "id": "bear",
+      "category": "character",
+      "label": "熊咖啡师",
+      "tags": [
+        "咖啡",
+        "温暖",
+        "店主"
+      ],
+      "svgPath": "characters/bear.svg"
+    },
+    {
+      "id": "fox",
+      "category": "character",
+      "label": "狐狸写生家",
+      "tags": [
+        "艺术",
+        "机敏",
+        "写生"
+      ],
+      "svgPath": "characters/fox.svg"
+    },
+    {
+      "id": "penguin",
+      "category": "character",
+      "label": "企鹅站长",
+      "tags": [
+        "车站",
+        "认真",
+        "礼服"
+      ],
+      "svgPath": "characters/penguin.svg"
+    },
+    {
+      "id": "agency_office",
+      "category": "background",
+      "label": "事务所办公室",
+      "tags": [
+        "侦探",
+        "室内",
+        "办公"
+      ],
+      "svgPath": "backgrounds/agency_office.svg"
+    },
+    {
+      "id": "living_room",
+      "category": "background",
+      "label": "客厅",
+      "tags": [
+        "居家",
+        "室内",
+        "休息"
+      ],
+      "svgPath": "backgrounds/living_room.svg"
+    },
+    {
+      "id": "shop_counter",
+      "category": "background",
+      "label": "商店柜台",
+      "tags": [
+        "商店",
+        "室内",
+        "购物"
+      ],
+      "svgPath": "backgrounds/shop_counter.svg"
+    },
+    {
+      "id": "cafe",
+      "category": "background",
+      "label": "咖啡馆",
+      "tags": [
+        "饮品",
+        "室内",
+        "日常"
+      ],
+      "svgPath": "backgrounds/cafe.svg"
+    },
+    {
+      "id": "park",
+      "category": "background",
+      "label": "公园",
+      "tags": [
+        "户外",
+        "自然",
+        "散步"
+      ],
+      "svgPath": "backgrounds/park.svg"
+    },
+    {
+      "id": "station",
+      "category": "background",
+      "label": "车站",
+      "tags": [
+        "出行",
+        "户外",
+        "等车"
+      ],
+      "svgPath": "backgrounds/station.svg"
+    },
+    {
+      "id": "bakery",
+      "category": "background",
+      "label": "烘焙坊",
+      "tags": [
+        "食物",
+        "室内",
+        "烘焙"
+      ],
+      "svgPath": "backgrounds/bakery.svg"
+    },
+    {
+      "id": "library",
+      "category": "background",
+      "label": "图书馆",
+      "tags": [
+        "阅读",
+        "室内",
+        "知识"
+      ],
+      "svgPath": "backgrounds/library.svg"
+    },
+    {
+      "id": "rooftop",
+      "category": "background",
+      "label": "天台屋顶",
+      "tags": [
+        "户外",
+        "高处",
+        "俯瞰"
+      ],
+      "svgPath": "backgrounds/rooftop.svg"
+    },
+    {
+      "id": "harbor",
+      "category": "background",
+      "label": "港口码头",
+      "tags": [
+        "户外",
+        "水边",
+        "出行"
+      ],
+      "svgPath": "backgrounds/harbor.svg"
+    },
+    {
+      "id": "garden",
+      "category": "background",
+      "label": "花房温室",
+      "tags": [
+        "自然",
+        "室内",
+        "植物"
+      ],
+      "svgPath": "backgrounds/garden.svg"
+    },
+    {
+      "id": "street",
+      "category": "background",
+      "label": "街角林荫道",
+      "tags": [
+        "户外",
+        "日常",
+        "城镇"
+      ],
+      "svgPath": "backgrounds/street.svg"
+    },
+    {
+      "id": "magnifying_glass",
+      "category": "prop",
+      "label": "放大镜",
+      "tags": [
+        "侦探",
+        "工具"
+      ],
+      "svgPath": "props/magnifying_glass.svg"
+    },
+    {
+      "id": "notebook",
+      "category": "prop",
+      "label": "笔记本",
+      "tags": [
+        "文具",
+        "记录"
+      ],
+      "svgPath": "props/notebook.svg"
+    },
+    {
+      "id": "top_hat",
+      "category": "prop",
+      "label": "礼帽",
+      "tags": [
+        "服饰",
+        "帽子"
+      ],
+      "svgPath": "props/top_hat.svg"
+    },
+    {
+      "id": "key",
+      "category": "prop",
+      "label": "钥匙",
+      "tags": [
+        "物品",
+        "开锁"
+      ],
+      "svgPath": "props/key.svg"
+    },
+    {
+      "id": "box",
+      "category": "prop",
+      "label": "盒子",
+      "tags": [
+        "容器",
+        "物品"
+      ],
+      "svgPath": "props/box.svg"
+    },
+    {
+      "id": "bag",
+      "category": "prop",
+      "label": "袋子",
+      "tags": [
+        "容器",
+        "随身"
+      ],
+      "svgPath": "props/bag.svg"
+    },
+    {
+      "id": "umbrella",
+      "category": "prop",
+      "label": "雨伞",
+      "tags": [
+        "物品",
+        "天气"
+      ],
+      "svgPath": "props/umbrella.svg"
+    },
+    {
+      "id": "coffee",
+      "category": "prop",
+      "label": "咖啡",
+      "tags": [
+        "饮品",
+        "日常"
+      ],
+      "svgPath": "props/coffee.svg"
+    },
+    {
+      "id": "envelope",
+      "category": "prop",
+      "label": "信封",
+      "tags": [
+        "信件",
+        "文具"
+      ],
+      "svgPath": "props/envelope.svg"
+    },
+    {
+      "id": "clock",
+      "category": "prop",
+      "label": "时钟",
+      "tags": [
+        "时间",
+        "物品"
+      ],
+      "svgPath": "props/clock.svg"
+    },
+    {
+      "id": "book",
+      "category": "prop",
+      "label": "书",
+      "tags": [
+        "阅读",
+        "物品"
+      ],
+      "svgPath": "props/book.svg"
+    },
+    {
+      "id": "apple",
+      "category": "prop",
+      "label": "苹果",
+      "tags": [
+        "食物",
+        "水果"
+      ],
+      "svgPath": "props/apple.svg"
+    },
+    {
+      "id": "bread",
+      "category": "prop",
+      "label": "面包",
+      "tags": [
+        "食物",
+        "烘焙"
+      ],
+      "svgPath": "props/bread.svg"
+    },
+    {
+      "id": "cup",
+      "category": "prop",
+      "label": "杯子",
+      "tags": [
+        "饮品",
+        "器皿"
+      ],
+      "svgPath": "props/cup.svg"
+    },
+    {
+      "id": "ticket",
+      "category": "prop",
+      "label": "车票",
+      "tags": [
+        "出行",
+        "票据"
+      ],
+      "svgPath": "props/ticket.svg"
+    },
+    {
+      "id": "bicycle",
+      "category": "prop",
+      "label": "自行车",
+      "tags": [
+        "出行",
+        "交通"
+      ],
+      "svgPath": "props/bicycle.svg"
+    },
+    {
+      "id": "plant",
+      "category": "prop",
+      "label": "盆栽",
+      "tags": [
+        "自然",
+        "装饰"
+      ],
+      "svgPath": "props/plant.svg"
+    },
+    {
+      "id": "gift",
+      "category": "prop",
+      "label": "礼物",
+      "tags": [
+        "物品",
+        "心意"
+      ],
+      "svgPath": "props/gift.svg"
+    },
+    {
+      "id": "coin",
+      "category": "prop",
+      "label": "硬币",
+      "tags": [
+        "金钱",
+        "物品"
+      ],
+      "svgPath": "props/coin.svg"
+    },
+    {
+      "id": "jar",
+      "category": "prop",
+      "label": "玻璃罐",
+      "tags": [
+        "容器",
+        "物品"
+      ],
+      "svgPath": "props/jar.svg"
+    },
+    {
+      "id": "photo",
+      "category": "prop",
+      "label": "相片",
+      "tags": [
+        "记忆",
+        "线索"
+      ],
+      "svgPath": "props/photo.svg"
+    },
+    {
+      "id": "lamp",
+      "category": "prop",
+      "label": "台灯",
+      "tags": [
+        "家具",
+        "照明"
+      ],
+      "svgPath": "props/lamp.svg"
+    },
+    {
+      "id": "camera",
+      "category": "prop",
+      "label": "照相机",
+      "tags": [
+        "工具",
+        "记录"
+      ],
+      "svgPath": "props/camera.svg"
+    },
+    {
+      "id": "mirror",
+      "category": "prop",
+      "label": "手镜",
+      "tags": [
+        "物品",
+        "日常"
+      ],
+      "svgPath": "props/mirror.svg"
+    },
+    {
+      "id": "newspaper",
+      "category": "prop",
+      "label": "报纸",
+      "tags": [
+        "阅读",
+        "资讯"
+      ],
+      "svgPath": "props/newspaper.svg"
+    },
+    {
+      "id": "phone",
+      "category": "prop",
+      "label": "电话",
+      "tags": [
+        "通讯",
+        "日常"
+      ],
+      "svgPath": "props/phone.svg"
+    },
+    {
+      "id": "tea",
+      "category": "prop",
+      "label": "茶壶",
+      "tags": [
+        "饮品",
+        "日常"
+      ],
+      "svgPath": "props/tea.svg"
+    },
+    {
+      "id": "cake",
+      "category": "prop",
+      "label": "蛋糕",
+      "tags": [
+        "食物",
+        "甜品"
+      ],
+      "svgPath": "props/cake.svg"
+    },
+    {
+      "id": "glasses",
+      "category": "prop",
+      "label": "眼镜",
+      "tags": [
+        "配饰",
+        "文具"
+      ],
+      "svgPath": "props/glasses.svg"
+    },
+    {
+      "id": "badge",
+      "category": "prop",
+      "label": "徽章",
+      "tags": [
+        "服饰",
+        "标志"
+      ],
+      "svgPath": "props/badge.svg"
+    },
+    {
+      "id": "bell",
+      "category": "prop",
+      "label": "铜铃",
+      "tags": [
+        "声音",
+        "物品"
+      ],
+      "svgPath": "props/bell.svg"
+    },
+    {
+      "id": "flower",
+      "category": "prop",
+      "label": "鲜花",
+      "tags": [
+        "自然",
+        "装饰"
+      ],
+      "svgPath": "props/flower.svg"
+    },
+    {
+      "id": "candle",
+      "category": "prop",
+      "label": "蜡烛",
+      "tags": [
+        "照明",
+        "氛围"
+      ],
+      "svgPath": "props/candle.svg"
+    },
+    {
+      "id": "feather",
+      "category": "prop",
+      "label": "羽毛笔",
+      "tags": [
+        "文具",
+        "书写"
+      ],
+      "svgPath": "props/feather.svg"
+    },
+    {
+      "id": "compass",
+      "category": "prop",
+      "label": "指南针",
+      "tags": [
+        "旅行",
+        "探索"
+      ],
+      "svgPath": "props/compass.svg"
+    },
+    {
+      "id": "cookie",
+      "category": "prop",
+      "label": "曲奇饼干",
+      "tags": [
+        "食物",
+        "小吃"
+      ],
+      "svgPath": "props/cookie.svg"
+    },
+    {
+      "id": "map",
+      "category": "prop",
+      "label": "地图",
+      "tags": [
+        "旅行",
+        "路线"
+      ],
+      "svgPath": "props/map.svg"
+    },
+    {
+      "id": "basket",
+      "category": "prop",
+      "label": "野餐篮",
+      "tags": [
+        "容器",
+        "生活"
+      ],
+      "svgPath": "props/basket.svg"
+    },
+    {
+      "id": "scarf",
+      "category": "prop",
+      "label": "围巾",
+      "tags": [
+        "服饰",
+        "保暖"
+      ],
+      "svgPath": "props/scarf.svg"
+    },
+    {
+      "id": "guitar",
+      "category": "prop",
+      "label": "尤克里里",
+      "tags": [
+        "音乐",
+        "艺术"
+      ],
+      "svgPath": "props/guitar.svg"
+    }
+  ]
+}

@@ -1,55 +1,70 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createSession, getScenes, projectSession, transition, type PlayerCommand, type PlayerSession } from '@endless/player';
-import { GenerationRequestSchema, type ApiStatus, type GeneratedEpisode, type GenerationRequest } from '@endless/content';
-import { contentHash } from '@endless/esl';
+import { getScenes, projectSession, type PlayerCommand, type PlayerView } from '@endless/player';
+import {
+  adoptRevision, applyPlayerCommand, attachVolume, bridge, buildBackup, buildGenerationContext,
+  buildVolume, cancelTicket, commitTicketResult, createWorkspace, detachVolume, markTicketFailed,
+  markTicketSubmitted, parseBackup, previewRevision, purgeContent, purgePreview, reserveTicket,
+  restoreContent, suggestVolumes, switchBranch, trashContent, updateDisplay, waiveObligation,
+  type ApiStatus, type ArchiveVolume, type ContentEntry, type ContentRevision, type GenerationRequest,
+  type ImportPreview, type RevisionPreview, type Workspace, type GenerationTicket,
+} from '@endless/content';
 import { content } from './content/catalog.js';
-import { SessionRepository } from './storage.js';
+import { WorkspaceRepository } from './storage.js';
 import { apiStatus, generateEpisode } from './api.js';
 
+const bump = (workspace: Workspace, committedRev: number): Workspace => ({
+  ...workspace,
+  identity: { ...workspace.identity, repositoryRevision: committedRev + 1 },
+});
+
 export function usePlayer() {
-  const [session, setSession] = useState<PlayerSession | null>(null);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState('');
+  const [raw, setRaw] = useState<unknown>(null);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
-  const [raw, setRaw] = useState<unknown>(null);
-  const [library, setLibrary] = useState(content.pilot);
-  const [generated, setGenerated] = useState<GeneratedEpisode[]>([]);
-  const [ticket, setTicket] = useState<GenerationRequest | null>(null);
   const [generating, setGenerating] = useState(false);
   const [phase, setPhase] = useState('');
   const [api, setApi] = useState<ApiStatus | null>(null);
   const [apiError, setApiError] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const repository = useRef<SessionRepository | null>(null);
-  const current = useRef<PlayerSession | null>(null);
+  const repository = useRef<WorkspaceRepository | null>(null);
+  const current = useRef<Workspace | null>(null);
+  const committedRev = useRef(-1);
   const pending = useRef(false);
-  const currentTicket = useRef<GenerationRequest | null>(null);
   const controller = useRef<AbortController | null>(null);
+  const currentTicket = useRef<GenerationTicket | null>(null);
 
   useEffect(() => {
     let active = true;
-    const storage = new SessionRepository();
+    const storage = new WorkspaceRepository();
     repository.current = storage;
-    void Promise.all([storage.load(), storage.load('generation')]).then(([stored, savedTicket]) => {
+    void storage.load().then((stored) => {
       if (!active) return;
-      setRaw(stored);
-      const restored = content.restore(stored ?? createSession(content.pilot));
-      if (savedTicket != null) {
-        const parsed = GenerationRequestSchema.parse(savedTicket);
-        if (contentHash(parsed.save) !== contentHash(content.snapshot(restored.session, restored.generated))) {
-          throw new Error('生成任务与本地进度不匹配，原始数据已保留，请先备份');
-        }
-        currentTicket.current = parsed;
-        setTicket(parsed);
+      const workspace = stored ?? createWorkspace(content);
+      committedRev.current = stored?.identity.repositoryRevision ?? -1;
+      if (!stored) {
+        const committed = bump(workspace, committedRev.current);
+        void storage.commit(committed).then(() => {
+          committedRev.current = committed.identity.repositoryRevision;
+        });
+        current.current = committed;
+        setWorkspace(committed);
+      } else {
+        current.current = workspace;
+        setWorkspace(workspace);
+      }
+      const open = (stored ?? workspace).tickets.find((t) => t.status === 'reserved' || t.status === 'submitted');
+      if (open) {
+        currentTicket.current = open;
         setPhase('上次生成任务已保留，可恢复等待，不会创建重复任务');
       }
-      current.current = restored.session;
-      setLibrary(restored.library);
-      setGenerated(restored.generated);
-      setSession(restored.session);
     }).catch((error: unknown) => {
-      if (active) setFailure(error instanceof Error ? error.message : '无法恢复本地进度，原始存档已保留');
+      if (active) {
+        setFailure(error instanceof Error ? error.message : '无法恢复本地进度，原始存档已保留');
+        void storage.rawMeta().then((meta) => { if (active && meta != null) setRaw(meta); }).catch(() => {});
+      }
     }).finally(() => {
       if (active) setLoading(false);
     });
@@ -76,7 +91,13 @@ export function usePlayer() {
     };
   }, []);
 
-  const view = useMemo(() => session ? projectSession(session, library) : null, [session, library]);
+  const runtime = useMemo(() => workspace ? bridge(content, workspace) : null, [workspace]);
+  const session = runtime?.session ?? null;
+  const library = runtime?.library ?? content.pilot;
+  const view: PlayerView | null = useMemo(
+    () => runtime ? projectSession(runtime.session, runtime.library) : null,
+    [runtime],
+  );
 
   async function refreshApi() {
     try {
@@ -88,18 +109,48 @@ export function usePlayer() {
     }
   }
 
+  /** 统一提交：内存命令 → bump → 事务提交 → 更新状态。 */
+  async function commit(next: Workspace, options: { closingTicketId?: string } = {}): Promise<boolean> {
+    if (!repository.current) return false;
+    const committed = bump(next, committedRev.current);
+    try {
+      await repository.current.commit(committed, options);
+      committedRev.current = committed.identity.repositoryRevision;
+      current.current = committed;
+      setWorkspace(committed);
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '操作未保存，请重试');
+      return false;
+    }
+  }
+
   async function dispatch(command: PlayerCommand): Promise<boolean> {
-    if (!current.current || !repository.current || pending.current || currentTicket.current) return false;
+    if (!current.current || pending.current || currentTicket.current) return false;
     pending.current = true;
     setSaving(true);
     setNotice('');
     try {
-      const before = current.current;
-      const next = transition(before, command, library);
-      if (next !== before) await repository.current.save(content.snapshot(next, generated), before.revision);
-      current.current = next;
-      setSession(next);
-      return true;
+      const next = applyPlayerCommand(content, current.current, command);
+      if (next === current.current) return true;
+      return await commit(next);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '操作未保存，请重试');
+      return false;
+    } finally {
+      pending.current = false;
+      setSaving(false);
+    }
+  }
+
+  /** 管理命令（不影响学习事件）。 */
+  async function manage(fn: (workspace: Workspace) => Workspace): Promise<boolean> {
+    if (!current.current || pending.current || currentTicket.current) return false;
+    pending.current = true;
+    setSaving(true);
+    setNotice('');
+    try {
+      return await commit(fn(current.current));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '操作未保存，请重试');
       return false;
@@ -116,45 +167,64 @@ export function usePlayer() {
     setNotice('');
     const abort = new AbortController();
     controller.current = abort;
-    const resuming = !!currentTicket.current;
     try {
-      let input = currentTicket.current;
-      if (!input) {
-        content.plan(current.current, library);
-        input = { requestId: crypto.randomUUID(), save: content.snapshot(current.current, generated) };
-        input = await repository.current.reserveGeneration(input);
-        current.current = input.save.session;
-        setSession(input.save.session);
-        currentTicket.current = input;
-        setTicket(input);
+      let ticket = currentTicket.current;
+      let request: GenerationRequest | null = null;
+      if (!ticket) {
+        const { workspace: reserved, ticket: created } = reserveTicket(current.current);
+        const rt = bridge(content, reserved);
+        const context = buildGenerationContext(reserved, rt);
+        const requestId = created.id.slice(4);
+        request = { requestId, save: context.save, archives: context.archives };
+        // 预留任务必须先落库，再发请求；历史绑定存于任务依据
+        const committed = bump(reserved, committedRev.current);
+        await repository.current.commit(committed);
+        committedRev.current = committed.identity.repositoryRevision;
+        current.current = committed;
+        setWorkspace(committed);
+        ticket = committed.tickets.find((t) => t.id === created.id)!;
+        const submitted = markTicketSubmitted(committed, ticket.id);
+        if (!(await commit(submitted))) return false;
+      } else {
+        const rt = bridge(content, current.current, ticket.branchId);
+        const context = buildGenerationContext(current.current, rt);
+        request = { requestId: ticket.id.slice(4), save: context.save, archives: context.archives };
       }
+      currentTicket.current = ticket;
       setPhase('正在连接本机 AI 服务…');
-      const result = await generateEpisode(input, setPhase, abort.signal, apiKey, resuming);
+      const result = await generateEpisode(request, setPhase, abort.signal, apiKey, !!currentTicket.current);
       if (abort.signal.aborted) return false;
       if (result.failed) {
-        await repository.current.clearGeneration(input.requestId);
+        const failedWs = markTicketFailed(current.current!, ticket.id, result.failure?.category ?? 'unknown');
+        await commit(failedWs, { closingTicketId: ticket.id });
         currentTicket.current = null;
-        setTicket(null);
         setNotice(result.message);
         setPhase(result.message);
         void refreshApi();
         return false;
       }
-      const accepted = content.accept(result.document, input.save);
-      const next = transition(accepted.session, { type: 'select', episode: result.document.batch.batch }, accepted.library);
-      await repository.current.save(content.snapshot(next, accepted.generated), current.current.revision, input.requestId);
-      current.current = next;
+      const next = commitTicketResult(content, current.current!, ticket.id, result.document);
+      const failedTicket = next.tickets.find((t) => t.id === ticket.id);
+      if (failedTicket?.status === 'failed') {
+        await commit(next, { closingTicketId: ticket.id });
+        currentTicket.current = null;
+        setNotice('生成结果与当前历史不匹配，已保留结果但未写入分支。请检查分支状态');
+        return false;
+      }
+      const ok = await commit(next, { closingTicketId: ticket.id });
+      if (!ok) return false;
       currentTicket.current = null;
-      setTicket(null);
-      setLibrary(accepted.library);
-      setGenerated(accepted.generated);
-      setSession(next);
+      // 选中新内容
+      const adopted = next.branches.find((b) => b.id === next.activeBranchId)!;
+      const episodeId = next.revisions.find((r) => r.id === adopted.adopted.at(-1)!.revisionId)!.episodeId;
+      const selected = applyPlayerCommand(content, next, { type: 'select', episode: episodeId });
+      await commit(selected);
       setPhase('新一集已校验并保存到此设备');
       void refreshApi();
       return true;
     } catch (error) {
       if (!abort.signal.aborted) {
-        setNotice(error instanceof Error ? error.message : '生成未完成。任务 ID 已保留，可恢复原任务');
+        setNotice(error instanceof Error ? error.message : '生成未完成。任务已保留，可恢复原任务');
         setPhase('任务已保留；恢复时会使用相同任务 ID，避免重复调用');
       }
       return false;
@@ -167,38 +237,82 @@ export function usePlayer() {
   }
 
   async function cancelGeneration() {
-    const input = currentTicket.current;
-    if (!input || !repository.current) return;
+    const ticket = currentTicket.current;
+    if (!ticket || !current.current) return;
     controller.current?.abort();
-    try {
-      await repository.current.clearGeneration(input.requestId);
+    const cancelled = cancelTicket(current.current, ticket.id);
+    if (await commit(cancelled, { closingTicketId: ticket.id })) {
       currentTicket.current = null;
-      setTicket(null);
       setPhase('已停止本地等待。服务端可能仍在生成；相同进度再次请求会复用已有任务');
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法停止等待，请刷新重试');
     }
   }
 
-  const readyForGeneration = !!view && library.episodes.every((episode) =>
-    (view.episodes[episode.id]?.cursor ?? 0) >= getScenes(episode).length);
-  const save = session ? content.snapshot(session, generated) : null;
+  // ---------- 内容管理 ----------
+
+  const editDisplay = (entry: ContentEntry, patch: Partial<ContentEntry['display']>) =>
+    manage((ws) => updateDisplay(ws, entry.id, patch));
+  const trash = (entry: ContentEntry, waive = false) =>
+    manage((ws) => trashContent(ws, entry.id, new Date(), waive));
+  const restore = (entry: ContentEntry, reobligate = false) =>
+    manage((ws) => restoreContent(ws, entry.id, new Date(), reobligate));
+  const waive = (entry: ContentEntry) => manage((ws) => waiveObligation(ws, entry.id));
+  const purge = (entry: ContentEntry) => manage((ws) => purgeContent(ws, entry.id));
+  const purgeInfo = (entry: ContentEntry) => current.current ? purgePreview(current.current, entry.id) : null;
+  const previewEdit = (entry: ContentEntry, draft: string): RevisionPreview | null =>
+    current.current ? previewRevision(content, current.current, entry, draft) : null;
+  const adoptEdit = (entry: ContentEntry, revision: ContentRevision) =>
+    manage((ws) => adoptRevision(content, ws, entry, revision).workspace);
+  const archive = (memberContentIds: string[], title?: string) =>
+    manage((ws) => attachVolume(ws, buildVolume(ws, bridge(content, ws), memberContentIds, title)));
+  const unarchive = (volume: ArchiveVolume) =>
+    manage((ws) => detachVolume(ws, volume.id));
+
+  const suggestions = useMemo(
+    () => (workspace && runtime ? suggestVolumes(workspace, runtime) : []),
+    [workspace, runtime],
+  );
+  const backup = () => (current.current ? buildBackup(current.current) : null);
+  const previewImport = (raw: unknown): ImportPreview => parseBackup(raw, current.current);
+  const importBackup = async (preview: ImportPreview): Promise<boolean> => {
+    const data = preview.backup.workspace.data;
+    const committed = bump(data, committedRev.current);
+    if (!repository.current) return false;
+    try {
+      await repository.current.commit(committed);
+      current.current = committed;
+      setWorkspace(committed);
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '导入未提交，请重试');
+      return false;
+    }
+  };
+
+  const obligations = workspace?.obligations.filter((o) => !o.waivedAt) ?? [];
+  const readyForGeneration = !!view && !obligations.length &&
+    library.episodes.every((episode) => (view.episodes[episode.id]?.cursor ?? 0) >= getScenes(episode).length);
   const canUseModel = !!api && (api.configured || (api.acceptsUserKey && !!apiKey.trim()));
   const learningNotes = useMemo(() => session ? content.learningNotes(session, library) : [], [session, library]);
   const nextWords = useMemo(() => {
     if (!session || !readyForGeneration) return [];
     try {
-      return content.plan(session, library).brief.introduce.map((item) => ({ item, ...library.glossary[item] }));
+      return content.planCreative(session, library).brief.introduce.map((item) => ({ item, ...library.glossary[item] }));
     } catch {
       return [];
     }
   }, [session, library, readyForGeneration]);
-
   return {
-    session, view, library, save, loading, failure, notice, saving, dispatch, raw,
-    api, apiError, refreshApi, generate, generating, phase, ticket, cancelGeneration, readyForGeneration,
-    apiKey, setApiKey, canUseModel,
-    learningNotes, nextWords,
-    busy: saving || !!ticket || generating,
+    workspace, session, view, library, loading, failure, notice, saving, dispatch,
+    api, apiError, refreshApi, generate, generating, phase, ticket: currentTicket.current,
+    cancelGeneration, readyForGeneration, apiKey, setApiKey, canUseModel,
+    learningNotes, nextWords, runtime, obligations,
+    entries: workspace?.entries ?? [],
+    branches: workspace?.branches ?? [],
+    volumes: workspace?.volumes ?? [],
+    switchBranchTo: (id: string) => manage((ws) => switchBranch(ws, id)),
+    editDisplay, trash, restore, waive, purge, purgeInfo, previewEdit, adoptEdit,
+    archive, unarchive, suggestions, backup, previewImport, importBackup,
+    busy: saving || generating || !!currentTicket.current,
+    raw,
   };
 }

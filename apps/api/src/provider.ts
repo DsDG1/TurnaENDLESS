@@ -14,7 +14,7 @@ export function createProviderRunner(
   serverKey = '',
   createClient: (options: AiSdkClientOptions) => LlmClient = (options) => new AiSdkLlmClient(options),
 ) {
-  return async (save: unknown, id: string, phase: (value: string) => void, userKey?: string) => {
+  return async (save: unknown, id: string, phase: (value: string) => void, userKey?: string, archives?: import('@endless/content').ArchiveContextEntryWire[]) => {
     const apiKey = userKey || serverKey;
     if (!apiKey) throw new ApiError(401, '本次生成缺少 API Key，请在网页重新输入；密钥不会保存到任务中');
     const client = createClient({
@@ -22,6 +22,6 @@ export function createProviderRunner(
       models: config.models, reasoningEffort: config.provider.reasoning_effort,
       timeoutMs: config.provider.timeout_ms, maxRetries: 0,
     });
-    return createGenerator(content, client)(save, id, phase);
+    return createGenerator(content, client)(save, id, phase, undefined, archives);
   };
 }

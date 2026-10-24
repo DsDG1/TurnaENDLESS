@@ -594,3 +594,46 @@ button:disabled { opacity: .55; }
 .word-card-back small { margin-top: 10px; font-size: 10px; color: #88927c; }
 .word-card .hint-button { margin: 0 auto; }
 .large-text .word-card-front { font-size: 25px; }
+
+/* —— 创作草稿 v4：素材预览、场景背景、论坛/评论外观、来源标注 —— */
+.material-preview { margin: 10px 0 4px; padding: 12px 14px; border: 1px dashed var(--line, #c9c2a5); border-radius: 14px; }
+.material-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.material-row figure { margin: 0; width: 44px; text-align: center; }
+.material-row figcaption { font-size: 10px; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.material-row svg { width: 40px; height: 40px; }
+.material-row-props figure { width: 34px; }
+.material-row-props svg { width: 30px; height: 30px; }
+.material-preview small { display: block; margin-top: 8px; opacity: .75; }
+.generation-note { margin-left: 10px; font-size: 12px; opacity: .7; align-self: center; }
+.panel-backdrop { position: absolute; inset: 0 0 auto; width: 100%; height: 70%; object-fit: cover; opacity: .55; pointer-events: none; }
+.comic-panel { position: relative; overflow: hidden; }
+.forum-thread { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.forum-post { background: #fbf7e8; border: 1px solid #d9d2b2; border-radius: 12px; padding: 10px 12px; }
+.forum-post header { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+.forum-post header .avatar { width: 30px; height: 30px; }
+.forum-post header small { display: block; opacity: .6; font-size: 11px; }
+.forum-post p { margin: 0; }
+.chat-skin-dating .chat-messages { background: #fdf3ec; }
+.chat-skin-news_comments .forum-post { border-left: 3px solid #8ba283; }
+.source-badge { display: inline-block; margin-top: 6px; font-size: 11px; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: #e4ecd9; color: #4c5c50; }
+.clue-prop svg { width: 72px; height: 72px; }
+
+/* ---------- Edition：有限专题书架与阅读 ---------- */
+.edition-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 22px; }
+.edition-file { cursor: pointer; }
+.edition-shelf { display: grid; gap: 18px; }
+.edition-card { padding: 22px; }
+.edition-card h2 { margin: 6px 0 4px; font-size: 22px; }
+.edition-unit-list { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 8px; }
+.edition-unit-list li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
+.edition-unit-list li > span:nth-child(2) { flex: 1; }
+.edition-unit-index { color: #8b9b73; font-size: 12px; font-variant-numeric: tabular-nums; }
+.edition-card-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.edition-article { padding: 30px clamp(18px, 4vw, 34px); background: #fdfcf8; border: 1px solid #e0e4d7; border-radius: 13px; }
+.edition-article p { margin: 0 0 1.05em; color: #26342d; font-size: 19px; line-height: 1.85; }
+.edition-source { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: #7a8471; font-size: 12px; }
+.edition-nav { margin-top: 16px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .edition-article { padding: 22px 16px; }
+  .edition-article p { font-size: 17px; }
+}

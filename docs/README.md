@@ -5,6 +5,7 @@ ENDLESS 是一个以「无尽内容流」为形态的 AI 原生语言学习产�
 | 文档 | 管什么 |
 |---|---|
 | [`../README.md`](../README.md) | 仓库实现状态：实验 0 建设（Day 1–7）完成 + Day 8 试跑完成（提示词 v16、20 批真实冒烟 90%），快速开始与偏差记录 |
+| [`edition-design.md`](./edition-design.md) | Edition 有限专题出版物的目标设计与实施审计：M0 契约基线到 M5 第二等级的工程能力（含本机 SQLite 编纂、抓取安全设施、20×10 规模夹具）；阶段出口未全部达到，证据与遗漏见 §21 |
 | [`research/oss-reuse.md`](./research/oss-reuse.md) | 可复用或借鉴的开源项目：取什么、不取什么、许可证、Web 到 React Native 的迁移成本 |
 | [`../reference/ai-mini-app-research/`](../reference/ai-mini-app-research/README.md) | 竞品研究：AI 生成型小程序的形态、创作流程与实现约定（Sekai），含能力目录、可编辑清单与样本矩阵 |
 | [`research/reference-borrowing-plan.md`](./research/reference-borrowing-plan.md) | 参考调研（ScrollToStudy 产品与无限机制、Sekai 小程序）与实验 0 的结合计划：借什么、改成什么样、怎么判断、什么时候做 |

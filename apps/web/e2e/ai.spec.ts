@@ -1,29 +1,12 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import type { GeneratedEpisode, GenerationRequest } from '@endless/content';
-import { complete, content, generated } from '../../api/test/fixtures.js';
-
-async function seed(page: Page) {
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: '让英语，接着发生。' })).toBeVisible();
-  await page.evaluate(async (save) => {
-    const db = await new Promise<IDBDatabase>((resolve) => {
-      const request = indexedDB.open('endless-player', 1);
-      request.onsuccess = () => resolve(request.result);
-    });
-    await new Promise<void>((resolve) => {
-      const transaction = db.transaction('sessions', 'readwrite');
-      transaction.objectStore('sessions').put(save, 'current');
-      transaction.oncomplete = () => resolve();
-    });
-    db.close();
-  }, complete());
-  await page.reload();
-}
+import { bridge, parseBackup } from '@endless/content';
+import { content } from '../../api/test/fixtures.js';
+import { dumpWorkspace, generatedDocV4, playDoc, seed } from './workspace-seed.js';
 
 const status = {
   configured: true, model: 'test-model', token: 'test-token',
-  quota: { dailyLimit: 10, used: 0, remaining: 10 },
 };
 
 test('模拟模型连续续写两集，刷新、离线与导出保留原文和真实进度', async ({ page, context }) => {
@@ -34,7 +17,7 @@ test('模拟模型连续续写两集，刷新、离线与导出保留原文和�
       return;
     }
     const input = route.request().postDataJSON() as GenerationRequest;
-    const document = generated(input.save, `ai-${input.requestId}`);
+    const document = generatedDocV4(input.save, `ai-${input.requestId}`);
     documents.push(document);
     await route.fulfill({ json: { id: input.requestId, status: 'succeeded', phase: '已完成', result: document } });
   });
@@ -44,16 +27,7 @@ test('模拟模型连续续写两集，刷新、离线与导出保留原文和�
     await expect(page.getByRole('heading', { name: '新的线索', exact: true, level: 1 })).toBeVisible();
     await page.reload();
     await expect(page.getByRole('heading', { name: '新的线索', exact: true, level: 1 })).toBeVisible();
-    await page.getByRole('button', { name: '继续故事', exact: true }).click();
-    const chat = documents[index]!.batch.scenes.find((scene) => scene.type === 'chat')!;
-    if (chat.type !== 'chat') throw new Error('test fixture');
-    await page.getByRole('button', { name: `1. ${chat.reply!.options[0]!.label}`, exact: true }).click();
-    await page.getByRole('button', { name: '继续故事', exact: true }).click();
-    const scene = documents[index]!.batch.scenes.at(-1)!;
-    if (scene.type !== 'pick') throw new Error('test fixture');
-    await page.getByRole('button', { name: `1. ${scene.options[0]!.label}`, exact: true }).click();
-    await page.getByRole('button', { name: '看完这一集' }).click();
-    await expect(page.getByRole('heading', { name: '这一段故事，留下来了。' })).toBeVisible();
+    await playDoc(page, documents[index]!, 'story');
     const newItem = documents[index]!.batch.scenes.find((scene) => scene.evidence?.type === 'practice')!.evidence!.item;
     await page.goto('/#progress');
     await expect(page.locator(`[data-learning-item="${newItem}"]`)).toContainText('情境练习');
@@ -68,11 +42,17 @@ test('模拟模型连续续写两集，刷新、离线与导出保留原文和�
   await expect(page.getByRole('button', { name: /查看第 \d 集/ })).toHaveCount(5);
   await page.goto('/#settings');
   const downloading = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出学习存档' }).click();
+  await page.getByRole('button', { name: '导出完整备份' }).click();
   const path = await (await downloading).path();
-  const exported = content.restore(JSON.parse(await readFile(path!, 'utf8')));
-  expect(exported.generated).toEqual(documents);
-  expect(content.stateContext(exported.session, exported.library).view.world.userFacts().filter((fact) => fact.predicate === 'noticed')).toHaveLength(2);
+  const exported = parseBackup(JSON.parse(await readFile(path!, 'utf8')));
+  const exportedBatches = new Map(
+    exported.backup.workspace.data.revisions
+      .filter((r) => r.origin !== 'bundled')
+      .map((r) => [r.batch.batch, r.batch] as const),
+  );
+  for (const d of documents) expect(exportedBatches.get(d.batch.batch)).toEqual(d.batch);
+  const runtime = bridge(content, exported.backup.workspace.data);
+  expect(content.stateContext(runtime.session, runtime.library).view.world.userFacts().filter((fact: { predicate: string }) => fact.predicate === 'chose')).toHaveLength(2);
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise<void>((resolve) =>
@@ -100,7 +80,7 @@ test('刷新后恢复相同任务 ID，不重复创建模型生成', async ({ pa
     if (route.request().method() === 'POST') {
       const input = route.request().postDataJSON() as GenerationRequest;
       ids.push(input.requestId);
-      result ??= generated(input.save, `ai-${input.requestId}`);
+      result ??= generatedDocV4(input.save, `ai-${input.requestId}`);
     }
     await route.fulfill({ json: {
       id: ids[0], status: completed ? 'succeeded' : 'running', phase: '模拟模型正在生成',
@@ -123,7 +103,7 @@ test('客户端拒绝被篡改的 AI 结果，不覆盖已有内容和学习记�
   await page.route('**/api/**', async (route) => {
     if (route.request().url().endsWith('/api/status')) return route.fulfill({ json: status });
     const input = route.request().postDataJSON() as GenerationRequest;
-    const document = generated(input.save, `ai-${input.requestId}`);
+    const document = generatedDocV4(input.save, `ai-${input.requestId}`);
     document.hash = '0000000000000000';
     await route.fulfill({ json: { id: input.requestId, status: 'succeeded', phase: '已完成', result: document } });
   });
@@ -151,7 +131,7 @@ test('自带 Key 仅保留在页面内存，刷新清空但仍可恢复既有任
       expect(route.request().postData()).not.toContain(key);
       ids.push(input.requestId);
       submittedKeys.push(route.request().headers()['x-endless-provider-key']);
-      result ??= generated(input.save, `ai-${input.requestId}`);
+      result ??= generatedDocV4(input.save, `ai-${input.requestId}`);
     } else {
       expect(route.request().headers()['x-endless-provider-key']).toBeUndefined();
     }
@@ -173,18 +153,7 @@ test('自带 Key 仅保留在页面内存，刷新清空但仍可恢复既有任
   await field.fill(key);
   await page.getByRole('button', { name: 'AI 生成下一集', exact: true }).click();
   await expect(page.getByText('模拟模型等待中', { exact: true })).toBeVisible();
-  const storage = await page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve) => {
-      const request = indexedDB.open('endless-player', 1);
-      request.onsuccess = () => resolve(request.result);
-    });
-    const stored = await new Promise<unknown>((resolve) => {
-      const request = db.transaction('sessions', 'readonly').objectStore('sessions').getAll();
-      request.onsuccess = () => resolve(request.result);
-    });
-    db.close();
-    return JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, indexed: stored });
-  });
+  const storage = await dumpWorkspace(page);
   expect(storage).not.toContain(key);
   await page.reload();
   await expect(field).toHaveValue('');
@@ -196,7 +165,7 @@ test('自带 Key 仅保留在页面内存，刷新清空但仍可恢复既有任
   expect(submittedKeys).toEqual([key, undefined]);
   await page.goto('/#settings');
   const downloading = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出学习存档' }).click();
+  await page.getByRole('button', { name: '导出完整备份' }).click();
   const path = await (await downloading).path();
   expect(await readFile(path!, 'utf8')).not.toContain(key);
   await expect(field).toHaveValue('');

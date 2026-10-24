@@ -1,0 +1,3875 @@
+{
+  "contract": "edition-publication/1",
+  "release": {
+    "id": "rel_b5ac1db8-644c-4bc2-8c02-607338b3f93d",
+    "editionId": "edn_9cfb33e2-1184-484a-9af4-a1ab4785e1d5",
+    "issueId": "iss_4f9f07c1-31a0-4a6b-b09b-b4fe477b4e65",
+    "cefr": "A2",
+    "editorialRevisionId": "edr_2dcbaf86-1bdb-4683-88f2-c2d3ac61de7d",
+    "corpusRevisionId": "crp_62b0ad55-3c4f-439b-a3f8-cc27f2fc0637",
+    "orderedUnitRevisionIds": [
+      "urv_ec9530a7-d0cf-4a42-b7be-089f548c355d",
+      "urv_efd40b6c-d9a8-4970-bf85-0cc872ded898",
+      "urv_8e793d6e-ef74-4a89-a62d-5933a0920c14"
+    ],
+    "manifest": {
+      "contract": "edition-publication/1",
+      "editionId": "edn_9cfb33e2-1184-484a-9af4-a1ab4785e1d5",
+      "issueId": "iss_4f9f07c1-31a0-4a6b-b09b-b4fe477b4e65",
+      "cefr": "A2",
+      "languagePackRevisionId": "lpk_2699abc9-0070-48da-b8f1-3a0edbd634a2",
+      "units": [
+        {
+          "unitRevisionId": "urv_ec9530a7-d0cf-4a42-b7be-089f548c355d",
+          "unitId": "unt_d8c0e376-079c-4f5d-a4c6-a74cb07021f7",
+          "order": 1,
+          "title": "走进咖啡馆",
+          "batchDigest": "sha256:6f44697bf1b1442a935dc6bfd91f6812ae21e5378d1fda99ef5ba794e894ad93",
+          "scenes": 5,
+          "estimatedMinutes": 1.4
+        },
+        {
+          "unitRevisionId": "urv_efd40b6c-d9a8-4970-bf85-0cc872ded898",
+          "unitId": "unt_5bbbe90d-24fc-4e1a-b7cc-c35357c70362",
+          "order": 2,
+          "title": "两枚硬币",
+          "batchDigest": "sha256:c59c72f35fd930bc39c35a3e6ee362f027665427bae12bdcc3e31b9bb93d2386",
+          "scenes": 5,
+          "estimatedMinutes": 1.4
+        },
+        {
+          "unitRevisionId": "urv_8e793d6e-ef74-4a89-a62d-5933a0920c14",
+          "unitId": "unt_89e2353c-3df9-4190-9e2f-dd15c64c2fdf",
+          "order": 3,
+          "title": "早晨的声音",
+          "batchDigest": "sha256:7e80552437205e626a931c50f437f862634d22f35542ddb55fa8779d9205fe6e",
+          "scenes": 4,
+          "estimatedMinutes": 0.8
+        }
+      ],
+      "materials": {
+        "characters": [
+          "cat",
+          "shopkeeper"
+        ],
+        "backgrounds": [
+          "cafe"
+        ],
+        "props": []
+      },
+      "sourceAcks": [
+        {
+          "sourceId": "src_ae3d19ad-5399-4373-91a6-88c716c614f8",
+          "title": "样刊来源 · 走进咖啡馆",
+          "license": "own-work",
+          "licenseUrl": null,
+          "canonicalUrl": "https://local.edition/sample/cafe-1"
+        },
+        {
+          "sourceId": "src_ae3d19ad-5399-4373-91a6-88c716c614f8",
+          "title": "样刊来源 · 两枚硬币",
+          "license": "own-work",
+          "licenseUrl": null,
+          "canonicalUrl": "https://local.edition/sample/cafe-2"
+        },
+        {
+          "sourceId": "src_ae3d19ad-5399-4373-91a6-88c716c614f8",
+          "title": "样刊来源 · 早晨的声音",
+          "license": "own-work",
+          "licenseUrl": null,
+          "canonicalUrl": "https://local.edition/sample/cafe-3"
+        }
+      ],
+      "counts": {
+        "units": 3,
+        "scenes": 14,
+        "words": 132
+      },
+      "digest": "sha256:7083b1684528dca99c5464dbe68ba0fe834c849c38d5592821df66e40dcf8502"
+    },
+    "publishedAt": "2026-10-24T00:00:00.000Z",
+    "publishedBy": "owner",
+    "status": "published",
+    "supersedes": null,
+    "supersededBy": null,
+    "digest": "sha256:4c5313fdbd10ceb9febca9473095302c0e06e1368aba9cf08e7b83e801298e7f"
+  },
+  "pack": {
+    "id": "lpk_2699abc9-0070-48da-b8f1-3a0edbd634a2",
+    "revisionId": "sample-pack-1",
+    "cefr": "A2",
+    "frozenAt": "2026-10-24T00:00:00.000Z",
+    "baselineForms": [
+      "a",
+      "about",
+      "above",
+      "across",
+      "after",
+      "again",
+      "against",
+      "ah",
+      "all",
+      "all right",
+      "almost",
+      "along",
+      "already",
+      "also",
+      "although",
+      "always",
+      "am",
+      "among",
+      "an",
+      "and",
+      "another",
+      "answer",
+      "answered",
+      "answering",
+      "answers",
+      "any",
+      "anybody",
+      "anyone",
+      "anywhere",
+      "are",
+      "aren't",
+      "around",
+      "arrive",
+      "arrived",
+      "arrives",
+      "arriving",
+      "ask",
+      "asked",
+      "asking",
+      "asks",
+      "at",
+      "away",
+      "back",
+      "bad",
+      "bag",
+      "bags",
+      "be",
+      "be careful",
+      "because",
+      "been",
+      "before",
+      "began",
+      "begin",
+      "beginning",
+      "begins",
+      "behind",
+      "being",
+      "belong",
+      "belonged",
+      "belongs",
+      "beside",
+      "between",
+      "big",
+      "borrow",
+      "borrowed",
+      "borrowing",
+      "borrows",
+      "both",
+      "bought",
+      "box",
+      "boxes",
+      "but",
+      "buy",
+      "buying",
+      "buys",
+      "by",
+      "bye",
+      "came",
+      "can",
+      "can you",
+      "can't",
+      "cannot",
+      "careful",
+      "cheap",
+      "cheaper",
+      "cheapest",
+      "check",
+      "checked",
+      "checking",
+      "checks",
+      "choose",
+      "chooses",
+      "choosing",
+      "chose",
+      "clear",
+      "clearer",
+      "clearest",
+      "client",
+      "clients",
+      "clock",
+      "clocks",
+      "close",
+      "closed",
+      "closes",
+      "closing",
+      "clue",
+      "clues",
+      "coin",
+      "coins",
+      "cold",
+      "colder",
+      "coldest",
+      "come",
+      "comes",
+      "coming",
+      "cost",
+      "costs",
+      "could",
+      "could you",
+      "couldn't",
+      "counter",
+      "counters",
+      "courier",
+      "couriers",
+      "cup",
+      "cups",
+      "customer",
+      "customers",
+      "day",
+      "days",
+      "desk",
+      "desks",
+      "did",
+      "didn't",
+      "different",
+      "do",
+      "do you have",
+      "does",
+      "does he have",
+      "does she have",
+      "doesn't",
+      "doing",
+      "don't",
+      "down",
+      "during",
+      "each",
+      "early",
+      "either",
+      "else",
+      "emptier",
+      "emptiest",
+      "empty",
+      "enough",
+      "envelope",
+      "envelopes",
+      "ever",
+      "every",
+      "everybody",
+      "everyone",
+      "everything",
+      "everywhere",
+      "excuse me",
+      "expensive",
+      "far",
+      "fast",
+      "feel",
+      "feeling",
+      "feels",
+      "felt",
+      "few",
+      "file",
+      "files",
+      "find",
+      "finding",
+      "finds",
+      "first",
+      "five",
+      "floor",
+      "floors",
+      "for",
+      "found",
+      "four",
+      "friday",
+      "from",
+      "full",
+      "fuller",
+      "fullest",
+      "gave",
+      "gift",
+      "gifts",
+      "give",
+      "gives",
+      "giving",
+      "go",
+      "goes",
+      "going",
+      "good",
+      "goodbye",
+      "had",
+      "hadn't",
+      "happen",
+      "happened",
+      "happening",
+      "happens",
+      "has",
+      "hasn't",
+      "have",
+      "haven't",
+      "having",
+      "he",
+      "he'd",
+      "he'll",
+      "he's",
+      "heavier",
+      "heaviest",
+      "heavy",
+      "hello",
+      "help",
+      "helped",
+      "helps",
+      "her",
+      "here",
+      "here you are",
+      "here you go",
+      "here's",
+      "hey",
+      "hi",
+      "hid",
+      "hidden",
+      "hide",
+      "hides",
+      "hiding",
+      "him",
+      "his",
+      "hmm",
+      "hot",
+      "hotter",
+      "hottest",
+      "how",
+      "how many",
+      "how much",
+      "how's",
+      "however",
+      "i",
+      "i would like",
+      "i'd",
+      "i'd like",
+      "i'll",
+      "i'm",
+      "i've",
+      "if",
+      "important",
+      "impossible",
+      "in",
+      "in front of",
+      "inside",
+      "instead",
+      "into",
+      "is",
+      "isn't",
+      "it",
+      "it'll",
+      "it's",
+      "item",
+      "items",
+      "its",
+      "jar",
+      "jars",
+      "just",
+      "just a minute",
+      "just looking",
+      "keep",
+      "keeping",
+      "keeps",
+      "kept",
+      "key",
+      "keys",
+      "knew",
+      "know",
+      "knows",
+      "label",
+      "labels",
+      "last",
+      "late",
+      "lend",
+      "lending",
+      "lends",
+      "lent",
+      "let's",
+      "like",
+      "liked",
+      "likes",
+      "little",
+      "locked",
+      "long",
+      "look",
+      "look for",
+      "look out",
+      "looked",
+      "looked for",
+      "looking for",
+      "looks",
+      "looks for",
+      "lose",
+      "loses",
+      "losing",
+      "lost",
+      "lot",
+      "loud",
+      "louder",
+      "loudest",
+      "many",
+      "matter",
+      "mattered",
+      "matters",
+      "may",
+      "maybe",
+      "me",
+      "mice",
+      "might",
+      "mine",
+      "missing",
+      "monday",
+      "money",
+      "more",
+      "more expensive",
+      "morning",
+      "most",
+      "most expensive",
+      "mouse",
+      "move",
+      "moved",
+      "moves",
+      "moving",
+      "much",
+      "must",
+      "mustn't",
+      "my",
+      "myself",
+      "near",
+      "need",
+      "needed",
+      "needs",
+      "neither",
+      "never",
+      "never mind",
+      "new",
+      "next",
+      "next to",
+      "night",
+      "no",
+      "no problem",
+      "nobody",
+      "not",
+      "not yet",
+      "note",
+      "notebook",
+      "notebooks",
+      "notes",
+      "nothing",
+      "now",
+      "object",
+      "objects",
+      "of",
+      "of course",
+      "off",
+      "office",
+      "offices",
+      "often",
+      "oh",
+      "ok",
+      "okay",
+      "old",
+      "on",
+      "on the shelf",
+      "once",
+      "one",
+      "only",
+      "onto",
+      "open",
+      "opened",
+      "opening",
+      "opens",
+      "or",
+      "ordinary",
+      "other",
+      "our",
+      "out",
+      "outside",
+      "over",
+      "over there",
+      "own",
+      "paid",
+      "parcel",
+      "parcels",
+      "past",
+      "pay",
+      "paying",
+      "pays",
+      "perhaps",
+      "photo",
+      "photos",
+      "place",
+      "places",
+      "please",
+      "point",
+      "pointed",
+      "pointing",
+      "points",
+      "polite",
+      "possible",
+      "price",
+      "prices",
+      "put",
+      "puts",
+      "putting",
+      "quiet",
+      "quieter",
+      "quietest",
+      "quite",
+      "read",
+      "reading",
+      "reads",
+      "ready",
+      "really",
+      "right",
+      "right away",
+      "room",
+      "rooms",
+      "said",
+      "same",
+      "sat",
+      "saturday",
+      "saw",
+      "say",
+      "says",
+      "see",
+      "seen",
+      "sees",
+      "sell",
+      "selling",
+      "sells",
+      "serious",
+      "shall",
+      "she",
+      "she'd",
+      "she'll",
+      "she's",
+      "shop",
+      "shops",
+      "short",
+      "should",
+      "shouldn't",
+      "show",
+      "showed",
+      "showing",
+      "shows",
+      "simple",
+      "simpler",
+      "simplest",
+      "since",
+      "sit",
+      "sits",
+      "small",
+      "smile",
+      "smiled",
+      "smiles",
+      "smiling",
+      "so",
+      "sold",
+      "some",
+      "somebody",
+      "someone",
+      "something",
+      "sometimes",
+      "somewhere",
+      "soon",
+      "sorry",
+      "sound",
+      "sounded",
+      "sounds",
+      "start",
+      "started",
+      "starting",
+      "starts",
+      "steal",
+      "stealing",
+      "steals",
+      "still",
+      "stole",
+      "store",
+      "stores",
+      "strange",
+      "stranger",
+      "strangest",
+      "such",
+      "sunday",
+      "take",
+      "takes",
+      "taking",
+      "than",
+      "thank you",
+      "thanks",
+      "that",
+      "that is",
+      "that's",
+      "the",
+      "their",
+      "them",
+      "then",
+      "there",
+      "there are",
+      "there is",
+      "there was",
+      "there were",
+      "there's",
+      "these",
+      "they",
+      "they'd",
+      "they'll",
+      "they're",
+      "they've",
+      "thing",
+      "things",
+      "think",
+      "thinks",
+      "this",
+      "this is",
+      "those",
+      "though",
+      "thought",
+      "three",
+      "through",
+      "thursday",
+      "tinier",
+      "tiniest",
+      "tiny",
+      "tired",
+      "to",
+      "today",
+      "together",
+      "tomorrow",
+      "tonight",
+      "too",
+      "took",
+      "toward",
+      "towards",
+      "tried",
+      "tries",
+      "try",
+      "trying",
+      "tuesday",
+      "twice",
+      "two",
+      "under",
+      "unless",
+      "until",
+      "up",
+      "us",
+      "useful",
+      "usually",
+      "very",
+      "wait",
+      "wait a minute",
+      "waited",
+      "waiting",
+      "waits",
+      "wall",
+      "walls",
+      "want",
+      "wanted",
+      "wants",
+      "warm",
+      "warmer",
+      "warmest",
+      "was",
+      "wasn't",
+      "we",
+      "we'd",
+      "we'll",
+      "we're",
+      "we've",
+      "wednesday",
+      "week",
+      "well",
+      "went",
+      "were",
+      "weren't",
+      "what",
+      "what time",
+      "what's",
+      "when",
+      "where",
+      "where are",
+      "where is",
+      "where was",
+      "where were",
+      "where's",
+      "whether",
+      "which",
+      "while",
+      "who",
+      "who's",
+      "whom",
+      "whose",
+      "why",
+      "will",
+      "window",
+      "windows",
+      "with",
+      "without",
+      "won't",
+      "would",
+      "wouldn't",
+      "wrong",
+      "yes",
+      "yesterday",
+      "yet",
+      "you",
+      "you'd",
+      "you'll",
+      "you're",
+      "you've",
+      "your",
+      "yours",
+      "yourself"
+    ],
+    "functionWords": [
+      "a",
+      "about",
+      "across",
+      "after",
+      "again",
+      "against",
+      "ah",
+      "all",
+      "almost",
+      "along",
+      "already",
+      "also",
+      "although",
+      "always",
+      "am",
+      "among",
+      "an",
+      "and",
+      "another",
+      "any",
+      "anybody",
+      "anyone",
+      "anywhere",
+      "are",
+      "aren't",
+      "around",
+      "at",
+      "away",
+      "back",
+      "bad",
+      "be",
+      "because",
+      "been",
+      "before",
+      "being",
+      "beside",
+      "big",
+      "both",
+      "but",
+      "by",
+      "bye",
+      "came",
+      "can",
+      "can't",
+      "cannot",
+      "come",
+      "comes",
+      "coming",
+      "could",
+      "couldn't",
+      "day",
+      "days",
+      "did",
+      "didn't",
+      "different",
+      "do",
+      "does",
+      "doesn't",
+      "doing",
+      "don't",
+      "down",
+      "during",
+      "each",
+      "early",
+      "either",
+      "else",
+      "enough",
+      "ever",
+      "every",
+      "everybody",
+      "everyone",
+      "everything",
+      "everywhere",
+      "far",
+      "fast",
+      "few",
+      "first",
+      "five",
+      "for",
+      "four",
+      "friday",
+      "from",
+      "go",
+      "goes",
+      "going",
+      "good",
+      "goodbye",
+      "had",
+      "hadn't",
+      "has",
+      "hasn't",
+      "have",
+      "haven't",
+      "having",
+      "he",
+      "he'd",
+      "he'll",
+      "he's",
+      "hello",
+      "help",
+      "helped",
+      "helps",
+      "her",
+      "here",
+      "here's",
+      "hey",
+      "hi",
+      "him",
+      "his",
+      "hmm",
+      "how",
+      "how's",
+      "however",
+      "i",
+      "i'd",
+      "i'll",
+      "i'm",
+      "i've",
+      "if",
+      "in",
+      "inside",
+      "instead",
+      "into",
+      "is",
+      "isn't",
+      "it",
+      "it'll",
+      "it's",
+      "its",
+      "just",
+      "knew",
+      "know",
+      "knows",
+      "last",
+      "late",
+      "let's",
+      "like",
+      "liked",
+      "likes",
+      "little",
+      "long",
+      "look",
+      "looked",
+      "looks",
+      "lot",
+      "many",
+      "may",
+      "maybe",
+      "me",
+      "might",
+      "mine",
+      "monday",
+      "more",
+      "morning",
+      "most",
+      "much",
+      "must",
+      "mustn't",
+      "my",
+      "myself",
+      "need",
+      "needed",
+      "needs",
+      "neither",
+      "never",
+      "new",
+      "next",
+      "night",
+      "no",
+      "nobody",
+      "not",
+      "nothing",
+      "now",
+      "of",
+      "off",
+      "often",
+      "oh",
+      "ok",
+      "okay",
+      "old",
+      "on",
+      "once",
+      "one",
+      "only",
+      "onto",
+      "or",
+      "other",
+      "our",
+      "out",
+      "outside",
+      "over",
+      "own",
+      "past",
+      "perhaps",
+      "please",
+      "quite",
+      "really",
+      "said",
+      "same",
+      "sat",
+      "saturday",
+      "saw",
+      "say",
+      "says",
+      "see",
+      "seen",
+      "sees",
+      "shall",
+      "she",
+      "she'd",
+      "she'll",
+      "she's",
+      "short",
+      "should",
+      "shouldn't",
+      "since",
+      "sit",
+      "sits",
+      "small",
+      "so",
+      "some",
+      "somebody",
+      "someone",
+      "something",
+      "sometimes",
+      "somewhere",
+      "soon",
+      "sorry",
+      "still",
+      "such",
+      "sunday",
+      "than",
+      "thanks",
+      "that",
+      "that's",
+      "the",
+      "their",
+      "them",
+      "then",
+      "there",
+      "there's",
+      "these",
+      "they",
+      "they'd",
+      "they'll",
+      "they're",
+      "they've",
+      "thing",
+      "things",
+      "think",
+      "thinks",
+      "this",
+      "those",
+      "though",
+      "thought",
+      "three",
+      "through",
+      "thursday",
+      "to",
+      "today",
+      "together",
+      "tomorrow",
+      "tonight",
+      "too",
+      "toward",
+      "towards",
+      "tuesday",
+      "twice",
+      "two",
+      "unless",
+      "until",
+      "up",
+      "us",
+      "usually",
+      "very",
+      "want",
+      "wanted",
+      "wants",
+      "was",
+      "wasn't",
+      "we",
+      "we'd",
+      "we'll",
+      "we're",
+      "we've",
+      "wednesday",
+      "week",
+      "well",
+      "went",
+      "were",
+      "weren't",
+      "what",
+      "what's",
+      "when",
+      "where",
+      "where's",
+      "whether",
+      "which",
+      "while",
+      "who",
+      "who's",
+      "whom",
+      "whose",
+      "why",
+      "will",
+      "with",
+      "without",
+      "won't",
+      "would",
+      "wouldn't",
+      "yes",
+      "yesterday",
+      "yet",
+      "you",
+      "you'd",
+      "you'll",
+      "you're",
+      "you've",
+      "your",
+      "yours",
+      "yourself"
+    ],
+    "entries": [
+      {
+        "item": "ck:all-right",
+        "kind": "chunk",
+        "forms": [
+          "all right"
+        ],
+        "glossZh": "好吧",
+        "example": "All right",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:all-right"
+      },
+      {
+        "item": "ck:be-careful",
+        "kind": "chunk",
+        "forms": [
+          "be careful"
+        ],
+        "glossZh": "小心",
+        "example": "Be careful with the jar.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:be-careful"
+      },
+      {
+        "item": "ck:can-you",
+        "kind": "chunk",
+        "forms": [
+          "can you",
+          "could you"
+        ],
+        "glossZh": "你能…吗（请求）",
+        "example": "Can you help me?",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:can-you"
+      },
+      {
+        "item": "ck:do-you-have",
+        "kind": "chunk",
+        "forms": [
+          "do you have",
+          "does she have",
+          "does he have"
+        ],
+        "glossZh": "你有…吗",
+        "example": "Do you have a bigger hat?",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:do-you-have"
+      },
+      {
+        "item": "ck:excuse-me",
+        "kind": "chunk",
+        "forms": [
+          "excuse me"
+        ],
+        "glossZh": "打扰一下",
+        "example": "Excuse me",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:excuse-me"
+      },
+      {
+        "item": "ck:here-you-are",
+        "kind": "chunk",
+        "forms": [
+          "here you are",
+          "here you go"
+        ],
+        "glossZh": "给你",
+        "example": "Here you are. One hat.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:here-you-are"
+      },
+      {
+        "item": "ck:how-much",
+        "kind": "chunk",
+        "forms": [
+          "how much",
+          "how many"
+        ],
+        "glossZh": "多少（钱/数量）",
+        "example": "How much is this hat?",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:how-much"
+      },
+      {
+        "item": "ck:i-would-like",
+        "kind": "chunk",
+        "forms": [
+          "i'd like",
+          "i would like"
+        ],
+        "glossZh": "我想要",
+        "example": "I'd like a new hat",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:i-would-like"
+      },
+      {
+        "item": "ck:just-looking",
+        "kind": "chunk",
+        "forms": [
+          "just looking"
+        ],
+        "glossZh": "只是看看（购物）",
+        "example": null,
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 4,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:just-looking"
+      },
+      {
+        "item": "ck:look-out",
+        "kind": "chunk",
+        "forms": [
+          "look out"
+        ],
+        "glossZh": "当心",
+        "example": "Look out! The box is heavy.",
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:look-out"
+      },
+      {
+        "item": "ck:never-mind",
+        "kind": "chunk",
+        "forms": [
+          "never mind"
+        ],
+        "glossZh": "算了",
+        "example": "Never mind",
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:never-mind"
+      },
+      {
+        "item": "ck:no-problem",
+        "kind": "chunk",
+        "forms": [
+          "no problem"
+        ],
+        "glossZh": "没问题",
+        "example": "No problem at all.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:no-problem"
+      },
+      {
+        "item": "ck:not-yet",
+        "kind": "chunk",
+        "forms": [
+          "not yet"
+        ],
+        "glossZh": "还没有",
+        "example": "The case is not closed. Not yet.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:not-yet"
+      },
+      {
+        "item": "ck:of-course",
+        "kind": "chunk",
+        "forms": [
+          "of course"
+        ],
+        "glossZh": "当然",
+        "example": "Of course I can.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:of-course"
+      },
+      {
+        "item": "ck:on-the-shelf",
+        "kind": "chunk",
+        "forms": [
+          "on the shelf"
+        ],
+        "glossZh": "在架子上",
+        "example": "The jar is on the shelf.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:on-the-shelf"
+      },
+      {
+        "item": "ck:over-there",
+        "kind": "chunk",
+        "forms": [
+          "over there"
+        ],
+        "glossZh": "在那边",
+        "example": "The moon is over there.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:over-there"
+      },
+      {
+        "item": "ck:right-away",
+        "kind": "chunk",
+        "forms": [
+          "right away"
+        ],
+        "glossZh": "立刻",
+        "example": "I can help right away.",
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 4,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:right-away"
+      },
+      {
+        "item": "ck:thank-you",
+        "kind": "chunk",
+        "forms": [
+          "thank you",
+          "thanks"
+        ],
+        "glossZh": "谢谢",
+        "example": "Thank you very much.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:thank-you"
+      },
+      {
+        "item": "ck:this-is",
+        "kind": "chunk",
+        "forms": [
+          "this is",
+          "that is",
+          "that's"
+        ],
+        "glossZh": "这是/那是",
+        "example": "This is the missing key.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:this-is"
+      },
+      {
+        "item": "ck:wait-a-minute",
+        "kind": "chunk",
+        "forms": [
+          "wait a minute",
+          "just a minute"
+        ],
+        "glossZh": "等一下",
+        "example": "Wait a minute. The hat is gone.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:wait-a-minute"
+      },
+      {
+        "item": "ck:what-time",
+        "kind": "chunk",
+        "forms": [
+          "what time"
+        ],
+        "glossZh": "几点",
+        "example": "What time does the shop close?",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:what-time"
+      },
+      {
+        "item": "ck:where-is",
+        "kind": "chunk",
+        "forms": [
+          "where is",
+          "where's",
+          "where are",
+          "where was",
+          "where were"
+        ],
+        "glossZh": "…在哪里",
+        "example": "Where is my hat?",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:ck:where-is"
+      },
+      {
+        "item": "lx:above#prep.location",
+        "kind": "sense",
+        "forms": [
+          "above"
+        ],
+        "glossZh": "在…上方",
+        "example": "The moon is above the roof.",
+        "cefr": "A2",
+        "pos": "prep",
+        "freqBand": 4,
+        "confusables": [
+          "lx:under#prep.location"
+        ],
+        "sourceRef": "lexicon:lx:above#prep.location"
+      },
+      {
+        "item": "lx:answer#v.reply",
+        "kind": "sense",
+        "forms": [
+          "answer",
+          "answers",
+          "answered",
+          "answering"
+        ],
+        "glossZh": "回答",
+        "example": "The cat answers the question.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:ask#v.question"
+        ],
+        "sourceRef": "lexicon:lx:answer#v.reply"
+      },
+      {
+        "item": "lx:arrive#v.reach",
+        "kind": "sense",
+        "forms": [
+          "arrive",
+          "arrives",
+          "arrived",
+          "arriving"
+        ],
+        "glossZh": "到达",
+        "example": "The courier arrives at six.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:arrive#v.reach"
+      },
+      {
+        "item": "lx:ask#v.question",
+        "kind": "sense",
+        "forms": [
+          "ask",
+          "asks",
+          "asked",
+          "asking"
+        ],
+        "glossZh": "问",
+        "example": "Ask the duck a question.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:answer#v.reply"
+        ],
+        "sourceRef": "lexicon:lx:ask#v.question"
+      },
+      {
+        "item": "lx:bag#n.container",
+        "kind": "sense",
+        "forms": [
+          "bag",
+          "bags"
+        ],
+        "glossZh": "袋子",
+        "example": "The cat has a small bag.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [
+          "lx:box#n.container"
+        ],
+        "sourceRef": "lexicon:lx:bag#n.container"
+      },
+      {
+        "item": "lx:begin#v.start",
+        "kind": "sense",
+        "forms": [
+          "begin",
+          "begins",
+          "began",
+          "beginning"
+        ],
+        "glossZh": "开始",
+        "example": "The story begins at the shop.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [
+          "lx:start#v.begin"
+        ],
+        "sourceRef": "lexicon:lx:begin#v.start"
+      },
+      {
+        "item": "lx:behind#prep.location",
+        "kind": "sense",
+        "forms": [
+          "behind"
+        ],
+        "glossZh": "在…后面",
+        "example": "The cat was behind the door.",
+        "cefr": "A1",
+        "pos": "prep",
+        "freqBand": 2,
+        "confusables": [
+          "lx:under#prep.location",
+          "lx:in-front-of#prep.location"
+        ],
+        "sourceRef": "lexicon:lx:behind#prep.location"
+      },
+      {
+        "item": "lx:belong#v.ownership",
+        "kind": "sense",
+        "forms": [
+          "belong",
+          "belongs",
+          "belonged"
+        ],
+        "glossZh": "属于",
+        "example": "This hat belongs to the moon.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 4,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:belong#v.ownership"
+      },
+      {
+        "item": "lx:between#prep.location",
+        "kind": "sense",
+        "forms": [
+          "between"
+        ],
+        "glossZh": "在…之间",
+        "example": "The box is between the lamp and the shelf.",
+        "cefr": "A2",
+        "pos": "prep",
+        "freqBand": 3,
+        "confusables": [
+          "lx:next-to#prep.location"
+        ],
+        "sourceRef": "lexicon:lx:between#prep.location"
+      },
+      {
+        "item": "lx:borrow#v.take-temporarily",
+        "kind": "sense",
+        "forms": [
+          "borrow",
+          "borrows",
+          "borrowed",
+          "borrowing"
+        ],
+        "glossZh": "借入",
+        "example": "May I borrow your umbrella?",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 3,
+        "confusables": [
+          "lx:lend#v.give-temporarily",
+          "lx:steal#v.take-secretly"
+        ],
+        "sourceRef": "lexicon:lx:borrow#v.take-temporarily"
+      },
+      {
+        "item": "lx:box#n.container",
+        "kind": "sense",
+        "forms": [
+          "box",
+          "boxes"
+        ],
+        "glossZh": "盒子",
+        "example": "Put it in the box.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [
+          "lx:bag#n.container"
+        ],
+        "sourceRef": "lexicon:lx:box#n.container"
+      },
+      {
+        "item": "lx:buy#v.purchase",
+        "kind": "sense",
+        "forms": [
+          "buy",
+          "buys",
+          "bought",
+          "buying"
+        ],
+        "glossZh": "购买",
+        "example": "The moon buys a new hat.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:sell#v.exchange"
+        ],
+        "sourceRef": "lexicon:lx:buy#v.purchase"
+      },
+      {
+        "item": "lx:careful#adj.cautious",
+        "kind": "sense",
+        "forms": [
+          "careful"
+        ],
+        "glossZh": "小心的",
+        "example": "Be careful with the jar.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:careful#adj.cautious"
+      },
+      {
+        "item": "lx:cheap#adj.inexpensive",
+        "kind": "sense",
+        "forms": [
+          "cheap",
+          "cheaper",
+          "cheapest"
+        ],
+        "glossZh": "便宜的",
+        "example": "Two coins? Very cheap.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:expensive#adj.costly"
+        ],
+        "sourceRef": "lexicon:lx:cheap#adj.inexpensive"
+      },
+      {
+        "item": "lx:check#v.verify",
+        "kind": "sense",
+        "forms": [
+          "check",
+          "checks",
+          "checked",
+          "checking"
+        ],
+        "glossZh": "检查",
+        "example": "Check the label on the parcel.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [
+          "lx:look-for#v.search"
+        ],
+        "sourceRef": "lexicon:lx:check#v.verify"
+      },
+      {
+        "item": "lx:choose#v.select",
+        "kind": "sense",
+        "forms": [
+          "choose",
+          "chooses",
+          "chose",
+          "choosing"
+        ],
+        "glossZh": "选择",
+        "example": "Choose one gift.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:choose#v.select"
+      },
+      {
+        "item": "lx:clear#adj.easy-to-see",
+        "kind": "sense",
+        "forms": [
+          "clear",
+          "clearer",
+          "clearest"
+        ],
+        "glossZh": "清楚的",
+        "example": "The photo is clear.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:clear#adj.easy-to-see"
+      },
+      {
+        "item": "lx:client#n.customer",
+        "kind": "sense",
+        "forms": [
+          "client",
+          "clients"
+        ],
+        "glossZh": "委托人",
+        "example": "The client wants the key.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [
+          "lx:customer#n.buyer"
+        ],
+        "sourceRef": "lexicon:lx:client#n.customer"
+      },
+      {
+        "item": "lx:clock#n.timepiece",
+        "kind": "sense",
+        "forms": [
+          "clock",
+          "clocks"
+        ],
+        "glossZh": "时钟",
+        "example": "The clock is on the wall.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:clock#n.timepiece"
+      },
+      {
+        "item": "lx:close#v.shut",
+        "kind": "sense",
+        "forms": [
+          "close",
+          "closes",
+          "closed",
+          "closing"
+        ],
+        "glossZh": "关闭",
+        "example": "The shop closes at nine.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:open#v.unlock"
+        ],
+        "sourceRef": "lexicon:lx:close#v.shut"
+      },
+      {
+        "item": "lx:clue#n.evidence",
+        "kind": "sense",
+        "forms": [
+          "clue",
+          "clues"
+        ],
+        "glossZh": "线索",
+        "example": "The duck found one clue.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:clue#n.evidence"
+      },
+      {
+        "item": "lx:coin#n.money-piece",
+        "kind": "sense",
+        "forms": [
+          "coin",
+          "coins"
+        ],
+        "glossZh": "硬币",
+        "example": "One coin is not enough.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 3,
+        "confusables": [
+          "lx:money#n.currency"
+        ],
+        "sourceRef": "lexicon:lx:coin#n.money-piece"
+      },
+      {
+        "item": "lx:cold#adj.temperature",
+        "kind": "sense",
+        "forms": [
+          "cold",
+          "colder",
+          "coldest"
+        ],
+        "glossZh": "冷的",
+        "example": "The tea is cold.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [
+          "lx:hot#adj.temperature"
+        ],
+        "sourceRef": "lexicon:lx:cold#adj.temperature"
+      },
+      {
+        "item": "lx:cost#v.price",
+        "kind": "sense",
+        "forms": [
+          "cost",
+          "costs"
+        ],
+        "glossZh": "花费",
+        "example": "The cup costs two coins.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 3,
+        "confusables": [
+          "lx:pay#v.give-money"
+        ],
+        "sourceRef": "lexicon:lx:cost#v.price"
+      },
+      {
+        "item": "lx:counter#n.shop-surface",
+        "kind": "sense",
+        "forms": [
+          "counter",
+          "counters"
+        ],
+        "glossZh": "柜台",
+        "example": "Put the parcel on the counter.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [
+          "lx:desk#n.work-table"
+        ],
+        "sourceRef": "lexicon:lx:counter#n.shop-surface"
+      },
+      {
+        "item": "lx:courier#n.deliverer",
+        "kind": "sense",
+        "forms": [
+          "courier",
+          "couriers"
+        ],
+        "glossZh": "快递员",
+        "example": "The courier has a parcel.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:courier#n.deliverer"
+      },
+      {
+        "item": "lx:cup#n.drink-vessel",
+        "kind": "sense",
+        "forms": [
+          "cup",
+          "cups"
+        ],
+        "glossZh": "杯子",
+        "example": "The tea is in the cup.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:cup#n.drink-vessel"
+      },
+      {
+        "item": "lx:customer#n.buyer",
+        "kind": "sense",
+        "forms": [
+          "customer",
+          "customers"
+        ],
+        "glossZh": "顾客",
+        "example": "A new customer is here.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 3,
+        "confusables": [
+          "lx:client#n.customer"
+        ],
+        "sourceRef": "lexicon:lx:customer#n.buyer"
+      },
+      {
+        "item": "lx:desk#n.work-table",
+        "kind": "sense",
+        "forms": [
+          "desk",
+          "desks"
+        ],
+        "glossZh": "书桌",
+        "example": "The key is on the desk.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 3,
+        "confusables": [
+          "lx:counter#n.shop-surface"
+        ],
+        "sourceRef": "lexicon:lx:desk#n.work-table"
+      },
+      {
+        "item": "lx:empty#adj.vacant",
+        "kind": "sense",
+        "forms": [
+          "empty",
+          "emptier",
+          "emptiest"
+        ],
+        "glossZh": "空的",
+        "example": "The shelf is empty.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:full#adj.complete"
+        ],
+        "sourceRef": "lexicon:lx:empty#adj.vacant"
+      },
+      {
+        "item": "lx:envelope#n.cover",
+        "kind": "sense",
+        "forms": [
+          "envelope",
+          "envelopes"
+        ],
+        "glossZh": "信封",
+        "example": "The note is in the envelope.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:envelope#n.cover"
+      },
+      {
+        "item": "lx:expensive#adj.costly",
+        "kind": "sense",
+        "forms": [
+          "expensive",
+          "more expensive",
+          "most expensive"
+        ],
+        "glossZh": "昂贵的",
+        "example": "That hat is expensive.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:cheap#adj.inexpensive"
+        ],
+        "sourceRef": "lexicon:lx:expensive#adj.costly"
+      },
+      {
+        "item": "lx:feel#v.sensation",
+        "kind": "sense",
+        "forms": [
+          "feel",
+          "feels",
+          "felt",
+          "feeling"
+        ],
+        "glossZh": "感觉",
+        "example": "I feel tired now.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:feel#v.sensation"
+      },
+      {
+        "item": "lx:file#n.document",
+        "kind": "sense",
+        "forms": [
+          "file",
+          "files"
+        ],
+        "glossZh": "档案",
+        "example": "The file is in the office.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:file#n.document"
+      },
+      {
+        "item": "lx:find#v.discover",
+        "kind": "sense",
+        "forms": [
+          "find",
+          "finds",
+          "found",
+          "finding"
+        ],
+        "glossZh": "找到",
+        "example": "Can you find the hat?",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:look-for#v.search"
+        ],
+        "sourceRef": "lexicon:lx:find#v.discover"
+      },
+      {
+        "item": "lx:floor#n.surface",
+        "kind": "sense",
+        "forms": [
+          "floor",
+          "floors"
+        ],
+        "glossZh": "地板",
+        "example": "The sock is on the floor.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:floor#n.surface"
+      },
+      {
+        "item": "lx:full#adj.complete",
+        "kind": "sense",
+        "forms": [
+          "full",
+          "fuller",
+          "fullest"
+        ],
+        "glossZh": "满的",
+        "example": "The box is full of socks.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:empty#adj.vacant"
+        ],
+        "sourceRef": "lexicon:lx:full#adj.complete"
+      },
+      {
+        "item": "lx:gift#n.present",
+        "kind": "sense",
+        "forms": [
+          "gift",
+          "gifts"
+        ],
+        "glossZh": "礼物",
+        "example": "This gift is for the moon.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:gift#n.present"
+      },
+      {
+        "item": "lx:give#v.transfer",
+        "kind": "sense",
+        "forms": [
+          "give",
+          "gives",
+          "gave",
+          "giving"
+        ],
+        "glossZh": "给",
+        "example": "Give me the key.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:take#v.carry"
+        ],
+        "sourceRef": "lexicon:lx:give#v.transfer"
+      },
+      {
+        "item": "lx:happen#v.occur",
+        "kind": "sense",
+        "forms": [
+          "happen",
+          "happens",
+          "happened",
+          "happening"
+        ],
+        "glossZh": "发生",
+        "example": "Strange things happen here.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:happen#v.occur"
+      },
+      {
+        "item": "lx:heavy#adj.weight",
+        "kind": "sense",
+        "forms": [
+          "heavy",
+          "heavier",
+          "heaviest"
+        ],
+        "glossZh": "重的",
+        "example": "The box is heavy.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:heavy#adj.weight"
+      },
+      {
+        "item": "lx:hidden#adj.concealed",
+        "kind": "sense",
+        "forms": [
+          "hidden"
+        ],
+        "glossZh": "隐藏的",
+        "example": "The key is hidden in the box.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:hide#v.conceal"
+        ],
+        "sourceRef": "lexicon:lx:hidden#adj.concealed"
+      },
+      {
+        "item": "lx:hide#v.conceal",
+        "kind": "sense",
+        "forms": [
+          "hide",
+          "hides",
+          "hid",
+          "hiding"
+        ],
+        "glossZh": "藏",
+        "example": "The moon hides the hat.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [
+          "lx:find#v.discover"
+        ],
+        "sourceRef": "lexicon:lx:hide#v.conceal"
+      },
+      {
+        "item": "lx:hot#adj.temperature",
+        "kind": "sense",
+        "forms": [
+          "hot",
+          "hotter",
+          "hottest"
+        ],
+        "glossZh": "热的",
+        "example": "The coffee is hot.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [
+          "lx:cold#adj.temperature"
+        ],
+        "sourceRef": "lexicon:lx:hot#adj.temperature"
+      },
+      {
+        "item": "lx:important#adj.significant",
+        "kind": "sense",
+        "forms": [
+          "important"
+        ],
+        "glossZh": "重要的",
+        "example": "This clue is important.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 1,
+        "confusables": [
+          "lx:matter#v.be-important"
+        ],
+        "sourceRef": "lexicon:lx:important#adj.significant"
+      },
+      {
+        "item": "lx:impossible#adj.not-possible",
+        "kind": "sense",
+        "forms": [
+          "impossible"
+        ],
+        "glossZh": "不可能的",
+        "example": "Nothing is impossible here.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:possible#adj.possible"
+        ],
+        "sourceRef": "lexicon:lx:impossible#adj.not-possible"
+      },
+      {
+        "item": "lx:in-front-of#prep.location",
+        "kind": "sense",
+        "forms": [
+          "in front of"
+        ],
+        "glossZh": "在…前面",
+        "example": "A duck sits in front of the agency.",
+        "cefr": "A1",
+        "pos": "prep",
+        "freqBand": 3,
+        "confusables": [
+          "lx:behind#prep.location",
+          "lx:behind#prep.location"
+        ],
+        "sourceRef": "lexicon:lx:in-front-of#prep.location"
+      },
+      {
+        "item": "lx:item#n.thing",
+        "kind": "sense",
+        "forms": [
+          "item",
+          "items"
+        ],
+        "glossZh": "物品",
+        "example": "Every item has a label.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [
+          "lx:object#n.thing"
+        ],
+        "sourceRef": "lexicon:lx:item#n.thing"
+      },
+      {
+        "item": "lx:jar#n.container",
+        "kind": "sense",
+        "forms": [
+          "jar",
+          "jars"
+        ],
+        "glossZh": "罐子",
+        "example": "The jar is on the shelf.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 3,
+        "confusables": [
+          "lx:box#n.container"
+        ],
+        "sourceRef": "lexicon:lx:jar#n.container"
+      },
+      {
+        "item": "lx:keep#v.retain",
+        "kind": "sense",
+        "forms": [
+          "keep",
+          "keeps",
+          "kept",
+          "keeping"
+        ],
+        "glossZh": "保管",
+        "example": "Keep the key in your bag.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:keep#v.retain"
+      },
+      {
+        "item": "lx:key#n.opener",
+        "kind": "sense",
+        "forms": [
+          "key",
+          "keys"
+        ],
+        "glossZh": "钥匙",
+        "example": "The key opens the door.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:key#n.opener"
+      },
+      {
+        "item": "lx:label#n.sticker",
+        "kind": "sense",
+        "forms": [
+          "label",
+          "labels"
+        ],
+        "glossZh": "标签",
+        "example": "There is a label on the jar.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [
+          "lx:note#n.message"
+        ],
+        "sourceRef": "lexicon:lx:label#n.sticker"
+      },
+      {
+        "item": "lx:lend#v.give-temporarily",
+        "kind": "sense",
+        "forms": [
+          "lend",
+          "lends",
+          "lent",
+          "lending"
+        ],
+        "glossZh": "借出",
+        "example": "The shop lends umbrellas for free.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 4,
+        "confusables": [
+          "lx:borrow#v.take-temporarily"
+        ],
+        "sourceRef": "lexicon:lx:lend#v.give-temporarily"
+      },
+      {
+        "item": "lx:locked#adj.secured",
+        "kind": "sense",
+        "forms": [
+          "locked"
+        ],
+        "glossZh": "锁着的",
+        "example": "The shop is locked.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:close#v.shut"
+        ],
+        "sourceRef": "lexicon:lx:locked#adj.secured"
+      },
+      {
+        "item": "lx:look-for#v.search",
+        "kind": "sense",
+        "forms": [
+          "look for",
+          "looks for",
+          "looked for",
+          "looking for"
+        ],
+        "glossZh": "寻找",
+        "example": "The duck is looking for a clue.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [
+          "lx:find#v.discover"
+        ],
+        "sourceRef": "lexicon:lx:look-for#v.search"
+      },
+      {
+        "item": "lx:lose#v.misplace",
+        "kind": "sense",
+        "forms": [
+          "lose",
+          "loses",
+          "lost",
+          "losing"
+        ],
+        "glossZh": "丢失",
+        "example": "The moon lost her hat.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:lose#v.misplace"
+      },
+      {
+        "item": "lx:loud#adj.noisy",
+        "kind": "sense",
+        "forms": [
+          "loud",
+          "louder",
+          "loudest"
+        ],
+        "glossZh": "响亮的",
+        "example": "The clock is very loud.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [
+          "lx:quiet#adj.silent"
+        ],
+        "sourceRef": "lexicon:lx:loud#adj.noisy"
+      },
+      {
+        "item": "lx:matter#v.be-important",
+        "kind": "sense",
+        "forms": [
+          "matter",
+          "matters",
+          "mattered"
+        ],
+        "glossZh": "要紧",
+        "example": "It does not matter.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 5,
+        "confusables": [
+          "lx:important#adj.significant"
+        ],
+        "sourceRef": "lexicon:lx:matter#v.be-important"
+      },
+      {
+        "item": "lx:missing#adj.absent",
+        "kind": "sense",
+        "forms": [
+          "missing"
+        ],
+        "glossZh": "不见的",
+        "example": "The hat is missing.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [
+          "lx:lose#v.misplace"
+        ],
+        "sourceRef": "lexicon:lx:missing#adj.absent"
+      },
+      {
+        "item": "lx:money#n.currency",
+        "kind": "sense",
+        "forms": [
+          "money"
+        ],
+        "glossZh": "钱",
+        "example": "The duck has no money.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:money#n.currency"
+      },
+      {
+        "item": "lx:mouse#n.rodent",
+        "kind": "sense",
+        "forms": [
+          "mouse",
+          "mice"
+        ],
+        "glossZh": "老鼠",
+        "example": "A mouse is in the box.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:mouse#n.rodent"
+      },
+      {
+        "item": "lx:move#v.change-place",
+        "kind": "sense",
+        "forms": [
+          "move",
+          "moves",
+          "moved",
+          "moving"
+        ],
+        "glossZh": "移动",
+        "example": "Move the box to the wall.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:move#v.change-place"
+      },
+      {
+        "item": "lx:near#prep.location",
+        "kind": "sense",
+        "forms": [
+          "near"
+        ],
+        "glossZh": "在…附近",
+        "example": "The key is near the door.",
+        "cefr": "A1",
+        "pos": "prep",
+        "freqBand": 3,
+        "confusables": [
+          "lx:next-to#prep.location"
+        ],
+        "sourceRef": "lexicon:lx:near#prep.location"
+      },
+      {
+        "item": "lx:next-to#prep.location",
+        "kind": "sense",
+        "forms": [
+          "next to"
+        ],
+        "glossZh": "在…旁边",
+        "example": "The sock is next to the sofa.",
+        "cefr": "A1",
+        "pos": "prep",
+        "freqBand": 3,
+        "confusables": [
+          "lx:between#prep.location",
+          "lx:near#prep.location"
+        ],
+        "sourceRef": "lexicon:lx:next-to#prep.location"
+      },
+      {
+        "item": "lx:note#n.message",
+        "kind": "sense",
+        "forms": [
+          "note",
+          "notes"
+        ],
+        "glossZh": "便条",
+        "example": "The duck wrote a note.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 3,
+        "confusables": [
+          "lx:label#n.sticker"
+        ],
+        "sourceRef": "lexicon:lx:note#n.message"
+      },
+      {
+        "item": "lx:notebook#n.notepad",
+        "kind": "sense",
+        "forms": [
+          "notebook",
+          "notebooks"
+        ],
+        "glossZh": "笔记本",
+        "example": "The duck has a small notebook.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:notebook#n.notepad"
+      },
+      {
+        "item": "lx:object#n.thing",
+        "kind": "sense",
+        "forms": [
+          "object",
+          "objects"
+        ],
+        "glossZh": "物体",
+        "example": "The strange object is a gift.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [
+          "lx:item#n.thing"
+        ],
+        "sourceRef": "lexicon:lx:object#n.thing"
+      },
+      {
+        "item": "lx:office#n.workplace",
+        "kind": "sense",
+        "forms": [
+          "office",
+          "offices"
+        ],
+        "glossZh": "办公室",
+        "example": "The office is quiet today.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:office#n.workplace"
+      },
+      {
+        "item": "lx:open#v.unlock",
+        "kind": "sense",
+        "forms": [
+          "open",
+          "opens",
+          "opened",
+          "opening"
+        ],
+        "glossZh": "打开",
+        "example": "Open the box",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:close#v.shut"
+        ],
+        "sourceRef": "lexicon:lx:open#v.unlock"
+      },
+      {
+        "item": "lx:ordinary#adj.normal",
+        "kind": "sense",
+        "forms": [
+          "ordinary"
+        ],
+        "glossZh": "普通的",
+        "example": "It is an ordinary box.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 4,
+        "confusables": [
+          "lx:strange#adj.odd"
+        ],
+        "sourceRef": "lexicon:lx:ordinary#adj.normal"
+      },
+      {
+        "item": "lx:parcel#n.package",
+        "kind": "sense",
+        "forms": [
+          "parcel",
+          "parcels"
+        ],
+        "glossZh": "包裹",
+        "example": "The parcel is for the cat.",
+        "cefr": "A2",
+        "pos": "n",
+        "freqBand": 4,
+        "confusables": [
+          "lx:box#n.container"
+        ],
+        "sourceRef": "lexicon:lx:parcel#n.package"
+      },
+      {
+        "item": "lx:pay#v.give-money",
+        "kind": "sense",
+        "forms": [
+          "pay",
+          "pays",
+          "paid",
+          "paying"
+        ],
+        "glossZh": "付款",
+        "example": "The cat pays with a button.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [
+          "lx:buy#v.purchase"
+        ],
+        "sourceRef": "lexicon:lx:pay#v.give-money"
+      },
+      {
+        "item": "lx:photo#n.picture",
+        "kind": "sense",
+        "forms": [
+          "photo",
+          "photos"
+        ],
+        "glossZh": "照片",
+        "example": "This photo is a clue.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:photo#n.picture"
+      },
+      {
+        "item": "lx:place#n.location",
+        "kind": "sense",
+        "forms": [
+          "place",
+          "places"
+        ],
+        "glossZh": "地方",
+        "example": "This place is very quiet.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:place#n.location"
+      },
+      {
+        "item": "lx:point#v.indicate",
+        "kind": "sense",
+        "forms": [
+          "point",
+          "points",
+          "pointed",
+          "pointing"
+        ],
+        "glossZh": "指",
+        "example": "The duck points at the jar.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:point#v.indicate"
+      },
+      {
+        "item": "lx:polite#adj.courteous",
+        "kind": "sense",
+        "forms": [
+          "polite"
+        ],
+        "glossZh": "有礼貌的",
+        "example": "The courier is very polite.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:polite#adj.courteous"
+      },
+      {
+        "item": "lx:possible#adj.possible",
+        "kind": "sense",
+        "forms": [
+          "possible"
+        ],
+        "glossZh": "可能的",
+        "example": "Two answers are possible.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [
+          "lx:impossible#adj.not-possible"
+        ],
+        "sourceRef": "lexicon:lx:possible#adj.possible"
+      },
+      {
+        "item": "lx:price#n.cost",
+        "kind": "sense",
+        "forms": [
+          "price",
+          "prices"
+        ],
+        "glossZh": "价格",
+        "example": "What is the price?",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:price#n.cost"
+      },
+      {
+        "item": "lx:put#v.place",
+        "kind": "sense",
+        "forms": [
+          "put",
+          "puts",
+          "putting"
+        ],
+        "glossZh": "放",
+        "example": "Someone put it there.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:put#v.place"
+      },
+      {
+        "item": "lx:quiet#adj.silent",
+        "kind": "sense",
+        "forms": [
+          "quiet",
+          "quieter",
+          "quietest"
+        ],
+        "glossZh": "安静的",
+        "example": "The shop is quiet today.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [
+          "lx:loud#adj.noisy"
+        ],
+        "sourceRef": "lexicon:lx:quiet#adj.silent"
+      },
+      {
+        "item": "lx:read#v.interpret-text",
+        "kind": "sense",
+        "forms": [
+          "read",
+          "reads",
+          "reading"
+        ],
+        "glossZh": "读",
+        "example": "Read the note",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:read#v.interpret-text"
+      },
+      {
+        "item": "lx:ready#adj.prepared",
+        "kind": "sense",
+        "forms": [
+          "ready"
+        ],
+        "glossZh": "准备好的",
+        "example": "The parcel is ready.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:ready#adj.prepared"
+      },
+      {
+        "item": "lx:right#adj.correct",
+        "kind": "sense",
+        "forms": [
+          "right"
+        ],
+        "glossZh": "对的",
+        "example": "You are right.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 1,
+        "confusables": [
+          "lx:wrong#adj.incorrect"
+        ],
+        "sourceRef": "lexicon:lx:right#adj.correct"
+      },
+      {
+        "item": "lx:room#n.space",
+        "kind": "sense",
+        "forms": [
+          "room",
+          "rooms"
+        ],
+        "glossZh": "房间",
+        "example": "The room is empty.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:room#n.space"
+      },
+      {
+        "item": "lx:sell#v.exchange",
+        "kind": "sense",
+        "forms": [
+          "sell",
+          "sells",
+          "sold",
+          "selling"
+        ],
+        "glossZh": "卖",
+        "example": "The store sells impossible things.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [
+          "lx:buy#v.purchase"
+        ],
+        "sourceRef": "lexicon:lx:sell#v.exchange"
+      },
+      {
+        "item": "lx:serious#adj.grave",
+        "kind": "sense",
+        "forms": [
+          "serious"
+        ],
+        "glossZh": "严肃的",
+        "example": "The duck has a serious face.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:serious#adj.grave"
+      },
+      {
+        "item": "lx:shop#n.store",
+        "kind": "sense",
+        "forms": [
+          "shop",
+          "shops"
+        ],
+        "glossZh": "商店",
+        "example": "The shop is open.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 1,
+        "confusables": [
+          "lx:store#n.shop"
+        ],
+        "sourceRef": "lexicon:lx:shop#n.store"
+      },
+      {
+        "item": "lx:show#v.display",
+        "kind": "sense",
+        "forms": [
+          "show",
+          "shows",
+          "showed",
+          "showing"
+        ],
+        "glossZh": "展示",
+        "example": "Show me the photo.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:show#v.display"
+      },
+      {
+        "item": "lx:simple#adj.easy",
+        "kind": "sense",
+        "forms": [
+          "simple",
+          "simpler",
+          "simplest"
+        ],
+        "glossZh": "简单的",
+        "example": "The answer is simple.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:simple#adj.easy"
+      },
+      {
+        "item": "lx:smile#v.smile",
+        "kind": "sense",
+        "forms": [
+          "smile",
+          "smiles",
+          "smiled",
+          "smiling"
+        ],
+        "glossZh": "微笑",
+        "example": "The customer smiles.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:smile#v.smile"
+      },
+      {
+        "item": "lx:sound#v.seem",
+        "kind": "sense",
+        "forms": [
+          "sound",
+          "sounds",
+          "sounded"
+        ],
+        "glossZh": "听起来",
+        "example": "That sounds strange.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 4,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:sound#v.seem"
+      },
+      {
+        "item": "lx:start#v.begin",
+        "kind": "sense",
+        "forms": [
+          "start",
+          "starts",
+          "started",
+          "starting"
+        ],
+        "glossZh": "开始",
+        "example": "The game starts now.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [
+          "lx:begin#v.start"
+        ],
+        "sourceRef": "lexicon:lx:start#v.begin"
+      },
+      {
+        "item": "lx:steal#v.take-secretly",
+        "kind": "sense",
+        "forms": [
+          "steal",
+          "steals",
+          "stole",
+          "stealing"
+        ],
+        "glossZh": "偷",
+        "example": "Someone stole the key.",
+        "cefr": "A2",
+        "pos": "v",
+        "freqBand": 4,
+        "confusables": [
+          "lx:borrow#v.take-temporarily"
+        ],
+        "sourceRef": "lexicon:lx:steal#v.take-secretly"
+      },
+      {
+        "item": "lx:store#n.shop",
+        "kind": "sense",
+        "forms": [
+          "store",
+          "stores"
+        ],
+        "glossZh": "商店（美式）",
+        "example": "The store sells socks.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [
+          "lx:shop#n.store"
+        ],
+        "sourceRef": "lexicon:lx:store#n.shop"
+      },
+      {
+        "item": "lx:strange#adj.odd",
+        "kind": "sense",
+        "forms": [
+          "strange",
+          "stranger",
+          "strangest"
+        ],
+        "glossZh": "奇怪的",
+        "example": "A strange object is on the desk.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [
+          "lx:ordinary#adj.normal"
+        ],
+        "sourceRef": "lexicon:lx:strange#adj.odd"
+      },
+      {
+        "item": "lx:take#v.carry",
+        "kind": "sense",
+        "forms": [
+          "take",
+          "takes",
+          "took",
+          "taking"
+        ],
+        "glossZh": "拿走",
+        "example": "Take the hat to the moon.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 1,
+        "confusables": [
+          "lx:give#v.transfer"
+        ],
+        "sourceRef": "lexicon:lx:take#v.carry"
+      },
+      {
+        "item": "lx:tiny#adj.very-small",
+        "kind": "sense",
+        "forms": [
+          "tiny",
+          "tinier",
+          "tiniest"
+        ],
+        "glossZh": "极小的",
+        "example": "A tiny key is in the jar.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 3,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:tiny#adj.very-small"
+      },
+      {
+        "item": "lx:tired#adj.fatigued",
+        "kind": "sense",
+        "forms": [
+          "tired"
+        ],
+        "glossZh": "累的",
+        "example": "The cat is tired.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:tired#adj.fatigued"
+      },
+      {
+        "item": "lx:try#v.attempt",
+        "kind": "sense",
+        "forms": [
+          "try",
+          "tries",
+          "tried",
+          "trying"
+        ],
+        "glossZh": "尝试",
+        "example": "Try the small key.",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:try#v.attempt"
+      },
+      {
+        "item": "lx:under#prep.location",
+        "kind": "sense",
+        "forms": [
+          "under"
+        ],
+        "glossZh": "在…下面",
+        "example": "The hat is under the table.",
+        "cefr": "A1",
+        "pos": "prep",
+        "freqBand": 2,
+        "confusables": [
+          "lx:behind#prep.location",
+          "lx:in-front-of#prep.location",
+          "lx:above#prep.location"
+        ],
+        "sourceRef": "lexicon:lx:under#prep.location"
+      },
+      {
+        "item": "lx:useful#adj.helpful",
+        "kind": "sense",
+        "forms": [
+          "useful"
+        ],
+        "glossZh": "有用的",
+        "example": "A notebook is useful.",
+        "cefr": "A2",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:useful#adj.helpful"
+      },
+      {
+        "item": "lx:wait#v.stay",
+        "kind": "sense",
+        "forms": [
+          "wait",
+          "waits",
+          "waited",
+          "waiting"
+        ],
+        "glossZh": "等待",
+        "example": "Wait at the counter",
+        "cefr": "A1",
+        "pos": "v",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:wait#v.stay"
+      },
+      {
+        "item": "lx:wall#n.surface",
+        "kind": "sense",
+        "forms": [
+          "wall",
+          "walls"
+        ],
+        "glossZh": "墙",
+        "example": "The hat is on the wall.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:wall#n.surface"
+      },
+      {
+        "item": "lx:warm#adj.temperature",
+        "kind": "sense",
+        "forms": [
+          "warm",
+          "warmer",
+          "warmest"
+        ],
+        "glossZh": "温暖的",
+        "example": "The tea is warm.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 2,
+        "confusables": [
+          "lx:hot#adj.temperature"
+        ],
+        "sourceRef": "lexicon:lx:warm#adj.temperature"
+      },
+      {
+        "item": "lx:window#n.opening",
+        "kind": "sense",
+        "forms": [
+          "window",
+          "windows"
+        ],
+        "glossZh": "窗户",
+        "example": "The cat sits at the window.",
+        "cefr": "A1",
+        "pos": "n",
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:lx:window#n.opening"
+      },
+      {
+        "item": "lx:wrong#adj.incorrect",
+        "kind": "sense",
+        "forms": [
+          "wrong"
+        ],
+        "glossZh": "错的",
+        "example": "This is the wrong key.",
+        "cefr": "A1",
+        "pos": "adj",
+        "freqBand": 1,
+        "confusables": [
+          "lx:right#adj.correct"
+        ],
+        "sourceRef": "lexicon:lx:wrong#adj.incorrect"
+      },
+      {
+        "item": "pt:be-going-to",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "be going to 表打算",
+        "example": null,
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:be-going-to"
+      },
+      {
+        "item": "pt:because-clauses",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "because 原因从句",
+        "example": null,
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:because-clauses"
+      },
+      {
+        "item": "pt:can-requests",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "can 请求句",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:can-requests"
+      },
+      {
+        "item": "pt:comparatives",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "比较级（-er / more）",
+        "example": null,
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:comparatives"
+      },
+      {
+        "item": "pt:do-you-like",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "do you like 一般疑问",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:do-you-like"
+      },
+      {
+        "item": "pt:how-much-questions",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "how much 问价句",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:how-much-questions"
+      },
+      {
+        "item": "pt:i-have-got",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "have got 所有句",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:i-have-got"
+      },
+      {
+        "item": "pt:negation-dont",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "don't 否定句",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:negation-dont"
+      },
+      {
+        "item": "pt:past-irregular-common",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "常见不规则过去式",
+        "example": null,
+        "cefr": "A2",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:past-irregular-common"
+      },
+      {
+        "item": "pt:past-regular",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "一般过去时（规则变化）",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:past-regular"
+      },
+      {
+        "item": "pt:polite-imperatives",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "礼貌祈使句",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 2,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:polite-imperatives"
+      },
+      {
+        "item": "pt:possessives",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "所有格（'s / mine）",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:possessives"
+      },
+      {
+        "item": "pt:present-progressive",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "现在进行时（be + V-ing）",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:present-progressive"
+      },
+      {
+        "item": "pt:there-is-are",
+        "kind": "pattern",
+        "forms": [
+          "there is",
+          "there are",
+          "there was",
+          "there were"
+        ],
+        "glossZh": "存在句（有…）",
+        "example": "There is a hat under the table.",
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:there-is-are"
+      },
+      {
+        "item": "pt:where-questions",
+        "kind": "pattern",
+        "forms": [],
+        "glossZh": "where 疑问句",
+        "example": null,
+        "cefr": "A1",
+        "pos": null,
+        "freqBand": 1,
+        "confusables": [],
+        "sourceRef": "lexicon:pt:where-questions"
+      }
+    ],
+    "properNouns": [
+      "badger",
+      "cat",
+      "duck",
+      "guide",
+      "moon",
+      "shopkeeper"
+    ],
+    "grammarPolicy": {
+      "policyVersion": "edition-language-1",
+      "maxWordsPerLine": 16,
+      "maxSentenceWords": 14,
+      "oovWarn": 0.02,
+      "oovBlock": 0.05,
+      "tokenizerVersion": "tokenize-1"
+    },
+    "rights": {
+      "basis": "仓库内 A1–A2 种子词库（项目自有整理）",
+      "decisionId": null,
+      "note": "词库条目与例句随仓库授权；未使用第三方词表或词典例句"
+    },
+    "digest": "sha256:f2fbf396fe5416b106140a2785fca4ae3f7082bcefbe7e8fc2fcdaa7c74e1d8f"
+  },
+  "units": [
+    {
+      "revisionId": "urv_ec9530a7-d0cf-4a42-b7be-089f548c355d",
+      "unitId": "unt_d8c0e376-079c-4f5d-a4c6-a74cb07021f7",
+      "title": "走进咖啡馆",
+      "subtitle": "In the cafe",
+      "description": "早上的一杯咖啡：温度、价格，还有第一句点单。",
+      "batch": {
+        "batch": "urv_ec9530a7-d0cf-4a42-b7be-089f548c355d",
+        "channel": "edition",
+        "brief": "unt_d8c0e376-079c-4f5d-a4c6-a74cb07021f7#A2",
+        "cast": [
+          "shopkeeper",
+          "cat"
+        ],
+        "scenes": [
+          {
+            "id": "s1",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "It is morning. The cafe is small and warm."
+              },
+              {
+                "shot": "close",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "The coffee is hot and cheap. Two coins for a cup."
+              }
+            ],
+            "uses": [
+              "lx:hot#adj.temperature",
+              "lx:cheap#adj.inexpensive"
+            ]
+          },
+          {
+            "id": "s2",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "The tea is not hot. It is cold."
+              },
+              {
+                "shot": "close",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "The tea is cheap too. The price is on the wall."
+              }
+            ],
+            "uses": [
+              "lx:hot#adj.temperature",
+              "lx:cheap#adj.inexpensive"
+            ]
+          },
+          {
+            "id": "s3",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "cast": [
+              "shopkeeper",
+              "cat"
+            ],
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [
+                  "@char:shopkeeper"
+                ],
+                "props": [],
+                "bubbles": [
+                  {
+                    "speaker": "shopkeeper",
+                    "text": "Good morning. What would you like?"
+                  }
+                ]
+              },
+              {
+                "shot": "medium",
+                "actors": [
+                  "@char:cat"
+                ],
+                "props": [],
+                "bubbles": [
+                  {
+                    "speaker": "cat",
+                    "text": "A cup of coffee, please. Is it hot?"
+                  }
+                ]
+              },
+              {
+                "shot": "close",
+                "actors": [
+                  "@char:shopkeeper"
+                ],
+                "props": [],
+                "bubbles": [
+                  {
+                    "speaker": "shopkeeper",
+                    "text": "Yes. The coffee is hot and cheap."
+                  }
+                ]
+              }
+            ],
+            "uses": [
+              "lx:hot#adj.temperature",
+              "lx:cheap#adj.inexpensive"
+            ]
+          },
+          {
+            "id": "s4",
+            "type": "quiz",
+            "kind": "meaning",
+            "item": "lx:hot#adj.temperature",
+            "prompt": "「hot」是什么意思？",
+            "options": [
+              {
+                "label": "热的",
+                "correct": true
+              },
+              {
+                "label": "冷的"
+              },
+              {
+                "label": "你能…吗（请求）"
+              },
+              {
+                "label": "你有…吗"
+              }
+            ],
+            "feedback": {
+              "on_correct": "答对了——「热的」。",
+              "on_wrong": "再想想——正确的是「热的」。"
+            },
+            "evidence": {
+              "item": "lx:hot#adj.temperature",
+              "type": "practice"
+            },
+            "uses": [
+              "lx:hot#adj.temperature"
+            ]
+          },
+          {
+            "id": "s5",
+            "type": "quiz",
+            "kind": "meaning",
+            "item": "lx:cheap#adj.inexpensive",
+            "prompt": "「cheap」是什么意思？",
+            "options": [
+              {
+                "label": "便宜的",
+                "correct": true
+              },
+              {
+                "label": "昂贵的"
+              },
+              {
+                "label": "你能…吗（请求）"
+              },
+              {
+                "label": "你有…吗"
+              }
+            ],
+            "feedback": {
+              "on_correct": "答对了——「便宜的」。",
+              "on_wrong": "再想想——正确的是「便宜的」。"
+            },
+            "evidence": {
+              "item": "lx:cheap#adj.inexpensive",
+              "type": "practice"
+            },
+            "uses": [
+              "lx:cheap#adj.inexpensive"
+            ]
+          }
+        ]
+      },
+      "sceneSources": {
+        "s1": "已审阅正文 · 原文",
+        "s2": "已审阅正文 · 原文",
+        "s3": "教学情境（虚构）",
+        "s4": "本地语言包",
+        "s5": "本地语言包"
+      },
+      "estimatedMinutes": 1.4
+    },
+    {
+      "revisionId": "urv_efd40b6c-d9a8-4970-bf85-0cc872ded898",
+      "unitId": "unt_5bbbe90d-24fc-4e1a-b7cc-c35357c70362",
+      "title": "两枚硬币",
+      "subtitle": "Two coins",
+      "description": "同样一只杯子，价格可以完全不同。",
+      "batch": {
+        "batch": "urv_efd40b6c-d9a8-4970-bf85-0cc872ded898",
+        "channel": "edition",
+        "brief": "unt_5bbbe90d-24fc-4e1a-b7cc-c35357c70362#A2",
+        "cast": [
+          "duck"
+        ],
+        "scenes": [
+          {
+            "id": "s1",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "This cup is expensive. The price is five coins."
+              }
+            ],
+            "uses": [
+              "lx:expensive#adj.costly",
+              "lx:price#n.cost"
+            ]
+          },
+          {
+            "id": "s2",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "The small cup is not expensive. The price is two coins."
+              }
+            ],
+            "uses": [
+              "lx:expensive#adj.costly",
+              "lx:price#n.cost"
+            ]
+          },
+          {
+            "id": "s3",
+            "type": "quiz",
+            "kind": "meaning",
+            "item": "lx:expensive#adj.costly",
+            "prompt": "「expensive」是什么意思？",
+            "options": [
+              {
+                "label": "便宜的"
+              },
+              {
+                "label": "你能…吗（请求）"
+              },
+              {
+                "label": "昂贵的",
+                "correct": true
+              },
+              {
+                "label": "你有…吗"
+              }
+            ],
+            "feedback": {
+              "on_correct": "答对了——「昂贵的」。",
+              "on_wrong": "再想想——正确的是「昂贵的」。"
+            },
+            "evidence": {
+              "item": "lx:expensive#adj.costly",
+              "type": "practice"
+            },
+            "uses": [
+              "lx:expensive#adj.costly"
+            ]
+          },
+          {
+            "id": "s4",
+            "type": "quiz",
+            "kind": "cloze",
+            "item": "lx:price#n.cost",
+            "prompt": "This cup is expensive. The ____ is five coins.",
+            "options": [
+              {
+                "label": "money"
+              },
+              {
+                "label": "mouse"
+              },
+              {
+                "label": "price",
+                "correct": true
+              },
+              {
+                "label": "mice"
+              }
+            ],
+            "feedback": {
+              "on_correct": "答对了——「price」。",
+              "on_wrong": "再想想——正确的是「price」。"
+            },
+            "evidence": {
+              "item": "lx:price#n.cost",
+              "type": "practice"
+            },
+            "uses": [
+              "lx:expensive#adj.costly"
+            ]
+          },
+          {
+            "id": "s5",
+            "type": "quiz",
+            "kind": "sentence",
+            "item": "lx:expensive#adj.costly",
+            "prompt": "哪一句在正文里真的出现过？",
+            "options": [
+              {
+                "label": "This cup is expensive. The price is five coins.",
+                "correct": true
+              },
+              {
+                "label": "This cup is cheap. The price is five coins."
+              },
+              {
+                "label": "This cup is cheaper. The price is five coins."
+              },
+              {
+                "label": "This cup is cheapest. The price is five coins."
+              }
+            ],
+            "feedback": {
+              "on_correct": "答对了——「This cup is expensive. The price is five coins.」。",
+              "on_wrong": "再想想——正确的是「This cup is expensive. The price is five coins.」。"
+            },
+            "evidence": {
+              "item": "lx:expensive#adj.costly",
+              "type": "practice"
+            }
+          }
+        ]
+      },
+      "sceneSources": {
+        "s1": "已审阅正文 · 原文",
+        "s2": "已审阅正文 · 原文",
+        "s3": "本地语言包",
+        "s4": "已审阅正文 · 原句",
+        "s5": "已审阅正文 · 原句"
+      },
+      "estimatedMinutes": 1.4
+    },
+    {
+      "revisionId": "urv_8e793d6e-ef74-4a89-a62d-5933a0920c14",
+      "unitId": "unt_89e2353c-3df9-4190-9e2f-dd15c64c2fdf",
+      "title": "早晨的声音",
+      "subtitle": "Morning sounds",
+      "description": "把前两个单元的词放回一个安静的早晨。",
+      "batch": {
+        "batch": "urv_8e793d6e-ef74-4a89-a62d-5933a0920c14",
+        "channel": "edition",
+        "brief": "unt_89e2353c-3df9-4190-9e2f-dd15c64c2fdf#A2",
+        "cast": [
+          "cat",
+          "shopkeeper"
+        ],
+        "scenes": [
+          {
+            "id": "s1",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "In the morning, the cafe is quiet. The coffee is warm."
+              },
+              {
+                "shot": "close",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "The tea is hot."
+              }
+            ],
+            "uses": [
+              "lx:hot#adj.temperature"
+            ]
+          },
+          {
+            "id": "s2",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [],
+                "props": [],
+                "bubbles": [],
+                "caption": "Some cups are cheap and some are expensive. Every cup is warm."
+              }
+            ]
+          },
+          {
+            "id": "s3",
+            "type": "comic",
+            "setting": "@tag:cafe",
+            "cast": [
+              "cat",
+              "shopkeeper"
+            ],
+            "panels": [
+              {
+                "shot": "wide",
+                "actors": [
+                  "@char:cat"
+                ],
+                "props": [],
+                "bubbles": [
+                  {
+                    "speaker": "cat",
+                    "text": "In the morning, the cafe is quiet."
+                  }
+                ]
+              },
+              {
+                "shot": "close",
+                "actors": [
+                  "@char:shopkeeper"
+                ],
+                "props": [],
+                "bubbles": [
+                  {
+                    "speaker": "shopkeeper",
+                    "text": "And the coffee is always warm."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "s4",
+            "type": "quiz",
+            "kind": "meaning",
+            "item": "lx:hot#adj.temperature",
+            "prompt": "「hot」是什么意思？",
+            "options": [
+              {
+                "label": "冷的"
+              },
+              {
+                "label": "热的",
+                "correct": true
+              },
+              {
+                "label": "你能…吗（请求）"
+              },
+              {
+                "label": "你有…吗"
+              }
+            ],
+            "feedback": {
+              "on_correct": "答对了——「热的」。",
+              "on_wrong": "再想想——正确的是「热的」。"
+            },
+            "evidence": {
+              "item": "lx:hot#adj.temperature",
+              "type": "practice"
+            },
+            "uses": [
+              "lx:hot#adj.temperature"
+            ]
+          }
+        ]
+      },
+      "sceneSources": {
+        "s1": "已审阅正文 · 原文",
+        "s2": "已审阅正文 · 原文",
+        "s3": "教学情境（虚构）",
+        "s4": "本地语言包"
+      },
+      "estimatedMinutes": 0.8
+    }
+  ],
+  "sources": [
+    {
+      "sourceId": "src_ae3d19ad-5399-4373-91a6-88c716c614f8",
+      "title": "样刊来源 · 走进咖啡馆",
+      "license": "own-work",
+      "licenseUrl": null,
+      "canonicalUrl": "https://local.edition/sample/cafe-1"
+    },
+    {
+      "sourceId": "src_ae3d19ad-5399-4373-91a6-88c716c614f8",
+      "title": "样刊来源 · 两枚硬币",
+      "license": "own-work",
+      "licenseUrl": null,
+      "canonicalUrl": "https://local.edition/sample/cafe-2"
+    },
+    {
+      "sourceId": "src_ae3d19ad-5399-4373-91a6-88c716c614f8",
+      "title": "样刊来源 · 早晨的声音",
+      "license": "own-work",
+      "licenseUrl": null,
+      "canonicalUrl": "https://local.edition/sample/cafe-3"
+    }
+  ],
+  "display": {
+    "editionTitle": "咖啡与城市生活",
+    "issueTitle": "第一期 · 一杯咖啡"
+  },
+  "digest": "sha256:e6bdb78f99dc3f2869baa98319cc4fe471243e78ed93102d756fe6ea93589c28"
+}

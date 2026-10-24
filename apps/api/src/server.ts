@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { GenerationRequestSchema, type Content } from '@endless/content';
 import { ApiError, type JobManager } from './jobs.js';
+import { preparedFeatures } from './extensions/index.js';
 
 const origins = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173']);
 const MAX_BODY_BYTES = 3 * 1024 * 1024;
@@ -9,6 +10,8 @@ const MAX_BODY_BYTES = 3 * 1024 * 1024;
 export function createApiServer(options: {
   jobs: JobManager; content: Content; token: string; configured: boolean; model: string;
   ready?: () => boolean;
+  /** Edition 路由：返回 false 表示不是它的路径，交回原有分发。 */
+  edition?: { handle: (request: IncomingMessage, response: ServerResponse, url: URL) => Promise<boolean> };
 }) {
   const { jobs, content, token, configured, model } = options;
 
@@ -56,10 +59,14 @@ export function createApiServer(options: {
         throw new ApiError(403, '此接口仅供本机 ENDLESS 页面访问');
       }
       if (request.method === 'GET' && request.url === '/api/status') {
-        send(response, 200, { configured, acceptsUserKey: true, model, token, quota: jobs.quota() });
+        send(response, 200, { configured, acceptsUserKey: true, model, token, features: preparedFeatures });
         return;
       }
       authorize(request);
+      if (options.edition) {
+        const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+        if (await options.edition.handle(request, response, url)) return;
+      }
       if (request.method === 'GET' && /^\/api\/generations\/[a-f0-9-]{36}$/.test(request.url ?? '')) {
         const record = jobs.get(request.url!.split('/').at(-1)!);
         if (!record) throw new ApiError(404, '找不到生成任务；请使用原任务 ID 恢复，不要盲目重复生成');

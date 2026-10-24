@@ -49,13 +49,13 @@ describe('本机 API 安全与数据边界', () => {
     expect((await fetch(`${missing.url}/api/generations`, { method: 'POST', headers, body: JSON.stringify({
       requestId: crypto.randomUUID(), save: complete(),
     }) })).status).toBe(401);
-    expect(missing.jobs.quota().used).toBe(0);
+    expect(missing.jobs.count()).toBe(0);
     const { url, jobs } = await start();
     const response = await fetch(`${url}/api/generations`, { method: 'POST', headers, body: JSON.stringify({
       requestId: crypto.randomUUID(), save: content.snapshot(createSession(content.pilot), []),
     }) });
     expect(response.status).toBe(422);
-    expect(jobs.quota().used).toBe(0);
+    expect(jobs.count()).toBe(0);
   });
 
   it('有效任务异步返回，查询错误不含原始供应商响应', async () => {
@@ -90,7 +90,7 @@ describe('本机 API 安全与数据边界', () => {
     const resumed = await fetch(`${url}/api/generations`, { method: 'POST', headers, body: JSON.stringify(input) });
     expect(resumed.status).toBe(200);
     expect(await resumed.text()).not.toContain(key);
-    expect(jobs.quota().used).toBe(1);
+    expect(jobs.count()).toBe(1);
     const status = await fetch(`${url}/api/status`);
     expect(await status.json()).toMatchObject({ configured: false, acceptsUserKey: true });
   });
@@ -103,6 +103,6 @@ describe('本机 API 安全与数据边界', () => {
     });
     expect(response.status).toBe(400);
     expect(await response.text()).not.toContain('synthetic key with spaces');
-    expect(jobs.quota().used).toBe(0);
+    expect(jobs.count()).toBe(0);
   });
 });

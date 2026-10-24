@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { z } from 'zod';
 import { GeneratedEpisodeSchema, GenerationFailureSchema, type GeneratedEpisode, type GenerationFailure } from '@endless/content';
 import { stableStringify } from '@endless/esl';
+import { ExecutionBusyError, ExecutionGate } from './execution-gate.js';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public failure?: GenerationFailure) {
@@ -54,16 +55,12 @@ export class FileJobStore implements JobStore {
   }
 }
 
-type Runner = (save: unknown, id: string, phase: (value: string) => void, apiKey?: string) => Promise<GeneratedEpisode>;
+type Runner = (save: unknown, id: string, phase: (value: string) => void, apiKey?: string, archives?: import('@endless/content').ArchiveContextEntryWire[]) => Promise<GeneratedEpisode>;
 
 export class JobManager {
   private records = new Map<string, JobRecord>();
   private mutations: Promise<unknown> = Promise.resolve();
-  private dailyLimit: number;
-
-  constructor(private store: JobStore, private runner: Runner, options: { dailyLimit?: number } = {}) {
-    this.dailyLimit = options.dailyLimit ?? 10;
-  }
+  constructor(private store: JobStore, private runner: Runner, private gate: ExecutionGate = new ExecutionGate()) {}
 
   async initialize() {
     const records = await this.store.read();
@@ -98,13 +95,11 @@ export class JobManager {
     return record ? structuredClone(record) : undefined;
   }
 
-  quota() {
-    const today = new Date().toISOString().slice(0, 10);
-    const used = [...this.records.values()].filter((job) => job.createdAt.startsWith(today)).length;
-    return { dailyLimit: this.dailyLimit, used, remaining: Math.max(0, this.dailyLimit - used) };
+  count() {
+    return this.records.size;
   }
 
-  submit(input: { requestId: string; save: unknown }, options: { apiKey?: string; allowNew?: boolean } = {}): Promise<JobRecord> {
+  submit(input: { requestId: string; save: unknown; archives?: import('@endless/content').ArchiveContextEntryWire[] }, options: { apiKey?: string; allowNew?: boolean } = {}): Promise<JobRecord> {
     return this.mutate(async () => {
       const payloadHash = createHash('sha256').update(stableStringify(input.save)).digest('hex');
       const saved = input.save as { session?: { catalog?: unknown; events?: unknown }; generated?: unknown } | null;
@@ -120,26 +115,35 @@ export class JobManager {
         (job.payloadHash === payloadHash || job.storyHash === storyHash) && job.status !== 'failed');
       if (duplicate) return structuredClone(duplicate);
       if (options.allowNew === false) throw new ApiError(401, '请在网页输入本次使用的 API Key，或配置服务端密钥；已有任务仍可恢复');
+      if (this.gate.busy() === 'edition') throw new ApiError(429, 'Edition 编纂任务正在运行，请等待完成后再生成故事；不会在后台排队计费');
       if ([...this.records.values()].some((job) => job.status === 'queued' || job.status === 'running')) {
         throw new ApiError(429, '已有生成任务进行中，请等待完成后重试');
       }
-      if (!this.quota().remaining) throw new ApiError(429, '今日生成额度已用完（按 UTC 日期重置），已有内容仍可播放');
       if (this.records.size >= 200) throw new ApiError(429, '本机任务缓存已达到上限，请先备份并整理，不会自动删除');
       const record: JobRecord = {
         id: input.requestId, payloadHash, storyHash, status: 'queued', phase: '已排队', createdAt: new Date().toISOString(),
       };
       await this.replace(record);
-      void this.run(record.id, input.save, options.apiKey);
+      void this.run(record.id, input.save, options.apiKey, input.archives);
       return structuredClone(record);
     });
   }
 
-  private async run(id: string, save: unknown, apiKey?: string) {
+  private async run(id: string, save: unknown, apiKey?: string, archives?: import('@endless/content').ArchiveContextEntryWire[]) {
+    try {
+      this.gate.acquire('endless');
+    } catch (error) {
+      if (error instanceof ExecutionBusyError) {
+        await this.mutate(() => this.replace({ ...this.records.get(id)!, status: 'failed', phase: '未开始', error: error.message }));
+        return;
+      }
+      throw error;
+    }
     try {
       await this.mutate(() => this.replace({ ...this.records.get(id)!, status: 'running', phase: '正在构思下一集' }));
       const result = await this.runner(save, id, (phase) => {
         void this.mutate(() => this.replace({ ...this.records.get(id)!, phase })).catch(() => {});
-      }, apiKey);
+      }, apiKey, archives);
       if (apiKey && JSON.stringify(result).includes(JSON.stringify(apiKey).slice(1, -1))) {
         throw new ApiError(502, '生成结果包含不应保存的凭据，已拒绝保存；已有进度未改变');
       }
@@ -171,6 +175,7 @@ export class JobManager {
         this.records.set(id, { ...failed, error: '服务端缓存写入失败，请检查磁盘；不会自动重新调用模型' });
       }
     } finally {
+      this.gate.release('endless');
       apiKey = undefined;
     }
   }

@@ -6,7 +6,6 @@ afterEach(() => vi.unstubAllGlobals());
 
 const status = {
   configured: false, acceptsUserKey: true, model: 'test-model', token: 'test-token',
-  quota: { dailyLimit: 10, used: 0, remaining: 10 },
 };
 const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
 

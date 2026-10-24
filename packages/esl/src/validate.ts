@@ -68,6 +68,11 @@ export interface ValidationContext {
   threads: Map<string, { status: string }>;
   /** 本批之前每个条目的累计曝光数（R1：新条目首次检测前须 ≥ 2） */
   exposureCounts?: Map<string, number>;
+  /**
+   * 场景数口径：缺省沿用实验契约（基本场景 3–4，derive/quiz/card 不计）；
+   * 应用创作草稿（v4）显式传入 { min: 1, max: 10, includeExercises: true }，按全部场景计数。
+   */
+  sceneCountPolicy?: { min: number; max: number; includeExercises: boolean };
   channelIsImprov?: boolean;
   /** 最近 5 批的场景类型序列（W-SEQUENCE-REPEAT） */
   recentSceneSequences?: string[][];
@@ -128,12 +133,18 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
 
   // ---------- 1. 结构：场景数、ID 唯一 ----------
   const baseCount = countBaseScenes(batch);
-  if (baseCount < 3 || baseCount > 4) {
-    err('E-SCHEMA', `基本场景数为 ${baseCount}，须在 3–4 之间（derive 不计入）`);
+  const scenePolicy = ctx.sceneCountPolicy;
+  const policyCount = scenePolicy?.includeExercises ? batch.scenes.length : baseCount;
+  if (policyCount < (scenePolicy?.min ?? 3) || policyCount > (scenePolicy?.max ?? 4)) {
+    err('E-SCHEMA', scenePolicy
+      ? `场景数为 ${policyCount}，须在 ${scenePolicy.min}–${scenePolicy.max} 之间${scenePolicy.includeExercises ? '（练习卡一并计入）' : ''}`
+      : `基本场景数为 ${baseCount}，须在 3–4 之间（derive 不计入）`);
   }
   const ids = new Set(batch.scenes.map((s) => s.id));
   if (ids.size !== batch.scenes.length) err('E-SCHEMA', '场景 id 不唯一');
-  if (batch.scenes.length > 0 && baseCount === 0) err('E-SCHEMA', '批次不能只由派生场景组成');
+  if (batch.scenes.length > 0 && baseCount === 0 && !scenePolicy?.includeExercises) {
+    err('E-SCHEMA', '批次不能只由派生场景组成');
+  }
 
   // ---------- 2. 实体 ----------
   const newIds = new Set((batch.new_entities ?? []).map((e) => e.id));
@@ -247,8 +258,18 @@ export function validateBatch(batch: Batch, ctx: ValidationContext): ValidateOut
       }
     }
   }
-  // 引用完整性：chat 选项
+  // 引用完整性：chat 与 pick 选项
   for (const scene of batch.scenes) {
+    if (scene.type === 'pick') {
+      scene.options.forEach((o, oi) => {
+        if (o.effect) {
+          refEffect(scene.id, o.effect, `options[${oi}]`);
+          if (!scene.effects || !(o.effect in scene.effects)) {
+            err('E-EFFECT-INVALID', `选项引用的 effect ${o.effect} 未声明`, scene.id, `options[${oi}]`);
+          }
+        }
+      });
+    }
     if (scene.type === 'chat' && scene.reply) {
       scene.reply.options.forEach((o, oi) => {
         if (o.effect) {

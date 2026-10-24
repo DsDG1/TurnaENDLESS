@@ -83,4 +83,9 @@ export class EvidenceProcessor {
   getStreak(key: string): number {
     return this.r2Streak.get(key) ?? 0;
   }
+
+  /** 检查点导出：全部连续计数（S-B 不使用，返回空）。 */
+  streaks(): [string, number][] {
+    return [...this.r2Streak.entries()];
+  }
 }

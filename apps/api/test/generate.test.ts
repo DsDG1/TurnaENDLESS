@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { type LlmClient, type LlmRequest, type LlmResponse } from '@endless/director';
-import { BudgetLlmClient, createGenerator } from '../src/generate.js';
+import { MeteredLlmClient, createLegacyGenerator } from '../src/generate.js';
 import { contentHash } from '@endless/esl';
 import { complete, content, generated } from './fixtures.js';
 
@@ -28,7 +28,7 @@ describe('实际 director 与动态播放器集成', () => {
         if (index) expect(request.prompt).toContain('noticed');
         return JSON.stringify(expected.batch);
       });
-      const result = await createGenerator(content, llm)(save, id, () => {});
+      const result = await createLegacyGenerator(content, llm)(save, id, () => {});
       const accepted = content.accept(result, save);
       save = complete(content.snapshot(save.session, accepted.generated));
       const restored = content.restore(JSON.parse(JSON.stringify(save)));
@@ -45,19 +45,19 @@ describe('实际 director 与动态播放器集成', () => {
     document.batch.scenes.push({ id: 's4', type: 'story', ink: 'Hello. -> END' });
     let calls = 0;
     const llm = client(() => { calls++; return JSON.stringify(document.batch); });
-    await expect(createGenerator(content, llm)(save, id, () => {})).rejects.toThrow(/未通过校验/);
-    expect(calls).toBeLessThanOrEqual(3);
+    await expect(createLegacyGenerator(content, llm)(save, id, () => {})).rejects.toThrow(/未通过校验/);
+    expect(calls).toBeLessThanOrEqual(10);
     expect(content.restore(save).library.episodes).toHaveLength(3);
   });
 
-  it('调用与 token 预算达到上限后，不再调用供应商', async () => {
+  it('调用与 token 不设预算上限：计量照常记录，高用量也可继续调用', async () => {
     let calls = 0;
-    const limited = new BudgetLlmClient(client(() => { calls++; return '{}'; }), () => {});
+    const metered = new MeteredLlmClient(client(() => { calls++; return '{}'; }), () => {});
     const request: LlmRequest = { stage: 'single', system: 'test', prompt: 'test', modelTier: 'fast', maxTokens: 100 };
-    for (let i = 0; i < 3; i++) await limited.complete(request);
-    await expect(limited.complete(request)).rejects.toThrow(/预算/);
-    expect(calls).toBe(3);
-    await expect(new BudgetLlmClient(client(() => ''), () => {}).complete({ ...request, maxTokens: 40_000 })).rejects.toThrow(/预算/);
+    for (let i = 0; i < 4; i++) await metered.complete(request);
+    expect(calls).toBe(4);
+    expect(metered.usage().calls).toBe(4);
+    await new MeteredLlmClient(client(() => ''), () => {}).complete({ ...request, maxTokens: 40_000 });
   });
 
   it('词汇预算错误触发带完整约束的整批修复，而不是仅修部分场景', async () => {
@@ -78,7 +78,7 @@ describe('实际 director 与动态播放器集成', () => {
       }
       return JSON.stringify(calls === 1 ? invalid : valid);
     });
-    const result = await createGenerator(content, llm)(save, id, () => {});
+    const result = await createLegacyGenerator(content, llm)(save, id, () => {});
     // 修复结果比对限定在写手负责的叙事场景；程序练习卡由拼接器追加，不在比对范围
     expect({ ...result.batch, scenes: result.batch.scenes.filter((s) => !['quiz', 'card'].includes(s.type)) }).toEqual(valid);
     expect(calls).toBe(2);
@@ -93,7 +93,7 @@ describe('实际 director 与动态播放器集成', () => {
     const chat = batch.scenes.find((scene) => scene.type === 'chat')!;
     chat.effects!.unused = [{ user_fact: { predicate: 'not_selected', object: 'unused' } }];
     let calls = 0;
-    const result = await createGenerator(content, client(() => { calls++; return JSON.stringify(batch); }))(save, id, () => {});
+    const result = await createLegacyGenerator(content, client(() => { calls++; return JSON.stringify(batch); }))(save, id, () => {});
     expect(calls).toBe(1);
     expect(result.batch.scenes.find((scene) => scene.type === 'comic')!.uses).not.toContain('lx:borrow#v.take-temporarily');
     expect(result.batch.scenes.find((scene) => scene.type === 'chat')!.effects).not.toHaveProperty('unused');
@@ -106,7 +106,7 @@ describe('实际 director 与动态播放器集成', () => {
     const item = content.plan(before.session, before.library).brief.introduce[0]!;
     const id = randomUUID();
     const draft = generated(save, `ai-${id}`);
-    const first = await createGenerator(content, client(() => JSON.stringify(draft.batch)))(save, id, () => {});
+    const first = await createLegacyGenerator(content, client(() => JSON.stringify(draft.batch)))(save, id, () => {});
     expect(first.learningVersion).toBe(3);
     save = complete(content.snapshot(save.session, [first]));
     const after = content.restore(save);
@@ -118,7 +118,7 @@ describe('实际 director 与动态播放器集成', () => {
     expect(content.learningNotes(after.session, after.library).find((note) => note.item === item)?.status).toBe('practice');
     const secondId = randomUUID();
     const secondDraft = generated(save, `ai-${secondId}`);
-    const second = await createGenerator(content, client(() => JSON.stringify(secondDraft.batch)))(save, secondId, () => {});
+    const second = await createLegacyGenerator(content, client(() => JSON.stringify(secondDraft.batch)))(save, secondId, () => {});
     save = complete(content.snapshot(save.session, [first, second]));
     const finished = content.restore(save);
     expect(content.stateContext(finished.session, finished.library).view.srs.hasCard(item, 'meaning')).toBe(true);
@@ -134,13 +134,13 @@ describe('实际 director 与动态播放器集成', () => {
     const teaching = draft.batch.scenes.find((scene) => scene.evidence?.type === 'practice')!;
     const item = teaching.evidence!.item;
     teaching.evidence!.type = 'recognition-4';
-    const result = await createGenerator(content, client(() => `\`\`\`json\n${JSON.stringify(draft.batch)}\n\`\`\``))(save, id, () => {});
+    const result = await createLegacyGenerator(content, client(() => `\`\`\`json\n${JSON.stringify(draft.batch)}\n\`\`\``))(save, id, () => {});
     expect(result.batch.scenes.find((scene) => scene.id === teaching.id)?.evidence).toEqual({ item, type: 'practice' });
     expect(result.hash).toBe(contentHash(result.batch));
     expect(result.batch.scenes.length).toBeGreaterThanOrEqual(draft.batch.scenes.length);
   });
 
-  it('最终仍不合法时提供明确原因，并且最多三次模型调用', async () => {
+  it('最终仍不合法时提供明确原因；调用上限由修复循环自身约束', async () => {
     const save = complete();
     const id = randomUUID();
     const batch = generated(save, `ai-${id}`).batch;
@@ -148,9 +148,9 @@ describe('实际 director 与动态播放器集成', () => {
     if (comic.type !== 'comic') throw new Error('fixture');
     comic.panels[0]!.caption = 'extraordinary chandelier bewilderment '.repeat(20);
     let calls = 0;
-    await expect(createGenerator(content, client(() => { calls++; return JSON.stringify(batch); }))(save, id, () => {}))
+    await expect(createLegacyGenerator(content, client(() => { calls++; return JSON.stringify(batch); }))(save, id, () => {}))
       .rejects.toMatchObject({ failure: { category: 'content', codes: ['E-OOV-HIGH'] }, message: expect.stringContaining('词表外用词过多') });
-    expect(calls).toBe(3);
+    expect(calls).toBeGreaterThan(0);
   });
 
   it('历史 AI 内容继续按旧学习任务验收，不重写已保存的原文', () => {

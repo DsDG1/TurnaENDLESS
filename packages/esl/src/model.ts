@@ -127,6 +127,8 @@ export const ChatScene = SceneBase.extend({
   messages: z.array(z.object({ from: EntityId, text: z.string().min(1) })).min(1).max(8),
   reply: z
     .object({
+      /** 可选题面：用户作答前展示的提问（创作草稿 @reply 的 ? 行；旧数据没有此字段） */
+      prompt: z.string().min(1).optional(),
       options: z
         .array(
           z.object({
@@ -158,7 +160,11 @@ export const PickScene = SceneBase.extend({
   type: z.literal('pick'),
   question: z.string().min(1),
   options: z
-    .array(z.object({ label: z.string().min(1), asset: AssetRef.optional(), correct: z.boolean().optional() }))
+    .array(z.object({
+      label: z.string().min(1), asset: AssetRef.optional(), correct: z.boolean().optional(),
+      /** 可选剧情效果引用（创作草稿 @remember）；旧数据没有此字段 */
+      effect: z.string().optional(),
+    }))
     .min(2)
     .max(4),
   hint: z.string().optional(),

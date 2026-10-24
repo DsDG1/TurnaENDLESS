@@ -68,8 +68,8 @@ test('跳过不伪造学习记录，偏好在刷新后保留', async ({ page }) 
   await page.reload();
   await expect(page.getByRole('switch', { name: '更大的故事文字' })).toBeChecked();
   const downloaded = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出学习存档' }).click();
-  expect((await downloaded).suggestedFilename()).toMatch(/^endless-progress-.*\.json$/);
+  await page.getByRole('button', { name: '导出完整备份' }).click();
+  expect((await downloaded).suggestedFilename()).toMatch(/^endless-workspace-.*\.endless\.json$/);
   await page.getByRole('button', { name: '安装说明', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '关闭安装说明' }).click();
@@ -99,12 +99,15 @@ test('损坏存档不会被静默重置或覆盖', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '让英语，接着发生。' })).toBeVisible();
   await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve) => {
-      const request = indexedDB.open('endless-player', 1);
+      const request = indexedDB.open('endless-workspace', 1);
+      request.onupgradeneeded = () => {
+        for (const name of ['meta', 'revisions', 'branches', 'objects', 'staging']) request.result.createObjectStore(name);
+      };
       request.onsuccess = () => resolve(request.result);
     });
     await new Promise<void>((resolve) => {
-      const transaction = db.transaction('sessions', 'readwrite');
-      transaction.objectStore('sessions').put({ version: 42, important: 'keep-me' }, 'current');
+      const transaction = db.transaction('meta', 'readwrite');
+      transaction.objectStore('meta').put({ key: 'workspace', version: 42, important: 'keep-me' }, 'workspace');
       transaction.oncomplete = () => resolve();
     });
     db.close();
@@ -114,14 +117,14 @@ test('损坏存档不会被静默重置或覆盖', async ({ page }) => {
   await expect(page.getByRole('button', { name: '下载原始存档' })).toBeVisible();
   expect(await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve) => {
-      const request = indexedDB.open('endless-player', 1);
+      const request = indexedDB.open('endless-workspace', 1);
       request.onsuccess = () => resolve(request.result);
     });
     return new Promise((resolve) => {
-      const request = db.transaction('sessions', 'readonly').objectStore('sessions').get('current');
+      const request = db.transaction('meta', 'readonly').objectStore('meta').get('workspace');
       request.onsuccess = () => { db.close(); resolve(request.result); };
     });
-  })).toEqual({ version: 42, important: 'keep-me' });
+  })).toEqual({ key: 'workspace', version: 42, important: 'keep-me' });
 });
 
 test('两个窗口不能互相覆盖进度', async ({ page, context }) => {

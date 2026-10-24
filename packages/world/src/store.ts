@@ -147,4 +147,24 @@ export class InMemoryWorldStore implements WorldStore {
     const rows = this.summaries.filter((s) => s.channel === channel);
     return rows.length ? rows[rows.length - 1] : undefined;
   }
+
+  /** 检查点导出：完整状态（含共享自增 seq，行 id 跨表交错）。 */
+  dumpState() {
+    return {
+      seq: this.seq, entities: [...this.entities.values()], facts: [...this.facts],
+      events: [...this.events], threads: [...this.threads.values()],
+      userFacts: [...this.userFactRows], summaries: [...this.summaries],
+    };
+  }
+
+  /** 检查点恢复：整表替换并保持原行 id 与 seq。 */
+  restoreState(state: ReturnType<InMemoryWorldStore['dumpState']>) {
+    this.entities = new Map(state.entities.map((row) => [row.id, row]));
+    this.facts = [...state.facts];
+    this.events = [...state.events];
+    this.threads = new Map(state.threads.map((row) => [row.id, row]));
+    this.userFactRows = [...state.userFacts];
+    this.summaries = [...state.summaries];
+    this.seq = state.seq;
+  }
 }

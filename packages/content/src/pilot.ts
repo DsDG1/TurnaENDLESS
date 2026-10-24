@@ -217,7 +217,10 @@ export function createPilotContent(lexiconText: string) {
 
   const pilot: Library = {
     version: 'pilot-v1',
-    episodes: batches.map((batch, index) => createEpisode(batch, context, metadata[index]!)),
+    episodes: batches.map((batch, index) => createEpisode(batch, context, {
+      ...metadata[index]!,
+      presentation: { kind: 'story', series: 'duck_detective', label: '鸭侦探事务所', legacy: true },
+    })),
     glossary: Object.fromEntries([...lexicon.entries.values()].map((entry) => [
       entry.id, { label: entry.lemma ?? entry.forms[0] ?? entry.id, gloss: entry.gloss_zh, forms: entry.forms },
     ])),

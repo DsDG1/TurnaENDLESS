@@ -1,7 +1,15 @@
-import type { PlayerSession } from '@endless/player';
-import type { GenerationRequest, SavedPlayer } from '@endless/content';
+import {
+  checked, WorkspaceSnapshotSchema,
+  type Workspace, type WorkspaceIdentity,
+} from '@endless/content';
 
-export class SessionRepository {
+/**
+ * `endless-workspace` 本地仓库：多对象存储 + repositoryRevision CAS。
+ * 一次命令 → 先在内存完成校验（content 包），再由这里一次事务原子提交。
+ * 进行中生成任务（reserved/submitted）冻结其它写入口，直到它被提交或取消。
+ * 不读取旧 `endless-player` 库，也不自动清理旧命名空间。
+ */
+export class WorkspaceRepository {
   private database: Promise<IDBDatabase>;
 
   constructor(factory: IDBFactory = globalThis.indexedDB) {
@@ -10,8 +18,15 @@ export class SessionRepository {
         reject(new Error('当前浏览器无法使用本地存储，请使用普通模式的 Edge 或 Chrome'));
         return;
       }
-      const request = factory.open('endless-player', 1);
-      request.onupgradeneeded = () => request.result.createObjectStore('sessions');
+      const request = factory.open('endless-workspace', 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore('meta');
+        db.createObjectStore('revisions');
+        db.createObjectStore('branches');
+        db.createObjectStore('objects');
+        db.createObjectStore('staging');
+      };
       request.onsuccess = () => {
         request.result.onversionchange = () => request.result.close();
         resolve(request.result);
@@ -21,99 +36,145 @@ export class SessionRepository {
     });
   }
 
-  async load(key = 'current'): Promise<unknown> {
+  /** 把 Workspace 拆成各 store 的行；返回 meta 行。 */
+  private rows(workspace: Workspace) {
+    return {
+      meta: { key: 'workspace', identity: workspace.identity, profile: workspace.profile, entries: workspace.entries, obligations: workspace.obligations, activeBranchId: workspace.activeBranchId },
+      revisions: workspace.revisions,
+      branches: workspace.branches,
+      objects: [
+        ...workspace.volumes.map((v) => ({ kind: 'volume', ...v })),
+        ...workspace.checkpoints.map((c) => ({ kind: 'checkpoint', ...c })),
+        ...workspace.tickets.map((t) => ({ kind: 'ticket', ...t })),
+      ],
+      management: workspace.management,
+    };
+  }
+
+  private assemble(meta: any, revisions: any[], branches: any[], objects: any[], management: any[]): Workspace {
+    const workspace: Workspace = {
+      identity: meta.identity,
+      profile: meta.profile,
+      entries: meta.entries,
+      obligations: meta.obligations,
+      activeBranchId: meta.activeBranchId,
+      revisions,
+      branches,
+      volumes: objects.filter((o) => o.kind === 'volume'),
+      checkpoints: objects.filter((o) => o.kind === 'checkpoint'),
+      tickets: objects.filter((o) => o.kind === 'ticket'),
+      management,
+    };
+    return checked(workspace);
+  }
+
+  async load(): Promise<Workspace | null> {
     const db = await this.database;
     return new Promise((resolve, reject) => {
-      const transaction = db.transaction('sessions', 'readonly');
-      const request = transaction.objectStore('sessions').get(key);
-      transaction.oncomplete = () => resolve(request.result ?? null);
-      transaction.onabort = () => reject(new Error('读取本地存档失败，已有数据未被修改'));
-      transaction.onerror = () => reject(new Error('读取本地存档失败，已有数据未被修改'));
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects'], 'readonly');
+      const out = { revisions: [] as any[], branches: [] as any[], objects: [] as any[] };
+      let meta: any = null;
+      tx.objectStore('meta').get('workspace').onsuccess = (e) => { meta = (e.target as IDBRequest).result ?? null; };
+      tx.objectStore('revisions').getAll().onsuccess = (e) => { out.revisions = (e.target as IDBRequest).result ?? []; };
+      tx.objectStore('branches').getAll().onsuccess = (e) => { out.branches = (e.target as IDBRequest).result ?? []; };
+      tx.objectStore('objects').getAll().onsuccess = (e) => { out.objects = (e.target as IDBRequest).result ?? []; };
+      tx.oncomplete = () => {
+        try {
+          if (!meta) { resolve(null); return; }
+          resolve(this.assemble(meta, out.revisions, out.branches, out.objects, meta.management ?? []));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      tx.onabort = () => reject(new Error('读取本地存档失败，已有数据未被修改'));
+      tx.onerror = () => reject(new Error('读取本地存档失败，已有数据未被修改'));
     });
   }
 
-  async save(session: PlayerSession | SavedPlayer, previousRevision: number, completedRequestId?: string): Promise<void> {
+  /** 原子提交：校验 repositoryRevision，并冻结进行中任务之外的写入。 */
+  async commit(next: Workspace, options: { closingTicketId?: string } = {}): Promise<void> {
     const db = await this.database;
+    const rows = this.rows(next);
     return new Promise((resolve, reject) => {
-      const transaction = db.transaction('sessions', 'readwrite');
-      const store = transaction.objectStore('sessions');
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging'], 'readwrite');
       let error = '保存失败，请检查可用空间后重试。本次操作尚未提交';
-      const request = store.get('current');
-      request.onsuccess = () => {
-        const stored = request.result as { revision?: unknown } | undefined;
-        if ((stored?.revision ?? 0) !== previousRevision) {
+      const metaStore = tx.objectStore('meta');
+      const getMeta = metaStore.get('workspace');
+      getMeta.onsuccess = () => {
+        const stored = getMeta.result as { identity?: WorkspaceIdentity; management?: unknown[] } | undefined;
+        const storedRev = stored?.identity?.repositoryRevision ?? -1;
+        const expected = next.identity.repositoryRevision - 1;
+        if (stored && storedRev !== expected) {
           error = '另一个窗口已更新进度，请刷新后继续，避免覆盖已有记录';
-          transaction.abort();
+          tx.abort();
           return;
         }
-        const generation = store.get('generation');
-        generation.onsuccess = () => {
-          const pending = generation.result as GenerationRequest | undefined;
-          if ((pending && pending.requestId !== completedRequestId) || (!pending && completedRequestId)) {
-            error = '生成任务正在其他窗口等待，或已被取消。请刷新后继续，避免覆盖内容';
-            transaction.abort();
-            return;
-          }
-          store.put(session, 'current');
-          if (completedRequestId) store.delete('generation');
-        };
+        if (!stored && next.identity.repositoryRevision !== 0) {
+          error = '存档版本不匹配，请刷新后继续';
+          tx.abort();
+          return;
+        }
+        const openTickets = next.tickets.filter((t) => t.status === 'reserved' || t.status === 'submitted');
+        if (openTickets.length > 1) {
+          error = '存在多个进行中的生成任务，状态不一致';
+          tx.abort();
+          return;
+        }
+        const revStore = tx.objectStore('revisions');
+        revStore.clear();
+        for (const revision of rows.revisions) revStore.put(revision, revision.id);
+        const branchStore = tx.objectStore('branches');
+        branchStore.clear();
+        for (const branch of rows.branches) branchStore.put(branch, branch.id);
+        const objectStore = tx.objectStore('objects');
+        objectStore.clear();
+        for (const object of rows.objects) objectStore.put(object, object.id);
+        metaStore.put({ ...rows.meta, management: rows.management }, 'workspace');
       };
-      transaction.oncomplete = () => resolve();
-      transaction.onabort = () => reject(new Error(error));
-      transaction.onerror = () => reject(new Error(error));
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(new Error(error));
+      tx.onerror = () => reject(new Error(error));
     });
   }
 
-  async reserveGeneration(input: GenerationRequest): Promise<GenerationRequest> {
+  /** 原始 meta 行（不校验）：存档损坏时允许下载原始数据，不覆盖不解释。 */
+  async rawMeta(): Promise<unknown> {
     const db = await this.database;
     return new Promise((resolve, reject) => {
-      const transaction = db.transaction('sessions', 'readwrite');
-      const store = transaction.objectStore('sessions');
-      let error = '无法保存生成任务，尚未调用模型';
-      let reserved = input;
-      const request = store.get('current');
-      request.onsuccess = () => {
-        const stored = request.result as { revision?: unknown } | undefined;
-        if ((stored?.revision ?? 0) !== input.save.revision) {
-          error = '另一个窗口已更新进度，请刷新后生成';
-          transaction.abort();
-          return;
-        }
-        const pending = store.get('generation');
-        pending.onsuccess = () => {
-          if (pending.result && (pending.result as GenerationRequest).requestId !== input.requestId) {
-            error = '另一个窗口已有生成任务，请刷新后恢复该任务';
-            transaction.abort();
-            return;
-          }
-          if (pending.result) {
-            reserved = pending.result as GenerationRequest;
-            return;
-          }
-          const revision = input.save.revision + 1;
-          reserved = { ...input, save: { ...input.save, revision, session: { ...input.save.session, revision } } };
-          store.put(reserved.save, 'current');
-          store.put(reserved, 'generation');
-        };
-      };
-      transaction.oncomplete = () => resolve(reserved);
-      transaction.onabort = () => reject(new Error(error));
-      transaction.onerror = () => reject(new Error(error));
+      const tx = db.transaction('meta', 'readonly');
+      tx.objectStore('meta').get('workspace').onsuccess = (e) => resolve((e.target as IDBRequest).result ?? null);
+      tx.onerror = () => reject(new Error('读取原始存档失败'));
     });
   }
 
-  async clearGeneration(requestId: string): Promise<void> {
+  /** 导入暂存：大文件先在隔离区校验，确认后一次事务发布，不让暂存对象被当正式数据。 */
+  async stage(key: string, value: unknown): Promise<void> {
     const db = await this.database;
     return new Promise((resolve, reject) => {
-      const transaction = db.transaction('sessions', 'readwrite');
-      const store = transaction.objectStore('sessions');
-      const request = store.get('generation');
-      request.onsuccess = () => {
-        if ((request.result as GenerationRequest | undefined)?.requestId === requestId) store.delete('generation');
-      };
-      transaction.oncomplete = () => resolve();
-      transaction.onabort = () => reject(new Error('无法结束本地生成等待，请刷新重试'));
-      transaction.onerror = () => reject(new Error('无法结束本地生成等待，请刷新重试'));
+      const tx = db.transaction('staging', 'readwrite');
+      tx.objectStore('staging').put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(new Error('暂存导入对象失败'));
+    });
+  }
+
+  async staged(key: string): Promise<unknown> {
+    const db = await this.database;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('staging', 'readonly');
+      const req = tx.objectStore('staging').get(key);
+      tx.oncomplete = () => resolve(req.result ?? null);
+      tx.onerror = () => reject(new Error('读取暂存对象失败'));
+    });
+  }
+
+  async clearStaging(): Promise<void> {
+    const db = await this.database;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('staging', 'readwrite');
+      tx.objectStore('staging').clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(new Error('清理暂存对象失败'));
     });
   }
 
@@ -122,11 +183,13 @@ export class SessionRepository {
   }
 }
 
-export function downloadSession(value: unknown): void {
+export { WorkspaceSnapshotSchema };
+
+export function downloadSession(value: unknown, name = `endless-workspace-${new Date().toISOString().slice(0, 10)}.endless.json`): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `endless-progress-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = name;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -63,6 +63,11 @@ export class AbilityEstimator {
     }
     return out;
   }
+
+  /** 检查点导出：全部掌握度条目（值已经过验证）。 */
+  entries(): [string, number][] {
+    return [...this.mastery.entries()];
+  }
 }
 
 export type { Facet };
