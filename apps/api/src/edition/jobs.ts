@@ -158,6 +158,13 @@ export class EditionJobManager {
       }
       return existing;
     }
+    // 与 ENDLESS 共用执行槽：提交时就拒绝，不建一个注定 failed 的任务。
+    const busy = this.gate.busy();
+    if (busy) {
+      throw new EditionJobError(429, busy === 'endless'
+        ? '故事生成任务正在运行，请等待完成后再开始 Edition 编纂；不会在后台排队计费'
+        : '已有一个 Edition 编纂任务在运行，请等待完成；不会在后台排队计费', 'E-JOB-BUSY');
+    }
     try {
       this.store.assertWritable();
     } catch (error) {
@@ -240,7 +247,7 @@ export class EditionJobManager {
       this.gate.acquire('edition');
     } catch (error) {
       if (error instanceof ExecutionBusyError) {
-        // 不排队、不后台偷跑：直接告诉用户当前有别的外部任务
+        // submit 已前置检查；这里只兜住「检查通过到真正开始执行」之间的竞态。
         this.fail(id, 'busy');
         return;
       }

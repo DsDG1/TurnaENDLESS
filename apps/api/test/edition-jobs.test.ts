@@ -158,10 +158,10 @@ describe('编纂任务状态机（M2 / J01–J09）', () => {
     expect(calls).toEqual(['build_plan:A2', 'compile_issue:A2', 'compile_issue:B1', 'compile_issue:A2']);
   });
 
-  it('J02：跨模式执行槽只允许一个外部任务', async () => {
+  it('J02：执行槽严格互斥——endless 在跑时 edition 提交直接 429，且不建任务', async () => {
     let calls = 0;
     const gate = new ExecutionGate();
-    const { store, manager } = setup(async () => {
+    const { store } = setup(async () => {
       calls += 1;
       throw new Error('unused');
     });
@@ -169,12 +169,18 @@ describe('编纂任务状态机（M2 / J01–J09）', () => {
       calls += 1;
       throw new Error('unused');
     }, gate);
+
     gate.acquire('endless');
-    const job = submit(gated, { kind: 'build_plan', unitIds: [] });
-    await gated.settle(job.job.id);
+    expect(() => submit(gated, { kind: 'build_plan', unitIds: [] })).toThrow(/等待完成后再开始 Edition/);
+    expect(store.listJobs(editionId)).toHaveLength(0);
     expect(calls).toBe(0);
-    expect(gated.get(job.job.id)?.job.status).toBe('failed');
     gate.release('endless');
+
+    // 同模式也拒绝：两个 Edition 任务不能同时占用供应商
+    gate.acquire('edition');
+    expect(() => submit(gated, { kind: 'build_plan', unitIds: [] })).toThrow(/已有一个 Edition 编纂任务/);
+    expect(store.listJobs(editionId)).toHaveLength(0);
+    gate.release('edition');
 
     // 反向：Edition 持有槽位时，ENDLESS 提交直接 429
     gate.acquire('edition');
@@ -186,7 +192,22 @@ describe('编纂任务状态机（M2 / J01–J09）', () => {
     await expect(endless.submit({ requestId: randomUUID(), save: { a: 1 } }, { allowNew: true }))
       .rejects.toMatchObject({ status: 429 });
     gate.release('edition');
-    void manager;
+  });
+
+  it('执行槽：同模式第二次 acquire 也拒绝，释放不清别人的槽', () => {
+    const gate = new ExecutionGate();
+    gate.acquire('endless');
+    expect(() => gate.acquire('endless')).toThrow(/已有生成任务在运行/);
+    expect(() => gate.acquire('edition')).toThrow(/故事生成任务正在运行/);
+    gate.release('endless');
+    expect(gate.busy()).toBeNull();
+
+    gate.acquire('edition');
+    expect(gate.busy()).toBe('edition');
+    gate.release('endless'); // 不能替别的模式清槽
+    expect(gate.busy()).toBe('edition');
+    gate.release('edition');
+    expect(gate.busy()).toBeNull();
   });
 
   it('J07：结果写盘失败时停止后续单元，不误报成功', async () => {
