@@ -1,5 +1,5 @@
 import {
-  checked, WorkspaceSnapshotSchema,
+  ContractError, describeUnsupportedSave, parseWorkspace,
   type Workspace, type WorkspaceIdentity,
 } from '@endless/content';
 
@@ -65,7 +65,8 @@ export class WorkspaceRepository {
       tickets: objects.filter((o) => o.kind === 'ticket'),
       management,
     };
-    return checked(workspace);
+    // 走完整契约校验：结构合法但引用闭包坏掉的存档不能进界面（否则渲染期才炸）
+    return parseWorkspace(workspace);
   }
 
   async load(): Promise<Workspace | null> {
@@ -80,10 +81,20 @@ export class WorkspaceRepository {
       tx.objectStore('objects').getAll().onsuccess = (e) => { out.objects = (e.target as IDBRequest).result ?? []; };
       tx.oncomplete = () => {
         try {
-          if (!meta) { resolve(null); return; }
+          if (!meta) {
+            // meta 丢了但其它 store 还有数据：按损坏存档报错，不能当成「首次使用」把数据清掉
+            if (out.revisions.length || out.branches.length || out.objects.length) {
+              reject(new Error('本地存档缺少 meta 行但仍有修订或分支数据；已按损坏存档处理，原始数据未被修改'));
+              return;
+            }
+            resolve(null);
+            return;
+          }
           resolve(this.assemble(meta, out.revisions, out.branches, out.objects, meta.management ?? []));
         } catch (error) {
-          reject(error);
+          reject(error instanceof ContractError
+            ? new Error(`${error.message}；原始数据已保留，可在错误提示里下载原始存档`)
+            : new Error(describeUnsupportedSave(meta)));
         }
       };
       tx.onabort = () => reject(new Error('读取本地存档失败，已有数据未被修改'));
@@ -137,14 +148,28 @@ export class WorkspaceRepository {
     });
   }
 
-  /** 原始 meta 行（不校验）：存档损坏时允许下载原始数据，不覆盖不解释。 */
-  async rawMeta(): Promise<unknown> {
+  /**
+   * 原始快照：存档损坏时下载全部 store，不校验、不解释、不覆盖。
+   * 只导 meta 会丢掉修订与分支，用户拿到的「原始数据」其实不完整。
+   */
+  async rawSnapshot(): Promise<unknown> {
     const db = await this.database;
     return new Promise((resolve, reject) => {
-      const tx = db.transaction('meta', 'readonly');
-      tx.objectStore('meta').get('workspace').onsuccess = (e) => resolve((e.target as IDBRequest).result ?? null);
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging'], 'readonly');
+      const out: Record<string, unknown> = { meta: null, revisions: [], branches: [], objects: [], staging: [] };
+      tx.objectStore('meta').get('workspace').onsuccess = (e) => { out.meta = (e.target as IDBRequest).result ?? null; };
+      tx.objectStore('revisions').getAll().onsuccess = (e) => { out.revisions = (e.target as IDBRequest).result ?? []; };
+      tx.objectStore('branches').getAll().onsuccess = (e) => { out.branches = (e.target as IDBRequest).result ?? []; };
+      tx.objectStore('objects').getAll().onsuccess = (e) => { out.objects = (e.target as IDBRequest).result ?? []; };
+      tx.objectStore('staging').getAll().onsuccess = (e) => { out.staging = (e.target as IDBRequest).result ?? []; };
+      tx.oncomplete = () => resolve(out);
       tx.onerror = () => reject(new Error('读取原始存档失败'));
     });
+  }
+
+  /** 原始 meta 行（不校验），保留给只需要顶层行的调用方。 */
+  async rawMeta(): Promise<unknown> {
+    return (await this.rawSnapshot() as { meta: unknown }).meta;
   }
 
   /** 导入暂存：大文件先在隔离区校验，确认后一次事务发布，不让暂存对象被当正式数据。 */
@@ -182,8 +207,6 @@ export class WorkspaceRepository {
     (await this.database).close();
   }
 }
-
-export { WorkspaceSnapshotSchema };
 
 export function downloadSession(value: unknown, name = `endless-workspace-${new Date().toISOString().slice(0, 10)}.endless.json`): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));

@@ -84,8 +84,33 @@ describe('endless-workspace 原子存档', () => {
     });
     db.close();
     const corrupted = new WorkspaceRepository(factory);
-    await expect(corrupted.load()).rejects.toThrow();
+    // 错误要可读并说明原始数据仍在，不能只抛 ZodError 原文
+    await expect(corrupted.load()).rejects.toThrow(/原始数据已保留/);
     await corrupted.close();
+    await repo.close();
+  });
+
+  it('原始快照含全部 store，损坏时仍可读取', async () => {
+    const factory = new IDBFactory();
+    const { repo } = await seed(factory);
+    const snapshot = await repo.rawSnapshot() as {
+      meta: unknown; revisions: unknown[]; branches: unknown[]; objects: unknown[]; staging: unknown[];
+    };
+    expect(snapshot.meta).toBeTruthy();
+    expect(snapshot.revisions).toHaveLength(3);
+    expect(snapshot.branches).toHaveLength(1);
+    expect(Array.isArray(snapshot.objects)).toBe(true);
+    expect(snapshot.staging).toEqual([]);
+    await repo.close();
+  });
+
+  it('导入暂存可读写，并在发布后清空', async () => {
+    const factory = new IDBFactory();
+    const { repo } = await seed(factory);
+    await repo.stage('pending-import', { hello: 1 });
+    expect(await repo.staged('pending-import')).toEqual({ hello: 1 });
+    await repo.clearStaging();
+    expect(await repo.staged('pending-import')).toBeNull();
     await repo.close();
   });
 });

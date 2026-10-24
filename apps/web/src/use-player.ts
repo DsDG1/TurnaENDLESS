@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { episodeCompletion, getScenes, projectSession, type PlayerCommand, type PlayerView } from '@endless/player';
 import {
-  adoptRevision, applyPlayerCommand, attachVolume, bridge, buildBackup, buildGenerationContext,
+  adoptRevision, applyPlayerCommand, assertNoSecrets, attachVolume, bridge, buildBackup, buildGenerationContext,
   buildVolume, cancelTicket, commitTicketResult, createWorkspace, detachVolume, markTicketFailed,
   markTicketSubmitted, parseBackup, previewRevision, purgeContent, purgePreview, reserveTicket,
   restoreContent, suggestVolumes, switchBranch, trashContent, updateDisplay, waiveObligation,
@@ -62,7 +62,7 @@ export function usePlayer() {
     }).catch((error: unknown) => {
       if (active) {
         setFailure(error instanceof Error ? error.message : '无法恢复本地进度，原始存档已保留');
-        void storage.rawMeta().then((meta) => { if (active && meta != null) setRaw(meta); }).catch(() => {});
+        void storage.rawSnapshot().then((snapshot) => { if (active && snapshot != null) setRaw(snapshot); }).catch(() => {});
       }
     }).finally(() => {
       if (active) setLoading(false);
@@ -271,11 +271,35 @@ export function usePlayer() {
     () => (workspace && runtime ? suggestVolumes(workspace, runtime) : []),
     [workspace, runtime],
   );
-  const backup = () => (current.current ? buildBackup(current.current) : null);
+  const backup = () => {
+    if (!current.current) return null;
+    try {
+      // 用户可能把 Key 粘进备注或草稿：导出前拦住，避免密钥离开页面
+      assertNoSecrets(current.current, [apiKey]);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '导出被拒绝：存档里可能含有临时 Key');
+      return null;
+    }
+    return buildBackup(current.current);
+  };
   const previewImport = (raw: unknown): ImportPreview => parseBackup(raw, current.current);
   const importBackup = async (preview: ImportPreview): Promise<boolean> => {
-    // 导入也走同一个提交器：成功后基线自动前进，否则第一次答题会被自己的 CAS 拒掉
-    if (!(await commit(preview.backup.workspace.data))) return false;
+    const repo = repository.current;
+    if (!repo) return false;
+    const key = 'pending-import';
+    try {
+      // 先落到隔离暂存区，再对暂存副本校验，最后单事务发布；失败也不会留下半份数据
+      await repo.stage(key, preview.backup);
+      const staged = await repo.staged(key);
+      if (!staged) throw new Error('导入暂存读取失败，请重试');
+      const verified = parseBackup(staged, current.current);
+      if (!(await commit(verified.backup.workspace.data))) return false;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '导入未提交，请重试');
+      return false;
+    } finally {
+      await repo.clearStaging().catch(() => {});
+    }
     const open = current.current?.tickets.find((t) => t.status === 'reserved' || t.status === 'submitted');
     currentTicket.current = open ?? null;
     return true;
