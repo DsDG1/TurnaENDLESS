@@ -106,7 +106,7 @@ describe('v4 创作草稿生成器', () => {
     expect(calls[1]!.stage).toBe('repair');
   });
 
-  it('连续相同失败即停；传输错误不自动重试；token 不设上限', async () => {
+  it('连续相同失败即停；传输错误不自动重试；预算内的 token 用量不打断', async () => {
     const save = complete();
     const { llm: bad, calls } = client(() => 'not a draft at all');
     await expect(createGenerator(content, bad)(save, randomUUID(), () => {})).rejects.toThrow(/未通过校验/);
@@ -114,7 +114,7 @@ describe('v4 创作草稿生成器', () => {
     expect(calls).toHaveLength(2);
     const { llm: failing } = client(() => new Error('connection reset'));
     await expect(createGenerator(content, failing)(save, randomUUID(), () => {})).rejects.toThrow('connection reset');
-    // 供应商报告高 token 用量不再触发预算停止：内容有效即接受
+    // 单次 50k×2 = 100k，仍在 120k 预算内：内容有效即接受
     const { llm: greedy, calls: greedyCalls } = client(() => draftFor(save), 50_000);
     const result = await createGenerator(content, greedy)(save, randomUUID(), () => {});
     expect(result.learningVersion).toBe(4);
@@ -139,5 +139,40 @@ describe('v4 创作草稿生成器', () => {
     const result = await createGenerator(content, llm)(save, randomUUID(), () => {});
     expect(result.learningVersion).toBe(4);
     expect(calls).toHaveLength(3);
+  });
+
+  it('归一化失败签名：只有场景数不同的同类错误第二次就停', async () => {
+    const save = complete();
+    const neutral = '@post duck\ntext: Good.\n@end';
+    const draft = (count: number) => [
+      'ENDLESS-DRAFT/1', '@kind story', '@series duck_detective',
+      '@title 少了场景', '@subtitle Short', '@description 场景数不足的草稿。',
+      ...Array.from({ length: count }, () => neutral),
+    ].join('\n');
+    const { llm, calls } = client((request, index) => (index === 0 ? draft(8) : draft(9)));
+    await expect(createGenerator(content, llm)(save, randomUUID(), () => {})).rejects.toThrow(/未通过校验/);
+    // 8 场与 9 场折叠成同一签名，不做第二次「新问题」重复付费
+    expect(calls).toHaveLength(2);
+  });
+
+  it('不同失败签名交替也最多自动修复 6 次', async () => {
+    const save = complete();
+    const { llm, calls } = client((request, index) => (index % 2 === 0
+      ? 'garbage one'
+      : 'ENDLESS-DRAFT/1\n@kind story\n@series duck_detective'));
+    await expect(createGenerator(content, llm)(save, randomUUID(), () => {}))
+      .rejects.toMatchObject({ status: 422, failure: { codes: expect.arrayContaining(['E-DRAFT-ATTEMPTS']) } });
+    expect(calls).toHaveLength(6);
+  });
+
+  it('token 预算超限时立即停止自动修复', async () => {
+    const save = complete();
+    // 每次调用 50k 输入 + 50k 输出：第二次失败后累计 200k，超过 120k 预算
+    const { llm, calls } = client((request, index) => (index % 2 === 0
+      ? 'garbage one'
+      : 'ENDLESS-DRAFT/1\n@kind story\n@series duck_detective'), 50_000);
+    await expect(createGenerator(content, llm)(save, randomUUID(), () => {}))
+      .rejects.toThrow(/token 预算/);
+    expect(calls).toHaveLength(2);
   });
 });

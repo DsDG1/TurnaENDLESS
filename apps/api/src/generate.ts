@@ -25,6 +25,21 @@ export class MeteredLlmClient implements LlmClient {
   usage() { return { calls: this.calls, inputTokens: this.inputTokens, outputTokens: this.outputTokens }; }
 }
 
+/** v4 整稿修复的硬上限：首次 + 5 次修复。超过即结束，不再无限调用供应商。 */
+export const MAX_DRAFT_ATTEMPTS = 6;
+/** 单次生成的 token 预算（输入 + 输出合计）；超限同样结束自动修复。 */
+export const MAX_DRAFT_TOKENS = 120_000;
+
+/**
+ * 失败签名：用于判断「这一轮和上一轮是不是同一个问题」。
+ * 数字折叠成 #，避免「场景数为 8」「场景数为 9」这类同类错误被当成新问题而无休止修复。
+ */
+function failureSignature(issues: ValidationIssue[]) {
+  return issues
+    .map((issue) => `${issue.code}${issue.scene ? ` ${issue.scene}` : ''}：${issue.message.replace(/\d+/g, '#')}`)
+    .join('\n');
+}
+
 /**
  * v4 创作草稿生成器：模型只写 ENDLESS-DRAFT/1 草稿（形态/系列/组件/正文），
  * 程序编译成可执行批次并整稿修复；不接受可执行 JSON。
@@ -111,23 +126,35 @@ export function createGenerator(content: Content, llm: LlmClient) {
     let draft = '';
     let compiled: ReturnType<Content['compileDraft']> | null = null;
     let problems = '';
-    // 不设调用/token 预算；连续两次产出相同的失败签名即停止，避免无限修复烧费
-    for (let attempt = 1; ; attempt++) {
+    // 最多 6 次（首次 + 5 次整稿修复）；归一化签名与上一轮相同即提前停止；
+    // 每轮失败后检查 token 预算。任何一条到顶都结束，不无限调用供应商。
+    let attempt = 0;
+    for (; attempt < MAX_DRAFT_ATTEMPTS; attempt++) {
       const response = await budget.complete({
-        stage: attempt === 1 ? 'single' : 'repair',
+        stage: attempt === 0 ? 'single' : 'repair',
         system: creativeSystem,
-        prompt: buildCreativePrompt(attempt === 1 ? input : { ...input, previousDraft: draft, problems }),
+        prompt: buildCreativePrompt(attempt === 0 ? input : { ...input, previousDraft: draft, problems }),
         modelTier: 'fast',
-        maxTokens: attempt === 1 ? 8192 : 4096,
+        maxTokens: attempt === 0 ? 8192 : 4096,
       });
       draft = response.text;
       compiled = content.compileDraft(draft, task, library, batchId);
       if (compiled.ok) break;
-      const nextProblems = compiled.issues.map((issue) => `${issue.code}${issue.scene ? ` ${issue.scene}` : ''}：${issue.message}`).join('\n');
+      const nextProblems = failureSignature(compiled.issues);
       if (nextProblems === problems) break;
       problems = nextProblems;
+      const used = budget.usage();
+      if (used.inputTokens + used.outputTokens > MAX_DRAFT_TOKENS) {
+        throw contentFailure([...compiled.issues,
+          { code: 'E-DRAFT-BUDGET', level: 'error', message: '本次生成已达到 token 预算上限，停止自动修复' }]);
+      }
     }
-    if (!compiled?.ok) throw contentFailure(compiled?.issues ?? [{ code: 'E-DRAFT', level: 'error', message: '草稿编译失败' }]);
+    if (!compiled?.ok) {
+      const last = compiled?.issues ?? [{ code: 'E-DRAFT', level: 'error' as const, message: '草稿编译失败' }];
+      throw contentFailure(attempt >= MAX_DRAFT_ATTEMPTS
+        ? [...last, { code: 'E-DRAFT-ATTEMPTS', level: 'error' as const, message: `已自动修复 ${MAX_DRAFT_ATTEMPTS} 次仍未通过校验，停止继续调用` }]
+        : last);
+    }
     const document: GeneratedEpisode = {
       version: 1, generatedAt, basedOn: content.historyKey(session), batch: compiled.batch,
       hash: contentHash(compiled.batch), title: compiled.title, subtitle: compiled.subtitle,
@@ -275,6 +302,7 @@ function contentFailure(issues: ValidationIssue[]) {
     'E-PRIMED': '复习题提前透露了答案', 'E-PARSE': '模型输出格式无法解析',
     'E-SCHEMA': '内容结构不符合播放器要求', 'E-PLAYER-PATH': '部分选项无法安全播放',
     'E-DRAFT': '创作草稿不符合协议或学习契约',
+    'E-DRAFT-ATTEMPTS': '自动修复次数已达到上限', 'E-DRAFT-BUDGET': '自动修复的 token 预算已达到上限',
   };
   const reasons = codes.slice(0, 4).map((code) => labels[code] ?? code).join('；');
   return new ApiError(422, `AI 内容未通过校验：${reasons || '内容不完整'}${codes.length ? `（${codes.join(', ')}）` : ''}。本次未加入内容库，可手动重试；可能产生费用。`,

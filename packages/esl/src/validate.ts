@@ -70,7 +70,8 @@ export interface ValidationContext {
   exposureCounts?: Map<string, number>;
   /**
    * 场景数口径：缺省沿用实验契约（基本场景 3–4，derive/quiz/card 不计）；
-   * 应用创作草稿（v4）显式传入 { min: 1, max: 10, includeExercises: true }，按全部场景计数。
+   * 应用创作草稿（v4）显式传入 { min: 10, max: 20, includeExercises: true }，按全部场景计数
+   * （草稿一个组件恰好编译成一个场景，所以组件数必须与场景数一致）。
    */
   sceneCountPolicy?: { min: number; max: number; includeExercises: boolean };
   channelIsImprov?: boolean;

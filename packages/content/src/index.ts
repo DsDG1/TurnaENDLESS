@@ -256,7 +256,7 @@ export function createContent(lexiconText: string) {
     });
   }
 
-  /** v4 校验上下文：应用素材注册表 + 注册角色 + 1–10 场口径；旧契约上下文不变。
+  /** v4 校验上下文：应用素材注册表 + 注册角色 + 10–20 场口径；旧契约上下文不变。
    *  词表只在原 allowedForms 之上加注册专有名词（badger/mouse/guide）；
    *  来源文本（fact/example）同样接受 5% OOV 与行长校验，不通过即为真实内容问题。 */
   function creativeContext(context: ValidationContext): ValidationContext {
