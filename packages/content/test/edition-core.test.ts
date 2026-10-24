@@ -267,4 +267,12 @@ describe('EDITION-DRAFT/1 解析（C04）', () => {
     if (!parsed.ok) return;
     expect(parsed.draft.components[0]?.lines).toHaveLength(1);
   });
+
+  it('容器首行不是 manifest 对象时给出明确错误，而不是 TypeError', () => {
+    expect(() => edition.parseContainer('null')).toThrow(/manifest 对象/);
+    expect(() => edition.parseContainer('[]')).toThrow(/manifest 对象/);
+    expect(() => edition.parseContainer('"text"')).toThrow(/manifest 对象/);
+    expect(() => edition.parseContainer('not json at all')).toThrow(/有效 JSON/);
+    expect(() => edition.parseContainer('')).toThrow(/容器为空/);
+  });
 });

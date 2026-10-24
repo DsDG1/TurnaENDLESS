@@ -11,7 +11,7 @@
  * 状态迁移与命令在 `workspace.ts`；修订流水线在 `revision.ts`；回收站在 `lifecycle.ts`。
  */
 import { z } from 'zod';
-import { Batch } from '@endless/esl';
+import { Batch, contentHash, stableStringify } from '@endless/esl';
 import { SessionSchema, type PlayerEvent } from '@endless/player';
 import { creativeKinds, creativeSeries, type CreativeSeriesId } from './creative-policy.js';
 
@@ -67,12 +67,12 @@ export const WorkspaceIdentitySchema = z.object({
 });
 export type WorkspaceIdentity = z.infer<typeof WorkspaceIdentitySchema>;
 
-/** 本地档案：稳定的本地归属标识。不等于已登录账号，`boundAccountId` 只会是 null。 */
+/** 本地档案：稳定的本地归属标识。不等于已登录账号，`boundAccountId` 只能为 null（不做账号体系）。 */
 export const LocalProfileSchema = z.object({
   id: z.string().min(1),
   createdAt: z.string().datetime(),
   label: z.string().min(1).max(60).optional(),
-  boundAccountId: z.string().min(1).nullable(),
+  boundAccountId: z.literal(null),
 });
 export type LocalProfile = z.infer<typeof LocalProfileSchema>;
 
@@ -514,6 +514,14 @@ export function assertWorkspace(data: Workspace): Workspace {
       if (!parent) { fail('E-CONTRACT-BRANCH', '父分支不存在'); continue; }
       if (branch.forkAtEventCount === null) fail('E-CONTRACT-BRANCH', '子分支必须记录分叉点');
       if (branch.forkAtEventCount! > parent.session.events.length) fail('E-CONTRACT-BRANCH', '分叉点超出父分支历史');
+      // 分叉点之前必须逐字节等于父分支：否则导入的分支可以声称血缘却带不同历史
+      const boundary = branch.forkAtEventCount!;
+      if (stableStringify(branch.session.events.slice(0, boundary)) !== stableStringify(parent.session.events.slice(0, boundary))) {
+        fail('E-CONTRACT-BRANCH', '子分支的历史前缀与父分支不一致');
+      }
+      if (branch.session.catalog !== parent.session.catalog) {
+        fail('E-CONTRACT-BRANCH', '子分支的内容目录与父分支不一致');
+      }
     } else if (branch.forkAtEventCount !== null) {
       fail('E-CONTRACT-BRANCH', '根分支不能有分叉点');
     }
@@ -531,9 +539,18 @@ export function assertWorkspace(data: Workspace): Workspace {
     for (const member of volume.members) {
       const revision = revisions.get(member.revisionId);
       if (!revision || revision.contentId !== member.contentId) fail('E-CONTRACT-VOLUME', '归档卷成员引用了不匹配的修订');
+      const entry = contents.get(member.contentId);
+      if (!entry) fail('E-CONTRACT-VOLUME', '归档卷成员引用了不存在的内容');
+      // 活跃内容与卷成员必须双向一致；已回收的内容会被清空 archiveVolumeId，允许单向
+      if (entry!.lifecycle === 'active' && entry!.archiveVolumeId !== volume.id) {
+        fail('E-CONTRACT-VOLUME', '活跃内容与归档卷成员不一致');
+      }
     }
     if (new Set(volume.members.map((member) => member.revisionId)).size !== volume.members.length) {
       fail('E-CONTRACT-VOLUME', '同一归档卷不能重复收录同一修订');
+    }
+    if (new Set(volume.members.map((member) => member.contentId)).size !== volume.members.length) {
+      fail('E-CONTRACT-VOLUME', '同一归档卷不能重复收录同一内容');
     }
     if (volume.checkpointId && !data.checkpoints.some((checkpoint) => checkpoint.id === volume.checkpointId)) {
       fail('E-CONTRACT-VOLUME', '归档卷引用了不存在的检查点');
@@ -547,14 +564,47 @@ export function assertWorkspace(data: Workspace): Workspace {
   }
 
   for (const checkpoint of data.checkpoints) {
-    if (!branches.has(checkpoint.branchId)) fail('E-CONTRACT-CHECKPOINT', '检查点引用了不存在的分支');
+    const branch = branches.get(checkpoint.branchId);
+    if (!branch) fail('E-CONTRACT-CHECKPOINT', '检查点引用了不存在的分支');
+    const owner = branch!;
+    if (checkpoint.eventPrefix.count > owner.session.events.length) {
+      fail('E-CONTRACT-CHECKPOINT', '检查点前缀超出分支历史');
+    }
+    const expected = contentHash({
+      catalog: owner.session.catalog,
+      events: owner.session.events.slice(0, checkpoint.eventPrefix.count),
+    });
+    if (checkpoint.eventPrefix.hash !== expected) {
+      fail('E-CONTRACT-CHECKPOINT', '检查点前缀哈希与分支历史不一致');
+    }
   }
   for (const ticket of data.tickets) {
-    if (!branches.has(ticket.branchId)) fail('E-CONTRACT-TICKET', '生成任务引用了不存在的分支');
+    const branch = branches.get(ticket.branchId);
+    if (!branch) fail('E-CONTRACT-TICKET', '生成任务引用了不存在的分支');
     if (ticket.basis.branchId !== ticket.branchId) fail('E-CONTRACT-TICKET', '生成任务的依据与分支不一致');
+    // 进行中的任务必须能按其依据重新取出同样的库；已结束的任务不做闭包要求
+    // （purgeContent 之后历史票据的 adopted 会指向已删内容，这是允许的）
+    if (ticket.status === 'reserved' || ticket.status === 'submitted') {
+      for (const adopted of ticket.basis.adopted) {
+        const revision = revisions.get(adopted.revisionId);
+        if (!revision || revision.contentId !== adopted.contentId) {
+          fail('E-CONTRACT-TICKET', '进行中任务的依据引用了不匹配的修订');
+        }
+        if (!branch!.adopted.some((entry) => entry.revisionId === adopted.revisionId && entry.contentId === adopted.contentId)) {
+          fail('E-CONTRACT-TICKET', '进行中任务的依据与分支采用清单不一致');
+        }
+      }
+      for (const contentId of ticket.basis.obligations) {
+        if (!contents.has(contentId)) fail('E-CONTRACT-TICKET', '进行中任务的依据引用了不存在的内容');
+      }
+    }
   }
   for (const obligation of data.obligations) {
     if (!contents.has(obligation.contentId)) fail('E-CONTRACT-OBLIGATION', '阅读义务引用了不存在的内容');
+    const revision = revisions.get(obligation.revisionId);
+    if (!revision || revision.contentId !== obligation.contentId) {
+      fail('E-CONTRACT-OBLIGATION', '阅读义务的修订不属于该内容');
+    }
   }
   for (const event of data.management) {
     if (event.branchId && !branches.has(event.branchId)) fail('E-CONTRACT-MANAGEMENT', '管理事件引用了不存在的分支');

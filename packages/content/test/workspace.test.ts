@@ -5,7 +5,7 @@ import { getOptions, getScenes, transition } from '@endless/player';
 import { contentHash } from '@endless/esl';
 import { createContent, type GeneratedEpisode } from '../src/index.js';
 import {
-  adoptRevisionInPlace, applyPlayerCommand, attachVolume, bridge, cancelTicket, commitTicketResult,
+  adoptRevisionInPlace, applyPlayerCommand, attachVolume, bridge, cancelTicket, checked, commitTicketResult,
   createWorkspace, detachVolume, markTicketFailed, purgePreview, reserveTicket, restoreContent, switchBranch,
   trashContent, updateDisplay, waiveObligation,
 } from '../src/workspace.js';
@@ -269,6 +269,53 @@ describe('endless-workspace 运行时', () => {
     const tampered = JSON.parse(JSON.stringify(backup));
     tampered.workspace.data.entries = [];
     expect(() => parseBackup(tampered)).toThrow();
+  });
+
+  it('备份清单计数与三方身份任一不一致都拒绝导入', () => {
+    const ws = playedPilot();
+    const counted = JSON.parse(JSON.stringify(buildBackup(ws)));
+    counted.manifest.counts.entries += 1;
+    expect(() => parseBackup(counted, ws)).toThrow(/清单与实际内容不一致/);
+
+    const identity = JSON.parse(JSON.stringify(buildBackup(ws)));
+    identity.manifest.repositoryRevision += 1;
+    expect(() => parseBackup(identity, ws)).toThrow(/清单与快照身份不一致/);
+
+    const drift = JSON.parse(JSON.stringify(buildBackup(ws)));
+    drift.workspace.identity.workspaceId = 'ws_11111111-1111-4111-8111-111111111111';
+    expect(() => parseBackup(drift, ws)).toThrow(/清单与快照身份不一致/);
+  });
+
+  it('契约断言拒绝被篡改的引用闭包', () => {
+    const ws = generatedDoc(playedPilot()).ws;
+
+    // 义务的修订必须属于该内容
+    const obligation = ws.obligations.find((o: ReadingObligation) => !o.waivedAt)!;
+    const foreign = ws.revisions.find((r: AnyRevision) => r.contentId !== obligation.contentId)!;
+    expect(() => checked({ ...ws, obligations: [{ ...obligation, revisionId: foreign.id }] }))
+      .toThrow(/阅读义务的修订不属于该内容/);
+
+    // 活跃内容与归档卷必须双向一致
+    const ids = ws.entries.map((entry: ContentEntry) => entry.id);
+    const volume = buildVolume(ws, bridge(content, ws), ids, '未挂载的卷');
+    expect(() => checked({ ...ws, volumes: [volume] })).toThrow(/活跃内容与归档卷成员不一致/);
+
+    // 子分支的事件前缀必须逐字节等于父分支
+    const branch = ws.branches[0]!;
+    expect(branch.session.events.length).toBeGreaterThan(0);
+    const forged = {
+      ...branch,
+      id: 'brn_11111111-1111-4111-8111-111111111111',
+      label: '伪造的分支',
+      parentBranchId: branch.id,
+      forkAtEventCount: 1,
+      session: { ...branch.session, events: [{ ...branch.session.events[0]!, scene: 'tampered' }] },
+    };
+    expect(() => checked({ ...ws, branches: [branch, forged] })).toThrow(/历史前缀与父分支不一致/);
+
+    // 本地档案不绑定账号
+    expect(() => checked({ ...ws, profile: { ...ws.profile, boundAccountId: 'acc_1' as never } }))
+      .toThrow(/boundAccountId/);
   });
 
   it('检查点导出/导入与完整重放等价', () => {

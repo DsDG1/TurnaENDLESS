@@ -169,7 +169,16 @@ export function parseContainer(text: string): Container {
   if (byteLength(text) > CONTAINER_LIMITS.maxTotalBytes) throw new Error('容器超过解码体积上限');
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   if (!lines.length) throw new Error('容器为空');
-  const manifest = JSON.parse(lines[0]!) as ContainerManifest;
+  let head: unknown;
+  try {
+    head = JSON.parse(lines[0]!);
+  } catch {
+    throw new Error('容器首行不是有效 JSON；原始文件未被修改');
+  }
+  if (!head || typeof head !== 'object' || Array.isArray(head)) {
+    throw new Error('容器首行不是 manifest 对象；原始文件未被修改');
+  }
+  const manifest = head as ContainerManifest;
   checkDepth(manifest);
   if (!(CONTAINER_FORMATS as readonly string[]).includes(manifest.format)) {
     throw new Error(`不支持的容器格式：${String(manifest.format)}；原始文件未被修改`);

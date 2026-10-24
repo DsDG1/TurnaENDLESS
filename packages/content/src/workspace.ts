@@ -501,6 +501,9 @@ export function adoptRevisionInPlace(workspace: Workspace, contentId: string, re
 
 export function attachVolume(workspace: Workspace, volume: ArchiveVolume, at = new Date()): Workspace {
   const ids = new Set(volume.members.map((m) => m.contentId));
+  // 一个内容只能属于一个卷（entry.archiveVolumeId 只有一个位置）；重新成卷要先取消原归档
+  const conflict = workspace.entries.find((entry) => ids.has(entry.id) && entry.archiveVolumeId && entry.archiveVolumeId !== volume.id);
+  if (conflict) throw new Error('该内容已归档在另一个卷中，请先取消原归档再重新成卷');
   const time = at.toISOString();
   const next: Workspace = {
     ...workspace,

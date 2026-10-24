@@ -58,8 +58,18 @@ export function parseBackup(raw: unknown, existing?: Workspace | null): ImportPr
   const d = snapshot.data;
   if (c.entries !== d.entries.length || c.revisions !== d.revisions.length ||
     c.branches !== d.branches.length || c.volumes !== d.volumes.length ||
+    c.checkpoints !== d.checkpoints.length ||
     c.tickets !== d.tickets.length || c.management !== d.management.length) {
     throw new Error('备份清单与实际内容不一致，可能已被篡改，导入已取消');
+  }
+  // 清单、快照身份与快照数据必须指向同一个档案：任一不一致说明文件被拼接过
+  if (backup.manifest.workspaceId !== snapshot.identity.workspaceId ||
+    backup.manifest.profileId !== snapshot.identity.profileId ||
+    backup.manifest.repositoryRevision !== snapshot.identity.repositoryRevision ||
+    snapshot.identity.workspaceId !== d.identity.workspaceId ||
+    snapshot.identity.profileId !== d.identity.profileId ||
+    snapshot.identity.repositoryRevision !== d.identity.repositoryRevision) {
+    throw new Error('备份清单与快照身份不一致，可能已被篡改，导入已取消');
   }
   assertWorkspace(d);
   return { backup, conflicts: { existingWorkspaceId: !!existing && existing.identity.workspaceId === d.identity.workspaceId } };
