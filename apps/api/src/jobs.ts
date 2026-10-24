@@ -41,7 +41,7 @@ export class FileJobStore implements JobStore {
   async read(): Promise<JobRecord[]> {
     try {
       const raw: unknown = JSON.parse(await readFile(this.path, 'utf8'));
-      return z.object({ version: z.literal(1), jobs: z.array(JobSchema).max(200) }).parse(raw).jobs;
+      return z.object({ version: z.literal(1), jobs: z.array(JobSchema).max(2000) }).parse(raw).jobs;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw new ApiError(503, '生成任务缓存无法读取，请先备份并检查文件；不会覆盖原始数据');
@@ -57,6 +57,9 @@ export class FileJobStore implements JobStore {
 
 type Runner = (save: unknown, id: string, phase: (value: string) => void, apiKey?: string, archives?: import('@endless/content').ArchiveContextEntryWire[]) => Promise<GeneratedEpisode>;
 
+/** 本机任务缓存上限：超出时淘汰最旧的已结束任务，活动任务永不淘汰。 */
+const CACHE_LIMIT = 200;
+
 export class JobManager {
   private records = new Map<string, JobRecord>();
   private mutations: Promise<unknown> = Promise.resolve();
@@ -64,17 +67,19 @@ export class JobManager {
 
   async initialize() {
     const records = await this.store.read();
-    let interrupted = false;
-    for (const record of records) {
+    // 旧库可能超过缓存上限：保留全部活动记录 + 最新的已结束记录，其余丢弃后回写。
+    const kept = records.length > CACHE_LIMIT ? trim(records, CACHE_LIMIT) : records;
+    let changed = kept.length !== records.length;
+    for (const record of kept) {
       if (record.status === 'queued' || record.status === 'running') {
         record.status = 'failed';
         record.phase = '已中断';
         record.error = '服务端在生成期间中断，未自动重新调用模型；可手动重新生成（可能产生费用）';
-        interrupted = true;
+        changed = true;
       }
       this.records.set(record.id, record);
     }
-    if (interrupted) await this.store.write([...this.records.values()]);
+    if (changed) await this.store.write([...this.records.values()]);
   }
 
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
@@ -119,22 +124,43 @@ export class JobManager {
       if ([...this.records.values()].some((job) => job.status === 'queued' || job.status === 'running')) {
         throw new ApiError(429, '已有生成任务进行中，请等待完成后重试');
       }
-      if (this.records.size >= 200) throw new ApiError(429, '本机任务缓存已达到上限，请先备份并整理，不会自动删除');
+      await this.sweep();
+      if (this.records.size >= CACHE_LIMIT) throw new ApiError(429, '本机任务缓存已达到上限且都是进行中的任务，请先备份并整理，不会自动删除');
       const record: JobRecord = {
         id: input.requestId, payloadHash, storyHash, status: 'queued', phase: '已排队', createdAt: new Date().toISOString(),
       };
       await this.replace(record);
-      void this.run(record.id, input.save, options.apiKey, input.archives);
+      void this.run(record.id, input.save, options.apiKey, input.archives).catch(() => {});
       return structuredClone(record);
     });
   }
 
+  /** 缓存到顶时淘汰最旧的已结束任务；活动任务永不淘汰。 */
+  private async sweep() {
+    if (this.records.size < CACHE_LIMIT) return;
+    const next = new Map(this.records);
+    for (const job of [...next.values()]
+      .filter((entry) => entry.status === 'succeeded' || entry.status === 'failed')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      if (next.size < CACHE_LIMIT) break;
+      next.delete(job.id);
+    }
+    if (next.size === this.records.size) return;
+    await this.store.write([...next.values()]);
+    this.records = next;
+  }
+
   private async run(id: string, save: unknown, apiKey?: string, archives?: import('@endless/content').ArchiveContextEntryWire[]) {
+    let acquired = false;
     try {
       this.gate.acquire('endless');
+      acquired = true;
     } catch (error) {
       if (error instanceof ExecutionBusyError) {
-        await this.mutate(() => this.replace({ ...this.records.get(id)!, status: 'failed', phase: '未开始', error: error.message }));
+        // 未拿到槽位就不占位；写盘失败也不能把记录留在 queued（否则后续任务全部 429）。
+        await this.mutate(() => this.replace({
+          ...this.records.get(id)!, status: 'failed', phase: '未开始', error: error.message,
+        })).catch(() => { this.records.delete(id); });
         return;
       }
       throw error;
@@ -175,8 +201,17 @@ export class JobManager {
         this.records.set(id, { ...failed, error: '服务端缓存写入失败，请检查磁盘；不会自动重新调用模型' });
       }
     } finally {
-      this.gate.release('endless');
+      // 只有真正拿到槽位才释放，避免 busy 分支替别人的任务清槽。
+      if (acquired) this.gate.release('endless');
       apiKey = undefined;
     }
   }
+}
+
+/** 保留全部活动记录 + 最新的已结束记录，总数不超过 limit。 */
+function trim(records: JobRecord[], limit: number): JobRecord[] {
+  const sorted = [...records].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const active = sorted.filter((record) => record.status === 'queued' || record.status === 'running');
+  const terminal = sorted.filter((record) => record.status !== 'queued' && record.status !== 'running');
+  return [...active, ...terminal.slice(-Math.max(0, limit - active.length))];
 }

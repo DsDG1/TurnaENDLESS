@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { JobManager, MemoryJobStore, type JobRecord } from '../src/jobs.js';
+import { FileJobStore, JobManager, MemoryJobStore, type JobRecord } from '../src/jobs.js';
 
 const request = () => ({ requestId: randomUUID(), save: { version: 2, revision: 0, session: {}, generated: [] } });
 const flush = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -139,5 +142,44 @@ describe('生成任务的幂等性和费用护栏', () => {
     expect(jobs.get(input.requestId)?.failure?.category).toBe(category);
     expect(jobs.get(input.requestId)?.error).toContain(label);
     expect(JSON.stringify(await store.read())).not.toContain('raw-provider-body');
+  });
+
+  it('缓存到 200 条时淘汰最旧的已结束任务，不拒绝新任务', async () => {
+    const records: JobRecord[] = Array.from({ length: 200 }, (_, index) => ({
+      id: randomUUID(), payloadHash: `hash-${index}`, storyHash: `story-${index}`,
+      status: 'succeeded', phase: '已完成',
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    }));
+    const store = new MemoryJobStore(records);
+    const jobs = new JobManager(store, async () => ({} as never));
+    await jobs.initialize();
+    expect(jobs.count()).toBe(200);
+
+    const input = request();
+    await jobs.submit(input);
+    await flush();
+    expect(jobs.count()).toBe(200);
+    expect(jobs.get(input.requestId)?.status).toBe('succeeded');
+    // 最旧的一条被淘汰，最新的历史记录仍在
+    expect(jobs.get(records[0]!.id)).toBeUndefined();
+    expect(jobs.get(records.at(-1)!.id)).toBeDefined();
+  });
+
+  it('旧库超过缓存上限时仍能启动，并裁剪到 200 条', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'endless-jobs-'));
+    const path = join(dir, 'jobs.json');
+    const records = Array.from({ length: 250 }, (_, index) => ({
+      id: randomUUID(), payloadHash: `h${index}`, status: 'succeeded' as const, phase: '已完成',
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    }));
+    await writeFile(path, JSON.stringify({ version: 1, jobs: records }));
+    try {
+      const jobs = new JobManager(new FileJobStore(path), async () => ({} as never));
+      await jobs.initialize();
+      expect(jobs.count()).toBe(200);
+      expect(jobs.get(records[0]!.id)).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
