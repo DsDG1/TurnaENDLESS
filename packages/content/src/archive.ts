@@ -57,22 +57,45 @@ export function suggestVolumes(workspace: Workspace, runtime: WorkspaceRuntime):
   return suggestions;
 }
 
+/** 节点的契约定位路径：`panels[0].bubbles[1].text` 这类可解析形式，不是内部 ID。 */
+function quotePath(node: { id: string; type: string }): string {
+  const parts = node.id.split('.');
+  const ordinal = (segment: string | undefined) =>
+    segment && /^[a-z]\d+$/.test(segment) ? Number(segment.slice(1)) : null;
+  const panel = ordinal(parts[1]);
+  if (panel !== null && parts[2]?.startsWith('b')) {
+    const bubble = ordinal(parts[2]);
+    if (bubble !== null) return `panels[${panel}].bubbles[${bubble}].text`;
+  }
+  if (panel !== null) return `panels[${panel}].caption`;
+  const message = ordinal(parts[1]);
+  if (message !== null && parts[1]?.startsWith('m')) return `messages[${message}].text`;
+  if (message !== null && parts[1]?.startsWith('c')) return `cards[${message}].caption`;
+  if (parts[1] === 'q') return 'question.text';
+  return node.id;
+}
+
 /** 从成员集的真实已读正文提取短引用（未完成/跳过的内容不进入摘要）。 */
 function collectQuotes(workspace: Workspace, runtime: WorkspaceRuntime, view: PlayerView, memberIds: Set<string>): ArchiveQuote[] {
   const quotes: ArchiveQuote[] = [];
   for (const adopted of runtime.branch.adopted) {
     if (!memberIds.has(adopted.contentId)) continue;
+    // 整集没真正读完（含跳过）就不取任何引用，避免把半途内容写成「读过」
+    if (statusOf(workspace, runtime, view, adopted.contentId) !== 'read') continue;
     const revision = workspace.revisions.find((r) => r.id === adopted.revisionId)!;
     const episode = runtime.library.episodes.find((e) => e.id === revision.episodeId);
     if (!episode) continue;
     const progress = view.episodes[episode.id];
+    // 只收有真实正文的节点：位置/镜头/选项等元数据不是「读过的句子」
+    const quotable = new Set(['panel', 'bubble', 'message', 'card', 'question']);
     for (const node of episode.ast.nodes) {
+      if (!quotable.has(node.type)) continue;
       const sceneId = node.parent?.startsWith('s') ? (node.parent.includes('.')
         ? episode.ast.nodes.find((n) => n.id === node.parent)?.parent ?? node.parent : node.parent) : null;
       if (!sceneId || !progress?.scenes[sceneId]?.completed) continue;
       const text = node.type === 'panel' ? node.data.caption : node.data.text;
       if (typeof text === 'string' && text && quotes.length < 200) {
-        quotes.push({ revisionId: revision.id, contentId: adopted.contentId, sceneId, path: `${node.type}/${node.id}`, text: text.slice(0, 300) });
+        quotes.push({ revisionId: revision.id, contentId: adopted.contentId, sceneId, path: quotePath(node), text: text.slice(0, 300) });
       }
     }
   }
@@ -91,6 +114,8 @@ export function buildVolume(workspace: Workspace, runtime: WorkspaceRuntime, mem
   const memberEpisodes = new Set(members.map((m) => workspace.revisions.find((r) => r.id === m.revisionId)!.episodeId));
   const facts = view.world.currentFacts()
     .filter((fact) => memberEpisodes.has(fact.source_batch))
+    // 传闻不是已确认事实：不能写进「本卷的事实」
+    .filter((fact) => fact.standing !== 'rumor')
     .slice(0, 200)
     .map((fact) => ({ subject: fact.subject, predicate: fact.predicate, object: fact.object }));
   const contentByEpisode = new Map(members.map((m) => [
@@ -99,7 +124,12 @@ export function buildVolume(workspace: Workspace, runtime: WorkspaceRuntime, mem
   const choices = view.world.userFacts()
     .filter((fact) => memberEpisodes.has(fact.batch))
     .slice(0, 500)
-    .map((fact) => ({ contentId: contentByEpisode.get(fact.batch)!, sceneId: fact.batch, chosen: `${fact.predicate} ${fact.object}` }));
+    .map((fact) => ({
+      contentId: contentByEpisode.get(fact.batch)!,
+      // 有真实场景就记场景；老数据没有时退回剧集 ID（只影响定位粒度）
+      sceneId: fact.scene ?? fact.batch,
+      chosen: `${fact.predicate} ${fact.object}`,
+    }));
   const reading = members.map((member) => ({ contentId: member.contentId, status: statusOf(workspace, runtime, view, member.contentId) }));
   const first = workspace.entries.find((e) => e.id === members[0]!.contentId)!;
   const threads = view.world.openThreads()

@@ -232,6 +232,20 @@ describe('endless-workspace 运行时', () => {
     expect(() => markTicketFailed(ws, ticket.id, 'unknown')).toThrow(/已结束/);
   });
 
+  it('归档摘要只描述真实读完的内容：引用路径可解析、选择定位到场景', () => {
+    const ws = generatedDoc(playedPilot()).ws;
+    const runtime = bridge(content, ws);
+    const ids = ws.entries.filter((entry: ContentEntry) => entry.sourceKind === 'bundled').map((entry: ContentEntry) => entry.id);
+    const volume = buildVolume(ws, runtime, ids, '试播卷');
+    expect(volume.reading.every((entry: { status: string }) => entry.status === 'read')).toBe(true);
+    expect(volume.quotes.length).toBeGreaterThan(0);
+    for (const quote of volume.quotes) {
+      // 契约要求可解析的定位路径，不是内部节点 ID
+      expect(quote.path).toMatch(/^(panels\[\d+\](\.bubbles\[\d+\])?\.(caption|text)|messages\[\d+\]\.text|cards\[\d+\]\.caption|question\.text)$/);
+    }
+    for (const choice of volume.choices) expect(choice.sceneId).toMatch(/^s\d+$/);
+  });
+
   it('读完生成集自动解除阅读义务，恢复生成资格', () => {
     let ws = generatedDoc(playedPilot()).ws;
     const entry = ws.entries.find((e: ContentEntry) => e.sourceKind === 'generated')!;

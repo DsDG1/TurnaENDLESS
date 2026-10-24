@@ -1240,3 +1240,42 @@ Windows 可用既有 Edge 配置运行，不能只验证 Vite 开发页。
 
 §21.2 的旧耗时/体积数字不是本轮性能承诺。原有 4173/4174 服务保持运行；
 本轮浏览器测试使用独立生产 preview 端口 4273（`PLAYWRIGHT_PORT`），不启动/重启用户的 API、不触发实际数据迁移。
+
+### 21.7 缺陷修复记录（第二轮）
+
+对照 §21.5 与独立代码审查逐条修复；本节只记改动与验证，不改动既有里程碑结论。
+
+**应用层**
+
+- 提示词原写「总组件数 1–10」而校验要求 10–20 场，且一个组件恰好一个场景：可行域被压成「正好 10 个组件」。改为「组件总数 10–20（一组件一场景）」，并写明用中性叙事块补足。
+- 整稿修复循环原无上限：失败签名归一化（数字折叠）后比较，最多 6 次、120k token 预算，超限以 `E-DRAFT-ATTEMPTS`/`E-DRAFT-BUDGET` 结束。
+- 执行槽改为**严格互斥**（同模式第二个任务也拒绝）；Edition 在提交时检查执行槽，不再建一个注定失败的任务。
+- 应用入口拒绝 `save.generated` 里的非 v4 文档；`commitTicketResult` 对非 v4 文档给契约错误而不是 `TypeError`。
+- 跳过不再算读完：新增 `episodeCompletion`，`archive.statusOf`、义务解除、生成资格、集卡徽标统一使用。
+- 导入备份后推进本地存档基线；生成票据在提交失败时保留引用（可取消/重试）；已结束票据不能改状态。
+- 分叉修订登记进 `entry.revisionIds`/`headRevisionId`；`assertWorkspace` 增加「每条修订必须被其内容收录」。
+- `BranchSchema.session` 改用 stamped 事件 schema，备份往返不再丢 `contentId`/`revisionId`。
+- 契约补断言：义务修订归属、卷与条目双向、卷内 contentId 不重复、子分支前缀逐字节一致、检查点前缀哈希、进行中票据依据闭包、`boundAccountId` 只能为 null；备份校验补 `checkpoints` 计数与三方身份一致。
+- 导入走隔离暂存；损坏存档给可读错误并可下载完整 `rawSnapshot`；导出前 `assertNoSecrets`。
+- 内容质量：`quiz find` 干扰项按批次确定性抽样；`@fact` 的中文词义不再进入「前文原句」池；`uses` 只从叙述单元推导；归档引用只取真正读完的集、路径按契约可解析、传闻不进已确认事实、选择定位到真实场景。
+
+**Edition**
+
+- `UnitPlan.order` 改为期内序号，构建器调用 `assertEditorialRevision`（20×10 夹具因此暴露并修正了「每期第一个 recap 缺少前置」）。
+- `releaseIssues` 校验 sourceAcks：属于语料、许可在 `acceptedLicenses`、有可发布的授权决策、语料每个来源都有署名。
+- IPv6 私网拦截补 6to4 / Teredo / 组播 / IPv4-compatible / discard。
+- SQLite 设 `busy_timeout`，外部持锁映射 `503 E-EDITION-BUSY`；`updateJob` 每次写 `failure_code`；重启把 `cancel_requested` 落为 `cancelled`。
+- 提交时比对目录审批摘要；`reserveAttempt` 的唯一约束冲突归为 `conflict`；`getUnitsByIds` 加排序并按入参顺序返回。
+- 阅读备份的信任根只接受本地已知集合（`local`）；`supersedes` 安装时同步旧行的 `supersededBy`；研究去重键保留 query。
+- 新增受保护路由 `POST /api/editions/:id/drafts` 登记已批准草稿，`capabilities.draftRegistration = true`，`compile_issue` 不再因缺少入口必然失败。
+
+**验证（2026-10-25）**
+
+| 验证 | 结果 |
+|---|---|
+| `pnpm test` | **517 项通过**（content 97、api 101、web 36、esl 99、world 12、learning 18、player 10、director 45、lab 99） |
+| `pnpm typecheck` | 全工作区通过 |
+| `pnpm build` | 通过；主 chunk 仍超 500 kB 的告警保留，不当性能达标 |
+| `pnpm test:e2e` | **38 项通过**（桌面/移动各 19），含 v4 混合内容流与 Edition 安装/阅读/离线 |
+
+仍未做（与 §21.3 一致）：模型自动写作闭环、研究/抓取的路由与界面、编辑界面、B2–C2、跨模式证据账本、外部人工评审签字。

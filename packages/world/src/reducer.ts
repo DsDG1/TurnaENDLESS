@@ -186,6 +186,7 @@ export function applyEffects(store: WorldStore, effects: Effect[], ctx: ReduceCo
         object: op.user_fact.object,
         card: ctx.card,
         batch: ctx.batch,
+        scene: ctx.scene ?? null,
       });
       result.changes.userFacts++;
       result.applied.push(op);

@@ -499,7 +499,7 @@ ${fillerNeutral('duck', 'cat', 'agency_office').slice(0, 9).join('\n')}`;
       context: { ...t.context, brief: { ...t.context.brief, introduce: [], expose: [] } },
       targets: [{ alias: 't1', item, forms: content.lexicon.forms.get(item) ?? [], gloss: '笔记本', interaction: 'practice' as const, role: 'expose' as const, materials: { gloss: true, example: false, picture: true } }],
       detection: [], practice: [{ item, type: 'practice' as const }] } as typeof t;
-    const compiled = content.compileDraft(`ENDLESS-DRAFT/1
+    const draft = `ENDLESS-DRAFT/1
 @kind story
 @series duck_detective
 @title t
@@ -507,7 +507,9 @@ ${fillerNeutral('duck', 'cat', 'agency_office').slice(0, 9).join('\n')}`;
 @description d
 @quiz find t1
 @end
-${fillerNeutral('duck', 'cat', 'agency_office').slice(0, 9).join('\n')}`, base, content.pilot, 'ai-find');
+${fillerNeutral('duck', 'cat', 'agency_office').slice(0, 9).join('\n')}`;
+    const compile = (batchId: string) => content.compileDraft(draft, base, content.pilot, batchId);
+    const compiled = compile('ai-find');
     assertOk(compiled);
     if (!compiled.ok) return;
     const scene = compiled.batch.scenes.find((s) => s.type === 'quiz')!;
@@ -519,6 +521,44 @@ ${fillerNeutral('duck', 'cat', 'agency_office').slice(0, 9).join('\n')}`, base, 
       expect(other.asset).not.toBe(correct.asset);
       expect(other.asset!.startsWith('@emoji:')).toBe(true);
     }
+
+    // 干扰项随批次确定性抽样：同批次重编译完全一致，不同批次不再共用同一组
+    const distractors = (batchId: string) => {
+      const result = compile(batchId);
+      if (!result.ok) throw new Error('find 草稿应可编译');
+      const quiz = result.batch.scenes.find((s) => s.type === 'quiz')!;
+      if (quiz.type !== 'quiz') throw new Error('缺少 quiz 场景');
+      return quiz.options.filter((o) => !o.correct).map((o) => o.asset).sort();
+    };
+    expect(distractors('ai-find')).toEqual(distractors('ai-find'));
+    expect(distractors('ai-find')).not.toEqual(distractors('ai-find-other'));
+  });
+
+  it('@fact 之后接 cloze 时取材必须落在真实英文上，不能把中文词义当原句', () => {
+    const t = task();
+    const intro = t.targets.find((x) => t.brief.introduce.includes(x.item))!;
+    const draft = `ENDLESS-DRAFT/1
+@kind knowledge
+@series word_window
+@title 词义窗
+@subtitle Word window
+@description 本地词库的小窗口
+@fact ${intro.alias}
+@end
+@quiz cloze ${intro.alias}
+@end
+${padBlocks([], [intro].flatMap((x) => [`@card ${x.alias}\n@end`, `@example ${x.alias}\n@end`])).join('\n')}`;
+    const compiled = content.compileDraft(draft, t, content.pilot, 'ai-fact-cloze');
+    if (!compiled.ok) {
+      // 找不到英文原句时明确拒绝，而不是拿词义卡合成句蒙混
+      expect(compiled.issues.some((i) => i.message.includes('cloze'))).toBe(true);
+      return;
+    }
+    const quiz = compiled.batch.scenes.find((s) => s.type === 'quiz');
+    expect(quiz?.type).toBe('quiz');
+    if (quiz?.type === 'quiz') expect(quiz.question).not.toMatch(/[\u4e00-\u9fa5]/);
+    const source = compiled.creation.sources.find((entry) => entry.field === 'text');
+    if (source) expect(source.text).not.toMatch(/[\u4e00-\u9fa5]/);
   });
 
   it('v4 文档可验收与恢复；篡改草稿/正文/来源/系列都被拒绝；mixed v3+v4 恢复不推断新来源', () => {

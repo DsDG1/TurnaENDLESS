@@ -59,6 +59,8 @@ export interface UserFactRow {
   object: string;
   card: number;
   batch: string;
+  /** 产生这条选择的场景 ID；老数据或外部库里可能是 null（只用于定位，不参与判定）。 */
+  scene: string | null;
 }
 
 export interface EpisodeSummaryRow {

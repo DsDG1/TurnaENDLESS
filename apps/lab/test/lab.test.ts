@@ -33,7 +33,7 @@ describe('SQLite 存储', () => {
     db.upsertThread({ id: 't1', title: 'T', status: 'open', owner_channel: 'duck_detective', opened_card: 1, last_touched_card: 1, priority: 2, setup: 'T', payoff_hint: null, expires_after_cards: 50 });
     expect(db.openThreads()).toHaveLength(1);
     expect(db.getThread('t1')?.status).toBe('open');
-    db.insertUserFact({ predicate: 'rejected', object: 'cat', card: 2, batch: 'b1' });
+    db.insertUserFact({ predicate: 'rejected', object: 'cat', card: 2, batch: 'b1', scene: null });
     expect(db.userFacts('rejected')).toHaveLength(1);
     db.insertSummary({ channel: 'duck_detective', from_card: 0, to_card: 9, text: 's' });
     expect(db.latestSummary('duck_detective')?.text).toBe('s');

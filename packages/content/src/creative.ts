@@ -304,8 +304,19 @@ export function compileDraft(
   for (const entry of task.practice) required.set(entry.item, 'practice');
 
   const propIds = new Set(materialProps.map((p) => p.id));
-  const distractorProps = (exclude: string, n: number): MaterialProp[] =>
-    materialProps.filter((p) => p.id !== exclude).slice(0, n);
+  /**
+   * quiz find 的干扰项：按批次与场景确定性抽样。
+   * 取目录前三个会让所有题共用同一组干扰项，用户两题就能靠「不是放大镜」蒙对。
+   */
+  const distractorProps = (item: string, sceneId: string, n: number): MaterialProp[] => {
+    const exclude = materialPictureOf(item);
+    return materialProps
+      .filter((prop) => prop.id !== exclude)
+      .map((prop) => ({ prop, key: fnv1a32(`${batchId}:${sceneId}:${item}:${prop.id}`) }))
+      .sort((a, b) => a.key - b.key || a.prop.id.localeCompare(b.prop.id))
+      .slice(0, n)
+      .map((entry) => entry.prop);
+  };
 
   // 场景与叙述行按草稿顺序累积（card/practice-quiz 只能引用更早的正文）
   const scenes: Scene[] = [];
@@ -636,7 +647,7 @@ export function compileDraft(
           if (!prop || !gloss || !forms[0]) {
             error(issues, `quiz find：${target.item} 没有登记对应的图片素材，不能编造图案`); break;
           }
-          const others = distractorProps(prop, 3);
+          const others = distractorProps(target.item, id, 3);
           build('find', `「${forms[0]}」是哪一个？`, gloss, others.map((p) => p.label),
             [undefined, ...others.map((p) => `@emoji:${p.id}`)]);
           if (scene) {
@@ -680,7 +691,8 @@ export function compileDraft(
           };
           scenes.push(scene);
           recordSource(id, target.item, 'gloss', target.item, front, '本地词库 · 词义');
-          draftNarrative.push({ sceneId: id, text: front });
+          // 词义卡合成的是「buy — 购买」，不是英文原文：不能进「本集前文原句」池
+          // （否则后续 @card / @quiz cloze 会拿中文词义当原句取材）
           } else {
           const example = entry?.example;
           if (!example || !forms.some((f) => locateForm(example, f).length)) {
@@ -751,7 +763,10 @@ export function compileDraft(
     const uses = new Set(scene.uses ?? []);
     for (const item of taskItems) {
       if (uses.has(item)) continue;
-      if (sceneUnits.some((u) => formsOf(item).some((f) => locateForm(u.text, f).length))) uses.add(item);
+      // 只统计叙述单元：干扰项/题干/反馈里出现目标词不等于「在正文里读过」
+      if (sceneUnits.some((u) => u.role === 'narrative' && formsOf(item).some((f) => locateForm(u.text, f).length))) {
+        uses.add(item);
+      }
     }
     if (uses.size) scene.uses = [...uses];
   }

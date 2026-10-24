@@ -188,7 +188,8 @@ export class SqliteWorldStore implements WorldStore {
   userFacts(predicate?: string): UserFactRow[] {
     const rows = this.db.prepare('SELECT * FROM user_facts ORDER BY id').all() as Record<string, unknown>[];
     return rows
-      .map((r) => ({ id: Number(r.id), predicate: String(r.predicate), object: String(r.object), card: Number(r.card), batch: String(r.batch) }))
+      // 实验库不存 scene 列：读回时按 null 处理，只影响定位不影响判定
+      .map((r) => ({ id: Number(r.id), predicate: String(r.predicate), object: String(r.object), card: Number(r.card), batch: String(r.batch), scene: null }))
       .filter((u) => !predicate || u.predicate === predicate);
   }
 
