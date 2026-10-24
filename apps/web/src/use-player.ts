@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getScenes, projectSession, type PlayerCommand, type PlayerView } from '@endless/player';
+import { episodeCompletion, getScenes, projectSession, type PlayerCommand, type PlayerView } from '@endless/player';
 import {
   adoptRevision, applyPlayerCommand, attachVolume, bridge, buildBackup, buildGenerationContext,
   buildVolume, cancelTicket, commitTicketResult, createWorkspace, detachVolume, markTicketFailed,
@@ -10,12 +10,8 @@ import {
 } from '@endless/content';
 import { content } from './content/catalog.js';
 import { WorkspaceRepository } from './storage.js';
+import { SessionCommitter } from './session-writer.js';
 import { apiStatus, generateEpisode } from './api.js';
-
-const bump = (workspace: Workspace, committedRev: number): Workspace => ({
-  ...workspace,
-  identity: { ...workspace.identity, repositoryRevision: committedRev + 1 },
-});
 
 export function usePlayer() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -30,8 +26,8 @@ export function usePlayer() {
   const [apiError, setApiError] = useState('');
   const [apiKey, setApiKey] = useState('');
   const repository = useRef<WorkspaceRepository | null>(null);
+  const writer = useRef<SessionCommitter | null>(null);
   const current = useRef<Workspace | null>(null);
-  const committedRev = useRef(-1);
   const pending = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const currentTicket = useRef<GenerationTicket | null>(null);
@@ -40,17 +36,20 @@ export function usePlayer() {
     let active = true;
     const storage = new WorkspaceRepository();
     repository.current = storage;
-    void storage.load().then((stored) => {
+    writer.current = new SessionCommitter(storage, -1);
+    void storage.load().then(async (stored) => {
       if (!active) return;
+      writer.current = new SessionCommitter(storage, stored?.identity.repositoryRevision ?? -1);
       const workspace = stored ?? createWorkspace(content);
-      committedRev.current = stored?.identity.repositoryRevision ?? -1;
       if (!stored) {
-        const committed = bump(workspace, committedRev.current);
-        void storage.commit(committed).then(() => {
-          committedRev.current = committed.identity.repositoryRevision;
-        });
-        current.current = committed;
-        setWorkspace(committed);
+        // 首次建库：提交失败必须显示可重试错误，不能让界面假装已经保存
+        const written = await writer.current.commit(workspace);
+        if (!written.ok) {
+          setFailure(written.error);
+          return;
+        }
+        current.current = written.workspace;
+        setWorkspace(written.workspace);
       } else {
         current.current = workspace;
         setWorkspace(workspace);
@@ -109,20 +108,18 @@ export function usePlayer() {
     }
   }
 
-  /** 统一提交：内存命令 → bump → 事务提交 → 更新状态。 */
+  /** 统一提交：内存命令 → 递增版本 → 事务提交 → 更新状态；失败时保留原状态。 */
   async function commit(next: Workspace, options: { closingTicketId?: string } = {}): Promise<boolean> {
-    if (!repository.current) return false;
-    const committed = bump(next, committedRev.current);
-    try {
-      await repository.current.commit(committed, options);
-      committedRev.current = committed.identity.repositoryRevision;
-      current.current = committed;
-      setWorkspace(committed);
-      return true;
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '操作未保存，请重试');
+    const committer = writer.current;
+    if (!committer) return false;
+    const result = await committer.commit(next, options);
+    if (!result.ok) {
+      setNotice(result.error);
       return false;
     }
+    current.current = result.workspace;
+    setWorkspace(result.workspace);
+    return true;
   }
 
   async function dispatch(command: PlayerCommand): Promise<boolean> {
@@ -161,7 +158,7 @@ export function usePlayer() {
   }
 
   async function generate(): Promise<boolean> {
-    if (!current.current || !repository.current || pending.current) return false;
+    if (!current.current || !writer.current || pending.current) return false;
     pending.current = true;
     setGenerating(true);
     setNotice('');
@@ -177,12 +174,17 @@ export function usePlayer() {
         const requestId = created.id.slice(4);
         request = { requestId, save: context.save, archives: context.archives };
         // 预留任务必须先落库，再发请求；历史绑定存于任务依据
-        const committed = bump(reserved, committedRev.current);
-        await repository.current.commit(committed);
-        committedRev.current = committed.identity.repositoryRevision;
+        const reservedWrite = await writer.current.commit(reserved);
+        if (!reservedWrite.ok) {
+          setNotice(reservedWrite.error);
+          return false;
+        }
+        const committed = reservedWrite.workspace;
         current.current = committed;
         setWorkspace(committed);
         ticket = committed.tickets.find((t) => t.id === created.id)!;
+        // 预留已落库：立刻持有引用，后面任何一次提交失败都还能取消/重试
+        currentTicket.current = ticket;
         const submitted = markTicketSubmitted(committed, ticket.id);
         if (!(await commit(submitted))) return false;
       } else {
@@ -196,8 +198,8 @@ export function usePlayer() {
       if (abort.signal.aborted) return false;
       if (result.failed) {
         const failedWs = markTicketFailed(current.current!, ticket.id, result.failure?.category ?? 'unknown');
-        await commit(failedWs, { closingTicketId: ticket.id });
-        currentTicket.current = null;
+        // 失败状态没能落库时保留引用：用户仍可取消或重试，不会永久卡在预留态
+        if (await commit(failedWs, { closingTicketId: ticket.id })) currentTicket.current = null;
         setNotice(result.message);
         setPhase(result.message);
         void refreshApi();
@@ -206,13 +208,11 @@ export function usePlayer() {
       const next = commitTicketResult(content, current.current!, ticket.id, result.document);
       const failedTicket = next.tickets.find((t) => t.id === ticket.id);
       if (failedTicket?.status === 'failed') {
-        await commit(next, { closingTicketId: ticket.id });
-        currentTicket.current = null;
+        if (await commit(next, { closingTicketId: ticket.id })) currentTicket.current = null;
         setNotice('生成结果与当前历史不匹配，已保留结果但未写入分支。请检查分支状态');
         return false;
       }
-      const ok = await commit(next, { closingTicketId: ticket.id });
-      if (!ok) return false;
+      if (!(await commit(next, { closingTicketId: ticket.id }))) return false;
       currentTicket.current = null;
       // 选中新内容
       const adopted = next.branches.find((b) => b.id === next.activeBranchId)!;
@@ -274,23 +274,16 @@ export function usePlayer() {
   const backup = () => (current.current ? buildBackup(current.current) : null);
   const previewImport = (raw: unknown): ImportPreview => parseBackup(raw, current.current);
   const importBackup = async (preview: ImportPreview): Promise<boolean> => {
-    const data = preview.backup.workspace.data;
-    const committed = bump(data, committedRev.current);
-    if (!repository.current) return false;
-    try {
-      await repository.current.commit(committed);
-      current.current = committed;
-      setWorkspace(committed);
-      return true;
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '导入未提交，请重试');
-      return false;
-    }
+    // 导入也走同一个提交器：成功后基线自动前进，否则第一次答题会被自己的 CAS 拒掉
+    if (!(await commit(preview.backup.workspace.data))) return false;
+    const open = current.current?.tickets.find((t) => t.status === 'reserved' || t.status === 'submitted');
+    currentTicket.current = open ?? null;
+    return true;
   };
 
   const obligations = workspace?.obligations.filter((o) => !o.waivedAt) ?? [];
   const readyForGeneration = !!view && !obligations.length &&
-    library.episodes.every((episode) => (view.episodes[episode.id]?.cursor ?? 0) >= getScenes(episode).length);
+    library.episodes.every((episode) => episodeCompletion(view.episodes[episode.id], getScenes(episode).length).read);
   const canUseModel = !!api && (api.configured || (api.acceptsUserKey && !!apiKey.trim()));
   const learningNotes = useMemo(() => session ? content.learningNotes(session, library) : [], [session, library]);
   const nextWords = useMemo(() => {

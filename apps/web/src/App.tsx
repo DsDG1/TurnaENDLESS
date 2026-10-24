@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getOptions, getScenes, type Episode, type Library, type PlayerView } from '@endless/player';
+import { episodeCompletion, getOptions, getScenes, type Episode, type Library, type PlayerView } from '@endless/player';
 import { creativeSeries, materialBackgrounds, materialCharacters, materialProps, type CreativeSeriesId } from '@endless/content';
 import { BACKDROP_LABEL_BY_ID, CHARACTER_LABEL_BY_ID, Character, PROP_LABEL_BY_ID, PropArt, SeriesArt, StoryArt } from './components/art.js';
 import { Brand, Icon, type IconName } from './components/icons.js';
@@ -104,7 +104,8 @@ function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
       <div className="episode-grid">{library.episodes.map((episode, index) => {
         const progress = view.episodes[episode.id];
         const total = getScenes(episode).length;
-        const completed = (progress?.cursor ?? 0) >= total;
+        // 跳过也会推进 cursor：只有真正读完（无跳过）才算「已看完」
+        const completed = episodeCompletion(progress, total).read;
         const underway = (progress?.cursor ?? 0) > 0;
         return <button className={`episode-card episode-card-${index}`} key={episode.id} onClick={() => onSelect(episode)} disabled={busy} aria-label={`${completed ? '查看' : '播放'}第 ${index + 1} 集：${episode.title}`}>
           <div className="episode-art">{isPilotStory(episode) ? <StoryArt variant={index % 3} /> : <SeriesArt cast={seriesOf(episode).cast} backdrop={seriesOf(episode).backgrounds[0]} />}<span className="episode-number">{index < 3 ? 'EP.' : 'AI'} {String(index + 1).padStart(2, '0')}</span><span className="episode-play"><Icon name={completed ? 'check' : 'play'} size={16} /></span></div>
