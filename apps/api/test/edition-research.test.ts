@@ -82,4 +82,13 @@ describe('研究适配器（M3 / R01–R02）', () => {
     expect(outcome.available).toBe(true);
     expect(outcome.candidates).toHaveLength(2);
   });
+
+  it('只差 query 的 URL 不能继承同一份许可证据', () => {
+    const result = screenCandidates([
+      { url: 'https://archive.example/public-domain-piece', title: '已核验' },
+      { url: 'https://archive.example/public-domain-piece?page=unreviewed', title: '未核验的变体' },
+    ], policy);
+    expect(result.candidates.map((entry) => entry.url)).toEqual(['https://archive.example/public-domain-piece']);
+    expect(result.rejected.map((entry) => entry.url)).toContain('https://archive.example/public-domain-piece?page=unreviewed');
+  });
 });

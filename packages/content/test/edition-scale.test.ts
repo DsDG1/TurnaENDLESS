@@ -154,4 +154,17 @@ describe('规模夹具（M4）', () => {
     expect(exportedRun.events).toHaveLength(run.events.length);
     expect(edition.eventPrefixHash(exportedRun)).toBe(edition.eventPrefixHash(run));
   });
+
+  it('单元序号是期内序号：多期项目每期都从 1 开始，且构建产物通过契约断言', () => {
+    const small = edition.createEditionScaleSample(lexiconText, { issues: 2, unitsPerIssue: 3 });
+    for (const issue of small.editorial.issues) {
+      const orders = small.editorial.units
+        .filter((unit) => issue.unitIds.includes(unit.id))
+        .map((unit) => unit.order)
+        .sort((a, b) => a - b);
+      expect(orders).toEqual([1, 2, 3]);
+    }
+    // buildEditionProject 内部调用 assertEditorialRevision：能构建完成即代表契约成立
+    expect(small.editorial.units).toHaveLength(6);
+  });
 });

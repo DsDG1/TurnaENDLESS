@@ -174,6 +174,28 @@ function isBlockedIpv6(address: string): boolean {
   }
   if (bare.startsWith('64:ff9b')) return true; // NAT64
   if (bare.startsWith('2001:db8')) return true; // 文档保留
+  // IPv4 兼容地址 ::a.b.c.d / ::xxxx:xxxx：也内嵌 IPv4，按 IPv4 规则判断
+  if (bare.startsWith('::')) {
+    const tail = bare.slice(2);
+    if (tail.includes('.')) return isBlockedAddress(tail);
+    const hex = tail.split(':').filter(Boolean);
+    if (hex.length === 1) {
+      const value = parseInt(hex[0]!, 16);
+      if (!Number.isInteger(value)) return true;
+      return isBlockedAddress([value >> 24, (value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff].join('.'));
+    }
+    if (hex.length === 2) {
+      const high = parseInt(hex[0]!, 16);
+      const low = parseInt(hex[1]!, 16);
+      if (!Number.isInteger(high) || !Number.isInteger(low)) return true;
+      return isBlockedAddress([high >> 8, high & 0xff, low >> 8, low & 0xff].join('.'));
+    }
+    return true;
+  }
+  if (bare.startsWith('2002')) return true; // 6to4 2002::/16 内嵌 IPv4
+  if (/^2001:0{1,4}:/.test(bare) || bare.startsWith('2001:0000')) return true; // Teredo 2001::/32
+  if (/^ff/i.test(bare)) return true; // 组播 ff00::/8
+  if (bare.startsWith('100:')) return true; // discard 100::/64
   return false;
 }
 

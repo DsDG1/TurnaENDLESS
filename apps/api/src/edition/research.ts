@@ -159,7 +159,8 @@ export function screenCandidates(hits: readonly SearchHit[], policy: SourcePolic
 function normalizeKey(url: string): string {
   try {
     const parsed = new URL(url);
-    return `${parsed.host.toLowerCase()}${parsed.pathname.replace(/\/+$/, '')}`;
+    // 保留 query：只差 query 的 URL 是不同页面，不能让它们继承同一份已审核证据
+    return `${parsed.host.toLowerCase()}${parsed.pathname.replace(/\/+$/, '')}${parsed.search}`;
   } catch {
     return url;
   }

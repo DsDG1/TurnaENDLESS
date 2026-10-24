@@ -57,7 +57,8 @@ function recycledSeed(issueIndex: number, unitIndex: number): ProjectUnitSeed {
     title: `复现 ${issueIndex + 1}.${unitIndex + 1}`,
     subtitle: 'Recycled reading',
     description: `第 ${issueIndex + 1} 期第 ${unitIndex + 1} 单元的合成复现文本，用于规模验收。`,
-    role: 'recap',
+    // 每期第一个单元没有前置，不能声明为 recap（回顾单元必须有前置）
+    role: unitIndex === 0 ? 'explore' : 'recap',
     concept: `scale-concept-${issueIndex + 1}-${unitIndex + 1}`,
     goal: `在复现语境中再次读到温度与价格表达（${issueIndex + 1}.${unitIndex + 1}）`,
     segments: [...pool.segments],

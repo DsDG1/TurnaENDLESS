@@ -8,6 +8,7 @@
 import { validateBatch } from '@endless/esl';
 import { loadLexicon, type Lexicon } from '@endless/learning';
 import {
+  assertEditorialRevision,
   editorialDigest,
   newEditionId,
   unitRevisionDigest,
@@ -180,7 +181,6 @@ export function buildEditionProject(input: BuildProjectInput): BuiltProject {
   const issueSnapshots = new Map<string, SourceSnapshot[]>();
 
   const issueIds = input.issues.map(() => newEditionId('iss'));
-  let globalOrder = 0;
 
   input.issues.forEach((issueSeed, issueIndex) => {
     const issueId = issueIds[issueIndex]!;
@@ -190,7 +190,6 @@ export function buildEditionProject(input: BuildProjectInput): BuiltProject {
     let previousUnitId: string | null = null;
 
     issueSeed.units.forEach((seed) => {
-      globalOrder += 1;
       const snapshot: SourceSnapshot = {
         id: newEditionId('snp'),
         sourceId: rights.sourceId,
@@ -261,7 +260,8 @@ export function buildEditionProject(input: BuildProjectInput): BuiltProject {
       const unitPlanId = newEditionId('unt');
       const unitPlan: UnitPlan = {
         id: unitPlanId,
-        order: globalOrder,
+        // order 是「期内序号」，不是全刊序号：契约按 issue.unitIds 校验，上限 20
+        order: issueUnits[issueId]!.length + 1,
         title: seed.title,
         role: seed.role,
         goals: [seed.goal],
@@ -412,6 +412,8 @@ export function buildEditionProject(input: BuildProjectInput): BuiltProject {
   const editorial: EditorialRevision = { ...editorialBase, digest: editorialDigest(editorialBase) };
   const planIssues = coverageIssues(editorial);
   if (planIssues.length) throw new Error(`覆盖矩阵不成立：${planIssues.map((entry) => entry.message).join('；')}`);
+  // 构建器自己也要过一遍契约：否则「生产者写全局序号、校验按期内序号」这类偏差会被掩盖
+  assertEditorialRevision(editorial);
 
   // 逐单元验收：重新编译并逐项比较，通过后才允许进入发布
   const targetsByUnit: Record<string, EditionTarget[]> = {};

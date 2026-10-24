@@ -403,4 +403,35 @@ describe('发布门禁与备份（P01/P06/Q04）', () => {
     tampered.events[0]!.payload = { skip: true };
     expect(edition.runEventIssues(tampered).some((issue) => issue.code === 'E-EVENT-HASH')).toBe(true);
   });
+
+  it('发布门禁校验来源署名与语料、授权的闭合关系', () => {
+    const input = {
+      editionId: sample.edition.id,
+      issueId: sample.release.issueId,
+      cefr: 'A2' as const,
+      editorial: sample.editorial,
+      corpus: sample.corpus,
+      rights: sample.rights,
+      pack: sample.pack,
+      units: sample.units,
+      sources: sample.release.manifest.sourceAcks,
+      publishedBy: 'owner',
+    };
+    expect(edition.releaseIssues(input)).toEqual([]);
+
+    const badLicense = edition.releaseIssues({
+      ...input,
+      sources: input.sources.map((source) => ({ ...source, license: 'cc-by-4.0' })),
+    });
+    expect(badLicense.map((issue) => issue.code)).toContain('E-RELEASE-SOURCE-LICENSE');
+
+    expect(edition.releaseIssues({ ...input, sources: [] }).map((issue) => issue.code))
+      .toContain('E-RELEASE-SOURCE-MISSING');
+
+    const foreign = edition.releaseIssues({
+      ...input,
+      sources: [...input.sources, { ...input.sources[0]!, sourceId: 'src_11111111-1111-4111-8111-111111111111' }],
+    });
+    expect(foreign.map((issue) => issue.code)).toContain('E-RELEASE-SOURCE-CORPUS');
+  });
 });

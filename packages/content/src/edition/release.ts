@@ -18,7 +18,7 @@ import {
   type UnitRevision,
 } from './contract.js';
 import { digestOf } from './digest.js';
-import { checkRights, type CorpusRevision, type RightsDecision } from './sources.js';
+import { acceptedLicenses, checkRights, type CorpusRevision, type RightsDecision } from './sources.js';
 import { languagePackIssues, type LanguagePackRevision } from './language.js';
 
 export interface ReleaseSourceAck {
@@ -97,6 +97,30 @@ export function releaseIssues(input: ReleaseInput): { code: string; message: str
   for (const decision of input.rights) {
     const check = checkRights(decision, 'publish');
     if (!check.ok) issues.push({ code: check.code, message: check.message });
+  }
+  // 来源署名必须与语料、权利决策闭合：否则一份许可写错的发行也能过门禁
+  const ackedSources = new Set<string>();
+  for (const source of input.sources) {
+    ackedSources.add(source.sourceId);
+    if (!input.corpus.sourceIds.includes(source.sourceId)) {
+      issues.push({ code: 'E-RELEASE-SOURCE-CORPUS', message: `来源 ${source.sourceId} 不属于本语料` });
+    }
+    if (!(acceptedLicenses as readonly string[]).includes(source.license)) {
+      issues.push({
+        code: 'E-RELEASE-SOURCE-LICENSE',
+        message: `来源 ${source.sourceId} 的许可 ${source.license} 不在允许列表（${acceptedLicenses.join(' / ')}）`,
+      });
+    }
+    const usable = input.rights.some((decision) =>
+      decision.sourceId === source.sourceId && checkRights(decision, 'publish').ok);
+    if (!usable) {
+      issues.push({ code: 'E-RELEASE-SOURCE-RIGHTS', message: `来源 ${source.sourceId} 没有允许发布的授权记录` });
+    }
+  }
+  for (const sourceId of input.corpus.sourceIds) {
+    if (!ackedSources.has(sourceId)) {
+      issues.push({ code: 'E-RELEASE-SOURCE-MISSING', message: `语料来源 ${sourceId} 缺少署名` });
+    }
   }
   for (const passage of input.corpus.passages) {
     if (!passage.rightsBindings.length) continue;
