@@ -43,13 +43,15 @@ const preview: CloudImportPreview = {
 
 const state = (patch: Partial<CloudState> = {}): CloudState => ({
   status: 'signed-out', capabilities, me: null, devices: [], workspaces: [],
-  challenge: null, preview: null, receipt: null, installation: null, busy: false, phase: '', failure: null,
+  challenge: null, preview: null, receipt: null, installation: null, sync: null,
+  busy: false, phase: '', failure: null,
   ...patch,
 });
 
 const actions: CloudActions = {
   refresh: vi.fn(), login: vi.fn(), verify: vi.fn(), logout: vi.fn(),
   preview: vi.fn(), confirm: vi.fn(), claim: vi.fn(),
+  openSync: vi.fn(), sync: vi.fn(), pauseSync: vi.fn(), discardConflict: vi.fn(),
 };
 
 const render = (patch: Partial<CloudState> = {}, backup: () => unknown = () => ({ format: 'endless-backup' })) =>
@@ -93,7 +95,7 @@ describe('云端页面状态', () => {
     }] });
     expect(html).toContain('领取到这台设备');
     expect(html).toContain('云库阅读入口尚未接线');
-    expect(html).toContain('增量同步');
+    expect(html).toContain('云端生成、额度与付费都还没实现');
     expect(html).not.toContain('可以在这里打开阅读');
   });
 
@@ -113,5 +115,37 @@ describe('云端页面状态', () => {
     expect(small.ok).toBe(true);
     const tooBig = importPayload({ padding: 'x'.repeat(2000) }, 1024);
     expect(tooBig).toMatchObject({ ok: false, message: expect.stringContaining('不会截断') });
+  });
+
+  it('同步面板显示真实待推送与冲突，不写成「已同步」', () => {
+    const html = render({
+      status: 'signed-in', me,
+      capabilities: { ...capabilities, features: { ...capabilities.features, sync: true } },
+      sync: {
+        workspaceId, pending: 3, paused: false, cursor: 'abc', cloudVersion: '7',
+        conflicts: [{ id: 'c-1', streamId: 'brn_00000000-0000-0000-0000-000000000000', baseSeq: 2, cloudSeq: 4, createdAt: '2026-10-26T00:00:00.000Z' }],
+        needsRebase: [], lastError: null, lastSyncedAt: null, report: '',
+      },
+    });
+    expect(html).toContain('本机待推送');
+    expect(html).toContain('3 条事件');
+    expect(html).toContain('还没有成功同步过');
+    expect(html).toContain('放弃本机候选');
+    expect(html).toContain('冲突不会自动合并');
+    expect(html).not.toContain('已同步全部内容');
+  });
+
+  it('未启用同步的部署如实说明并禁用按钮；被替换过的分支单独警告', () => {
+    const html = render({
+      status: 'signed-in', me,
+      capabilities: { ...capabilities, features: { ...capabilities.features, sync: false } },
+      sync: {
+        workspaceId, pending: 0, paused: true, cursor: null, cloudVersion: null,
+        conflicts: [], needsRebase: ['brn_00000000-0000-0000-0000-000000000000'],
+        lastError: null, lastSyncedAt: null, report: '',
+      },
+    });
+    expect(html).toContain('这个部署没有启用增量同步');
+    expect(html).toContain('已停止推送');
   });
 });

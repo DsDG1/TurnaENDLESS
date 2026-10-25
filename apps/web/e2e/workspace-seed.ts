@@ -42,10 +42,15 @@ export function workspaceRows(ws: Workspace) {
 export async function writeWorkspace(page: Page, ws: Workspace) {
   const rows = workspaceRows(ws);
   await page.evaluate(async (rows) => {
+    // 库版本必须与 WorkspaceRepository 一致（v2 增加 outbox/eventIds/sync）；
+    // 用旧版本号打开会被 IndexedDB 直接拒绝，种子就写不进去。
+    const stores = ['meta', 'revisions', 'branches', 'objects', 'staging', 'outbox', 'eventIds', 'sync'];
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('endless-workspace', 1);
+      const request = indexedDB.open('endless-workspace', 2);
       request.onupgradeneeded = () => {
-        for (const name of ['meta', 'revisions', 'branches', 'objects', 'staging']) request.result.createObjectStore(name);
+        for (const name of stores) {
+          if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name);
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -77,7 +82,7 @@ export async function seed(page: Page, ws = playedWorkspace()) {
 export async function dumpWorkspace(page: Page): Promise<string> {
   return page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve) => {
-      const request = indexedDB.open('endless-workspace', 1);
+      const request = indexedDB.open('endless-workspace', 2);
       request.onsuccess = () => resolve(request.result);
     });
     const all: Record<string, unknown> = {};

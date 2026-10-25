@@ -99,9 +99,12 @@ test('损坏存档不会被静默重置或覆盖', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '故事频道。' })).toBeVisible();
   await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve) => {
-      const request = indexedDB.open('endless-workspace', 1);
+      // 版本与 WorkspaceRepository 同步（v2 增加 outbox/eventIds/sync）
+      const request = indexedDB.open('endless-workspace', 2);
       request.onupgradeneeded = () => {
-        for (const name of ['meta', 'revisions', 'branches', 'objects', 'staging']) request.result.createObjectStore(name);
+        for (const name of ['meta', 'revisions', 'branches', 'objects', 'staging', 'outbox', 'eventIds', 'sync']) {
+          if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name);
+        }
       };
       request.onsuccess = () => resolve(request.result);
     });
@@ -117,7 +120,7 @@ test('损坏存档不会被静默重置或覆盖', async ({ page }) => {
   await expect(page.getByRole('button', { name: '下载原始存档' })).toBeVisible();
   expect(await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve) => {
-      const request = indexedDB.open('endless-workspace', 1);
+      const request = indexedDB.open('endless-workspace', 2);
       request.onsuccess = () => resolve(request.result);
     });
     return new Promise((resolve) => {

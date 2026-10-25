@@ -3,6 +3,7 @@ import {
   ChallengeRequestSchema, CreateWorkspaceRequestSchema, IdempotencyKeySchema,
   LEGACY_PROVIDER_KEY_HEADER, VerifyRequestSchema, type CloudCapabilities,
   CLOUD_API_PREFIX, PrepareObjectRequestSchema, ActivateImportRequestSchema, InstallWorkspaceRequestSchema, type Device,
+  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema,
 } from '@endless/cloud-contracts';
 import type { CloudPool } from './db/client.js';
 import type { Mailer } from './mail.js';
@@ -13,6 +14,7 @@ import { clearSessionCookie, correlationId, readJsonBody, readObjectBody, sendJs
 import { accountContext, assertCloudDeployment, type CloudDeployment } from './deployment.js';
 import type { ObjectService } from './objects/service.js';
 import type { ImportService } from './imports/service.js';
+import type { SyncService } from './sync/service.js';
 
 /**
  * 云 API HTTP 层（§14）。与本机 server.ts 完全分离：
@@ -33,6 +35,7 @@ interface CloudServerOptions {
   deployment: CloudDeployment;
   objects?: ObjectService;
   imports?: ImportService;
+  sync?: SyncService;
 }
 
 interface Route {
@@ -57,7 +60,10 @@ export function createCloudServer(options: CloudServerOptions) {
   // 显式启用对象/导入后若仍报 false，客户端会永远看不到入口。
   const capabilities: CloudCapabilities = {
     ...options.capabilities,
-    features: { ...options.capabilities.features, objects: !!options.objects, import: !!options.imports },
+    features: {
+      ...options.capabilities.features,
+      objects: !!options.objects, import: !!options.imports, sync: !!options.sync,
+    },
   };
 
   function deviceWire(row: { id: string; name: string; created_at: Date; last_seen_at: Date; revoked_at: Date | null }, currentId: string): Device {
@@ -210,6 +216,49 @@ export function createCloudServer(options: CloudServerOptions) {
           const body = InstallWorkspaceRequestSchema.safeParse(await readJsonBody(request));
           if (!body.success) throw badRequest('安装回执格式无效');
           return { status: 200, body: await imports.install(auth, params.id!, body.data, id) };
+        } },
+    );
+  }
+
+  if (options.sync) {
+    const sync = options.sync;
+    /** 工作区在查询串里：GET 不产生副作用，也不接受请求体。 */
+    const workspaceOf = (url: URL) => {
+      const value = url.searchParams.get('workspaceId');
+      if (!value) throw badRequest('缺少 workspaceId');
+      return value;
+    };
+    routes.push(
+      { method: 'GET', access: 'session', pattern: /^\/sync\/bootstrap$/,
+        handle: async ({ url, auth }) => ({ status: 200, body: await sync.bootstrap(auth, workspaceOf(url)) }) },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/push$/,
+        handle: async ({ request, auth }) => {
+          const body = SyncPushRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('同步请求格式无效或超出批次限制');
+          return { status: 200, body: await sync.push(auth, body.data) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/sync\/pull$/,
+        handle: async ({ url, auth }) => {
+          const cursor = url.searchParams.get('cursor');
+          const limit = Number(url.searchParams.get('limit') ?? '50');
+          if (!Number.isInteger(limit)) throw badRequest('分页参数无效');
+          return { status: 200, body: await sync.pull(auth, workspaceOf(url), cursor, limit) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/sync\/conflicts$/,
+        handle: async ({ url, auth }) => ({ status: 200, body: await sync.conflicts(auth, workspaceOf(url)) }) },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/conflicts\/(?<id>[0-9a-f-]{36})\/resolve$/,
+        handle: async ({ request, auth, params }) => {
+          const body = ResolveConflictRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('冲突处理请求格式无效');
+          return { status: 200, body: await sync.resolve(auth, body.data.workspaceId, params.id!, body.data) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/sync\/device-state$/,
+        handle: async ({ url, auth }) => ({ status: 200, body: await sync.deviceStates(auth, workspaceOf(url)) }) },
+      { method: 'PUT', access: 'session', pattern: /^\/sync\/device-state$/,
+        handle: async ({ request, auth }) => {
+          const body = PutDeviceStreamStateRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('设备界面状态请求格式无效');
+          return { status: 200, body: await sync.putDeviceStates(auth, body.data) };
         } },
     );
   }

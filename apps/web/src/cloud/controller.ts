@@ -1,10 +1,12 @@
-import { parseWorkspace, type Workspace } from '@endless/content';
+import { parseWorkspace, type Content, type Workspace } from '@endless/content';
 import type {
   ChallengeResponse, CloudCapabilities, CloudImportPreview, CloudImportReceipt,
   CloudWorkspace, Device, MeResponse, WorkspaceInstallation,
 } from '@endless/cloud-contracts';
 import { CloudFailure, type CloudApiPort } from './client.js';
-import { cloudNamespace, type CloudLocalInstallation } from './local.js';
+import { cloudDigest, cloudNamespace, type CloudLocalInstallation } from './local.js';
+import { WorkspaceSync, type SyncRepository } from './sync.js';
+import type { CloudSyncState } from './outbox.js';
 
 /**
  * 云端流程控制器（计划 §8、§15.1 的最小入口）。
@@ -38,12 +40,27 @@ export interface CloudState {
   preview: CloudImportPreview | null;
   receipt: CloudImportReceipt | null;
   installation: WorkspaceInstallation | null;
+  sync: CloudSyncView | null;
   busy: boolean;
   phase: string;
   failure: CloudFailureView | null;
 }
 
-export interface CloudRepository {
+/** 同步面板只显示本机能证明的事实：条数、游标、冲突、失败原因。 */
+export interface CloudSyncView {
+  workspaceId: string;
+  pending: number;
+  paused: boolean;
+  cursor: string | null;
+  cloudVersion: string | null;
+  conflicts: CloudSyncState['conflicts'];
+  needsRebase: string[];
+  lastError: string | null;
+  lastSyncedAt: string | null;
+  report: string;
+}
+
+export interface CloudRepository extends SyncRepository {
   installCloudCopy(workspace: Workspace, receipt: CloudImportReceipt, deviceId: string): Promise<{ existing: boolean; installation: CloudLocalInstallation }>;
   acknowledgeCloudInstallation(receipt: WorkspaceInstallation): Promise<void>;
   close(): Promise<void>;
@@ -52,6 +69,7 @@ export interface CloudRepository {
 export interface CloudControllerDeps {
   api: CloudApiPort;
   openRepository(namespace: string): CloudRepository;
+  content: Content;
   /** 用于判断「同一份字节」的重试；不同字节必须换幂等键。 */
   digest(bytes: ArrayBuffer): Promise<string>;
   key(): string;
@@ -59,7 +77,7 @@ export interface CloudControllerDeps {
 
 const initial: CloudState = {
   status: 'loading', capabilities: null, me: null, devices: [], workspaces: [],
-  challenge: null, preview: null, receipt: null, installation: null,
+  challenge: null, preview: null, receipt: null, installation: null, sync: null,
   busy: false, phase: '', failure: null,
 };
 
@@ -70,6 +88,9 @@ export class CloudController {
   private previewKey: string | null = null;
   private previewDigest: string | null = null;
   private activateKey: string | null = null;
+  private engine: WorkspaceSync | null = null;
+  private engineWorkspace: string | null = null;
+  private engineRepository: CloudRepository | null = null;
 
   constructor(private readonly deps: CloudControllerDeps) {}
 
@@ -272,5 +293,95 @@ export class CloudController {
         await repository.close().catch(() => {});
       }
     });
+  }
+
+  // ---------- 增量同步 ----------
+
+  /** 打开某个云工作区的同步面板：只读本机状态，不触发网络。 */
+  async openSync(workspaceId: string): Promise<boolean> {
+    const me = this.state.me;
+    if (!me) {
+      this.patch({ failure: { code: 'UNAUTHENTICATED', message: '请先登录云账号' } });
+      return false;
+    }
+    return this.run('正在读取本机同步状态…', async () => {
+      const engine = await this.engineFor(workspaceId);
+      this.patch({ sync: await this.view(engine, '') });
+      return '';
+    });
+  }
+
+  async runSync(): Promise<boolean> {
+    const workspaceId = this.state.sync?.workspaceId;
+    if (!workspaceId) {
+      this.patch({ failure: { code: 'BAD_REQUEST', message: '请先选择云工作区' } });
+      return false;
+    }
+    return this.run('正在同步…', async () => {
+      const engine = await this.engineFor(workspaceId);
+      try {
+        const report = await engine.run();
+        const notes = [report.note];
+        if (report.stopped === 'conflict') {
+          const conflicts = await engine.refreshConflicts();
+          if (conflicts.length) notes.push(`冲突候选 ${conflicts.length} 条已保留`);
+        }
+        this.patch({ sync: await this.view(engine, notes.filter(Boolean).join('；')) });
+        return report.stopped ? '同步停在一处需要你处理的地方' : '同步完成';
+      } catch (error) {
+        this.patch({ sync: await this.view(engine, '') });
+        throw error;
+      }
+    });
+  }
+
+  async setSyncPaused(paused: boolean): Promise<boolean> {
+    const workspaceId = this.state.sync?.workspaceId;
+    if (!workspaceId) return false;
+    return this.run(paused ? '正在暂停同步…' : '正在恢复同步…', async () => {
+      const engine = await this.engineFor(workspaceId);
+      await engine.setPaused(paused);
+      this.patch({ sync: await this.view(engine, paused ? '已暂停：新事件继续排队，不会丢' : '') });
+      return '';
+    });
+  }
+
+  /** 显式放弃本机这批冲突候选；不删本机内容，只是不再推送该分支。 */
+  async discardConflict(conflictId: string): Promise<boolean> {
+    const workspaceId = this.state.sync?.workspaceId;
+    if (!workspaceId) return false;
+    return this.run('正在放弃本机候选…', async () => {
+      const engine = await this.engineFor(workspaceId);
+      await engine.discard(conflictId);
+      await engine.refreshConflicts();
+      this.patch({ sync: await this.view(engine, '已放弃本机这批事件；云端保留另一台设备的版本') });
+      return '';
+    });
+  }
+
+  private async engineFor(workspaceId: string): Promise<WorkspaceSync> {
+    const me = this.state.me!;
+    if (this.engine && this.engineWorkspace === workspaceId) return this.engine;
+    if (this.engineRepository) await this.engineRepository.close().catch(() => {});
+    const repository = this.deps.openRepository(cloudNamespace(me.context.deploymentId, me.account.id, workspaceId));
+    this.engineRepository = repository;
+    this.engineWorkspace = workspaceId;
+    this.engine = new WorkspaceSync({
+      repo: repository, api: this.deps.api, content: this.deps.content,
+      workspaceId, deviceId: me.device.id,
+      digest: (value) => cloudDigest(value),
+      newBatchId: () => this.deps.key(),
+    });
+    return this.engine;
+  }
+
+  private async view(engine: WorkspaceSync, report: string): Promise<CloudSyncView> {
+    const status = await engine.status();
+    return {
+      workspaceId: this.engineWorkspace!, pending: status.pending, paused: status.state.paused,
+      cursor: status.state.cursor, cloudVersion: status.state.cloudVersion,
+      conflicts: status.state.conflicts, needsRebase: status.state.needsRebase,
+      lastError: status.state.lastError, lastSyncedAt: status.state.lastSyncedAt, report,
+    };
   }
 }

@@ -3,10 +3,14 @@ import {
   CloudErrorBodySchema, CloudImportPreviewResponseSchema, CloudImportResponseSchema,
   CloudPackageResponseSchema, DeviceListResponseSchema, IDEMPOTENCY_KEY_HEADER, MeResponseSchema,
   VerifyResponseSchema, WorkspaceInstallationResponseSchema, WorkspaceListResponseSchema,
+  SyncBootstrapSchema, SyncPushResponseSchema, SyncPullResponseSchema, SyncConflictListSchema,
+  ResolveConflictResponseSchema, DeviceStreamStateListSchema,
   type ActivateImportRequest, type ChallengeResponse, type CloudCapabilities, type CloudErrorCode,
   type CloudImportPreview, type CloudImportReceipt, type CloudWorkspace, type Device,
   type InstallWorkspaceRequest, type MeResponse, type VerifyRequest, type VerifyResponse,
-  type WorkspaceInstallation,
+  type WorkspaceInstallation, type SyncBootstrap, type SyncPushRequest, type SyncPushReceipt,
+  type SyncPullResponse, type SyncConflict, type SyncStreamBinding, type DeviceStreamState,
+  type PutDeviceStreamStateRequest,
 } from '@endless/cloud-contracts';
 
 /**
@@ -28,6 +32,8 @@ export class CloudFailure extends Error {
     message: string,
     readonly retryAction?: string,
     readonly correlationId?: string,
+    /** 同步冲突时服务端给出的候选记录 ID；只有它可以被显式解决。 */
+    readonly conflictId?: string,
   ) {
     super(message);
     this.name = 'CloudFailure';
@@ -70,8 +76,8 @@ async function request(fetcher: typeof fetch, path: string, options: CallOptions
   if (!response.ok) {
     const parsed = CloudErrorBodySchema.safeParse(payload);
     if (parsed.success) {
-      const { code, safeMessage, retryAction, correlationId } = parsed.data.error;
-      throw new CloudFailure(code, response.status, safeMessage, retryAction, correlationId);
+      const { code, safeMessage, retryAction, correlationId, conflictId } = parsed.data.error;
+      throw new CloudFailure(code, response.status, safeMessage, retryAction, correlationId, conflictId);
     }
     throw new CloudFailure('INVALID_RESPONSE', response.status, `云服务返回了无法识别的结果（HTTP ${response.status}），未做任何变更`);
   }
@@ -99,6 +105,13 @@ export interface CloudApiPort {
   activate(input: ActivateImportRequest, key: string): Promise<CloudImportReceipt>;
   workspacePackage(workspaceId: string): Promise<{ receipt: CloudImportReceipt; workspace: unknown }>;
   install(workspaceId: string, input: InstallWorkspaceRequest, key: string): Promise<WorkspaceInstallation>;
+  bootstrap(workspaceId: string): Promise<SyncBootstrap>;
+  push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
+  pull(workspaceId: string, cursor: string | null, limit?: number): Promise<SyncPullResponse>;
+  conflicts(workspaceId: string): Promise<{ conflicts: SyncConflict[] }>;
+  resolveConflict(workspaceId: string, conflictId: string, decision: 'discard'): Promise<{ conflict: SyncConflict; stream: SyncStreamBinding }>;
+  deviceStates(workspaceId: string): Promise<DeviceStreamState[]>;
+  putDeviceStates(input: PutDeviceStreamStateRequest): Promise<DeviceStreamState[]>;
 }
 
 export class CloudApi implements CloudApiPort {
@@ -164,5 +177,41 @@ export class CloudApi implements CloudApiPort {
     return parse(WorkspaceInstallationResponseSchema, await request(this.fetcher, `/workspaces/${workspaceId}/installations`, {
       method: 'POST', key, contentType: 'application/json', body: JSON.stringify(input),
     })).installation;
+  }
+
+  async bootstrap(workspaceId: string) {
+    return parse(SyncBootstrapSchema, await request(this.fetcher, `/sync/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`));
+  }
+
+  async push(input: SyncPushRequest) {
+    return parse(SyncPushResponseSchema, await request(this.fetcher, '/sync/push', {
+      method: 'POST', contentType: 'application/json', body: JSON.stringify(input),
+    }));
+  }
+
+  async pull(workspaceId: string, cursor: string | null, limit = CLOUD_LIMITS.listPageDefault) {
+    const query = new URLSearchParams({ workspaceId, limit: String(limit) });
+    if (cursor) query.set('cursor', cursor);
+    return parse(SyncPullResponseSchema, await request(this.fetcher, `/sync/pull?${query.toString()}`));
+  }
+
+  async conflicts(workspaceId: string) {
+    return parse(SyncConflictListSchema, await request(this.fetcher, `/sync/conflicts?workspaceId=${encodeURIComponent(workspaceId)}`));
+  }
+
+  async resolveConflict(workspaceId: string, conflictId: string, decision: 'discard') {
+    return parse(ResolveConflictResponseSchema, await request(this.fetcher, `/sync/conflicts/${conflictId}/resolve`, {
+      method: 'POST', contentType: 'application/json', body: JSON.stringify({ workspaceId, decision }),
+    }));
+  }
+
+  async deviceStates(workspaceId: string) {
+    return parse(DeviceStreamStateListSchema, await request(this.fetcher, `/sync/device-state?workspaceId=${encodeURIComponent(workspaceId)}`)).states;
+  }
+
+  async putDeviceStates(input: PutDeviceStreamStateRequest) {
+    return parse(DeviceStreamStateListSchema, await request(this.fetcher, '/sync/device-state', {
+      method: 'PUT', contentType: 'application/json', body: JSON.stringify(input),
+    })).states;
   }
 }

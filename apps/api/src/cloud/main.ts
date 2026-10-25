@@ -10,6 +10,8 @@ import { readFile } from 'node:fs/promises';
 import { createContent, validateCloudBackup } from '@endless/content';
 import { loadCloudImportConfig } from './imports/config.js';
 import { ImportService } from './imports/service.js';
+import { loadCloudSyncConfig } from './sync/config.js';
+import { SyncService } from './sync/service.js';
 
 /**
  * 云 API 组合根（§3.2）。与本机 main.ts 完全分离：
@@ -31,6 +33,8 @@ try {
     backupValidator: content ? (raw) => { validateCloudBackup(content, raw); } : undefined,
   }) : undefined;
   const imports = objects && content ? new ImportService(app, objects, content, deployment) : undefined;
+  const syncConfig = loadCloudSyncConfig(process.env, !!imports);
+  const sync = syncConfig ? new SyncService(app) : undefined;
   const server = createCloudServer({
     auth,
     app,
@@ -39,9 +43,9 @@ try {
     hosts: config.hosts,
     mailer: new OutboxMailer(Buffer.from(config.mailKey, 'hex')),
     mailEcho: config.mailEcho,
-    capabilities: cloudCapabilities(),
+    capabilities: cloudCapabilities({ objects: !!objects, imports: !!imports, sync: !!sync }),
     deployment,
-    objects, imports,
+    objects, imports, sync,
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

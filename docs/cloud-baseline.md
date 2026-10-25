@@ -1,6 +1,6 @@
-# ENDLESS 云化基线记录（C0/C1 与 C2 进行切片）
+# ENDLESS 云化基线记录（C0/C1、C2 与 C3 第一轮切片）
 
-日期：2026-10-25（初始切片）；2026-10-26（C1 补齐、C2 第一轮）；2026-10-26（C2 第二/三轮：导入闭环与浏览器最小入口）
+日期：2026-10-25（初始切片）；2026-10-26（C1 补齐、C2 第一/二/三轮）；2026-10-26（C3 第一轮：事件身份、事务内 Outbox、增量同步与冲突）
 关联计划：桌面《ENDLESS-云端后端存储与付费实施计划-2026-10-25.md》
 代码基点：工作区（含 desktop 未提交改动）+ 本轮新增 `apps/api/src/cloud/` 与 `packages/cloud-contracts/`
 
@@ -29,7 +29,7 @@
 | 审计 | `audit_events` 只写不读（业务角色无 SELECT） | 已实现 |
 | 健康检查 | `/api/cloud/v1/health/live`、`/api/cloud/v1/health/ready`；DB 故障返回安全 503 | 已实现 |
 | 环境隔离 | 迁移绑定独立数据库环境，API/Worker 启动核对环境与最小权限角色，API 双角色须指向同一 deployment | 已实现并拒绝测试库冒充生产库 |
-| 能力发现 | `GET /api/cloud/v1/capabilities` 如实报告：sync/generation/billing 等恒为 false；objects/import 跟随实际挂载的路由（未挂载即 false，不会声明未实现的入口） | 已实现 |
+| 能力发现 | `GET /api/cloud/v1/capabilities` 如实报告：generation/billing 等恒为 false；objects/import/sync 跟随实际挂载的路由（未挂载即 false，不会声明未实现的入口） | 已实现 |
 
 ## 3. C1 交付验证（真实 PostgreSQL，非内存模拟）
 
@@ -44,7 +44,11 @@
 
 ## 4. 明确未实现（不得声称）
 
-C2 尚未整体完成：第一轮对象清单底座见 §7；第二轮服务端导入闭环与本地安装存储、第三轮浏览器最小入口与能力上报修正见 §8。仍未完成的是：浏览器对真实云 API 的完整旅程验收（cookie 往返、导入与领取）与云副本阅读器。C3–C9：同步 Outbox/事件 ID/冲突、长历史流式契约（C4）、jobs/attempts/Worker/计量（C5）、额度账本/报价/交付（C6）、支付/订阅/退款/对账（C7）、完整客户端/管理后台/运维（C8）、灰度上线（C9）均未实现。默认组合根未启用对象/导入时，capabilities 的 objects/import 仍为 false。
+C2 尚未整体完成：第一轮对象清单底座见 §7；第二轮服务端导入闭环与本地安装存储、第三轮浏览器最小入口与能力上报修正见 §8。仍未完成的是：浏览器对真实云 API 的完整旅程验收（cookie 往返、导入与领取）与云副本阅读器。
+
+C3 只完成第一轮（事件同步内核），见 §9：事件身份与流前缀、事务内 Outbox、推送幂等与批次原子提交、提交有序变更流与游标、冲突检测与「显式放弃」、设备级界面状态都已落到代码并有真库/浏览器存储测试。**未完成**：元数据（标题/标签/回收站/归档/采用修订）的命令通道、冲突的「保留为独立分支」、本机新建分支的流注册、云端事件在阅读器里的应用入口。因此 C3 的出口（双设备离线—上线—刷新—再离线的完整产品旅程）尚未达成。
+
+C4–C9 全部未实现：长历史流式契约（C4）、jobs/attempts/Worker/计量（C5）、额度账本/报价/交付（C6）、支付/订阅/退款/对账（C7）、完整客户端/管理后台/运维（C8）、灰度上线（C9）。默认组合根未启用对象/导入/同步时，capabilities 的 objects/import/sync 仍为 false。
 
 ## 5. 待决策（计划 §24，未默认放行）
 
@@ -55,7 +59,7 @@ C1 本轮通过的是代码与本地隔离验收，不是生产上线验收。�
 ## 6. 运行方式（开发）
 
 - 云脚本只接受显式注入的 `ENDLESS_CLOUD_*`，不自动读取本机 API `.env`。
-- `bootstrap:cloud`：管理员 DSN + AUTH/APP_PASSWORD；`migrate:cloud`：MIGRATION_DSN + 必填 `ENV=development|test|staging|production`。已有环境绑定不允许被改写；当前 API 要求水位 4，须通过受控迁移追加 `0002_c1.sql`、`0003_objects.sql`、`0004_imports.sql`，不原地修改旧迁移。邮件 Worker 仍只依赖 C1 水位。
+- `bootstrap:cloud`：管理员 DSN + AUTH/APP_PASSWORD；`migrate:cloud`：MIGRATION_DSN + 必填 `ENV=development|test|staging|production`。已有环境绑定不允许被改写；当前 API 要求水位 5，须通过受控迁移追加 `0002_c1.sql`、`0003_objects.sql`、`0004_imports.sql`、`0005_sync.sql`，不原地修改旧迁移。邮件 Worker 仍只依赖 C1 水位。
 - `dev:cloud` / `start:cloud`：ENV、AUTH_DSN、APP_DSN、SESSION_PEPPER（至少 32 字符）、MAIL_KEY（独立随机 32 字节的 64 位 hex）、ORIGINS、HOSTS；HOST 默认回环，PORT 默认 4178。预发布/生产要求显式 HTTPS 来源、禁止验证码日志；可在回环后接 TLS 网关。存档导入另需显式 `ENDLESS_CLOUD_IMPORTS_ENABLED=1` 且对象存储已启用，并提供 `ENDLESS_CLOUD_LEXICON_FILE`（服务端完整校验必须用与应用一致的词库/目录）。
 - `worker:cloud`：ENV、AUTH_DSN、同一 MAIL_KEY，以及 `SMTP_ENV/HOST/PORT/MODE/FROM/USER/PASSWORD`；MODE 为 `tls`（默认端口 465）或 `starttls`。可选 SMTP_CA_FILE 追加受信 CA，不能禁用证书验证。`--once` 只处理至多一封邮件，便于隔离验收。
 - Web 端接入云 API：`pnpm dev` 或 `pnpm preview` 的 `/api/cloud` 默认代理到 `http://127.0.0.1:4178`，可用 `ENDLESS_CLOUD_WEB_TARGET` 指向别的开发实例。云 API 的 `ENDLESS_CLOUD_ORIGINS`/`ENDLESS_CLOUD_HOSTS` 必须包含该 Web 来源与代理后的 Host，否则状态变更会被 Origin/Host 检查拒绝。页面入口是 `#cloud`（桌面侧栏「云端副本」，移动端在偏好设置里）。对象/导入路由仍需显式启用，未启用时页面只说明未启用。
@@ -144,3 +148,42 @@ S3 使用服务端 AWS SDK 3.1000.0（client-s3、s3-request-presigner，Apache-
 - 云副本**阅读器不存在**：副本已写入独立命名空间，但 `use-player`/阅读页仍只打开游客库，领取后的副本不能打开阅读。
 - 增量同步、云生成、额度、支付均未实现（C3–C7）；`0004_imports.sql` 只在临时测试集群运行过。
 - 真实对象存储、真实凭据、公网 TLS、生产部署、真实邮件/模型/支付均未验收。
+
+## 9. C3 第一轮：事件身份、事务内 Outbox 与增量同步
+
+### 9.1 已落到代码的部分
+
+- 迁移 `0005_sync.sql`（水位 5）：`sync_streams`（流头 = 连续序号 + 最后事件 ID）、`event_objects`（不可变事件正文、SHA-256、来源设备）、`stream_events`（流成员关系，与事件正文分离，便于日后按分支引用同一前缀）、`workspace_change_heads` / `workspace_changes`（提交有序变更流）、`sync_batches`（批次幂等回执）、`sync_conflicts`（被拒绝的整批候选）、`device_stream_state`（设备级界面状态）；全部 FORCE RLS + 复合 owner 外键，`workspaces.sync_epoch` 用于游标换代。
+- `SyncService`（`apps/api/src/cloud/sync/`）：
+  - 推送在**账号锁 → 工作区行锁 → 流锁（按 streamId 排序）** 的固定顺序下进行，批次幂等键为 `(account, workspace, batchId)`，同键异摘要返回 `IDEMPOTENCY_MISMATCH`，同一批次重复 20 次只生效一次并返回同一回执。
+  - 每个流显式声明 `baseSeq` + `baseEventId`，必须同时等于服务端流头才追加；不匹配则**整批拒绝**并写入 `sync_conflicts`（候选事件原样保留），返回 `SYNC_CONFLICT` + `conflictId`，绝不把两条离线历史拼成一条。
+  - 事件去重**只按 eventId**；同一 eventId 换正文返回冲突，相同正文的不同 eventId 视为两条合法历史。服务端重算事件正文摘要并与客户端声明比对。
+  - 事件盖章（`contentId`/`revisionId`）必须是本工作区 `cloud_id_mappings` 里真实存在的映射，且必须成对出现；伪造或单边盖章返回 400。
+  - `change_seq` 在 `workspace_change_heads` 行锁内递增，**分配顺序即提交顺序**；一个批次对每个流写一条变更记录。
+  - 拉取使用不透明 base64url 游标（绑定工作区 + 序号 + `sync_epoch`），分页默认 50/上限 100；游标超前、换代或格式损坏分别返回 `CURSOR_EXPIRED` / `BAD_REQUEST`，不猜位置继续读。
+  - 冲突列表包含被拒绝的候选事件；首版只接受 `discard`（明确放弃本机候选），**「保留为独立分支」不接受也不假装支持**。
+  - 设备级界面状态（当前集、字号）按设备读写，不进变更流、不推进 `cloud_version`——`select`/`text` 只是界面偏好，永远不会写进事件流。
+- 导入激活时一次性持久化整段前缀的事件身份（`seedSyncStreams`）：每个分支一个流，每个事件分配稳定 eventId 并记录正文摘要与可重放命令；之后所有设备沿该绑定追加，不需要重新分配 ID。
+- 路由（仅显式启用时挂载）：`GET /sync/bootstrap`、`POST /sync/push`、`GET /sync/pull`、`GET /sync/conflicts`、`POST /sync/conflicts/:id/resolve`、`GET|PUT /sync/device-state`；会话 + 严格 Origin 校验；`capabilities.sync` 由实际挂载推出。
+- 客户端存储层（`apps/web/src/storage.ts`，IDB v2）：新增 `outbox` / `eventIds` / `sync` 三个 store，**与业务数据同一事务**写入。一次提交内对比存储态与提交态：追加事件分配 eventId 并排队；分支复制父前缀时沿用父流身份；存储态不是严格前缀时标记 `needsRebase` 而不是把替换后的历史当成「追加」。
+- `apps/web/src/cloud/outbox.ts`（纯函数）与 `sync.ts`（驱动）：先推送后拉取；只推送能接在已确认前缀之后的连续段（有空洞就停）；推送成功在一个事务里删除已确认事件并推进云端前缀；拉取逐条重放云端命令、**比对重放结果与事件正文**，不一致就停在该处；本机自己的变更按 deviceId 跳过；游标过期时先报告本机未同步条数，不用云端快照覆盖。
+- `apps/web/src/cloud/page.tsx` 增加同步面板：待推送条数、已确认版本、上次成功时间、暂停/恢复、冲突列表与「放弃本机候选」、`needsRebase` 警告；文案明确写出「跨设备应用到阅读器尚未接线」「元数据同步与按分支保留尚未实现」。
+
+### 9.2 明确不做的部分（不要当成已完成）
+
+- **只有事件同步**：标题、标签、备注、回收站、归档卷、采用修订这些管理操作没有命令通道。
+- **没有「保留为独立分支」**：冲突只能显式放弃本机候选；本机这批事件不删除，但该分支从此不再推送。
+- **本机新建分支（forkForRevision）尚未注册为云流**：推送会得到 `UNSUPPORTED_CONTRACT` 并保留本机事件。
+- **服务端不做学习重放**：只校验事件契约、盖章与流前缀；掌握度/证据连续状态的重放等价性属 C4。
+- **界面没有「应用云端变更」入口**：驱动层已实现并在测试里跑通双设备往返，但云副本阅读器（C2 遗留）还没接线。
+- 没有任何真实云 API 的浏览器旅程；对象存储/CDN 未参与事件正文（正文存 PG jsonb）。
+- 未验证 10k 事件级别的推送/拉取与分页压力。
+
+### 9.3 验证（真实 PostgreSQL + fake-indexeddb）
+
+- `apps/api/test/cloud/sync.test.ts`：18 项通过（导入即持久化前缀身份、空工作区首次推送、能力随挂载、变更按序与游标分页、同批次并发 20 次只生效一次、同正文异 eventId 不去重、同 eventId 异正文冲突且主链不变、两设备相反选择整批拒绝、显式放弃只改状态、账号锁内串行不留序号空洞、游标超前/换代/损坏、跨账号一律拒绝、伪造盖章拒绝、设备级界面状态隔离、HTTP 路由与未挂载时 404、未知流不静默创建、未激活工作区不分配身份）。
+- 云专项合计 **94 项**通过（C1 45 + 对象/导入 31 + 同步 18）。
+- `apps/web/test/cloud-sync.test.ts`：13 项通过（事务内身份与排队、提交失败时 Outbox 同样不落库、历史替换标记 `needsRebase`、远端身份不入队、分支前缀沿用父流身份、空洞/未绑定不推送、坏状态容错、**双设备 A 推→B 拉→B 追加→A 拉**全链路、两设备相反选择整批拒绝且不拼接、暂停/恢复、游标过期不覆盖、状态不伪造「已同步」）。
+- `apps/web/test/cloud-page.test.tsx`：9 项（新增同步面板：真实待推送条数、冲突与「放弃本机候选」、未启用部署禁用按钮、`needsRebase` 单独警告；断言不含「已同步全部内容」）。
+- 三条关键断言做过**变异验证**：去掉流前缀 CAS → 两条冲突用例立即变红；把去重键从 eventId 改成摘要 → 两条身份用例变红；让远端身份也入队 → 两条回声用例变红。
+- 全量：`pnpm typecheck` 全仓通过；`pnpm test` 全仓 **674 项**（api 199、web 82、content 107、lab 99、director 45、learning 18、player 10、world 12、esl 99、desktop 3）。

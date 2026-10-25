@@ -9,8 +9,21 @@ import type { Workspace } from '@endless/content';
  *   2. 导入备份同样要推进基线（导入后第一次答题不应该报「另一个窗口已更新」）；
  *   3. 提交失败必须把原因交回调用方（用于保留生成票据引用、提示可重试）。
  */
+export interface CommitOutcome {
+  /** 本次提交写入 Outbox 的事件数（游客库恒为 0）。 */
+  enqueued: number;
+  /** 本机历史被整体替换、停止推送的分支。 */
+  replaced: string[];
+}
+
+export interface CommitOptions {
+  closingTicketId?: string;
+  /** 远端已确认的事件身份：重放云端变更时不再产生 Outbox 回环。 */
+  remote?: { streamId: string; startSeq: number; eventIds: readonly string[] };
+}
+
 export interface WorkspaceCommitter {
-  commit(next: Workspace, options?: { closingTicketId?: string }): Promise<void>;
+  commit(next: Workspace, options?: CommitOptions): Promise<void | CommitOutcome>;
 }
 
 export type CommitResult =
@@ -34,7 +47,7 @@ export class SessionCommitter {
     return { ...workspace, identity: { ...workspace.identity, repositoryRevision: this.revision + 1 } };
   }
 
-  async commit(next: Workspace, options: { closingTicketId?: string } = {}): Promise<CommitResult> {
+  async commit(next: Workspace, options: CommitOptions = {}): Promise<CommitResult> {
     const committed = this.bump(next);
     try {
       await this.committer.commit(committed, options);

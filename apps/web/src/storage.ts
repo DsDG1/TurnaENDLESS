@@ -2,15 +2,32 @@ import {
   ContractError, describeUnsupportedSave, parseWorkspace,
   type Workspace, type WorkspaceIdentity,
 } from '@endless/content';
-import type { CloudImportReceipt, WorkspaceInstallation } from '@endless/cloud-contracts';
+import type { CloudImportReceipt, SyncPushReceipt, WorkspaceInstallation } from '@endless/cloud-contracts';
 import { cloudDigest, isCloudNamespace, parseCloudInstallation, type CloudLocalInstallation } from './cloud/local.js';
+import {
+  emptySyncState, parseSyncState, planOutbox, sidecarKey,
+  type BranchSlice, type CloudSyncState, type OutboxEntry, type SidecarEntry,
+} from './cloud/outbox.js';
 
 /**
  * `endless-workspace` 本地仓库：多对象存储 + repositoryRevision CAS。
  * 一次命令 → 先在内存完成校验（content 包），再由这里一次事务原子提交。
  * 进行中生成任务（reserved/submitted）冻结其它写入口，直到它被提交或取消。
  * 不读取旧 `endless-player` 库，也不自动清理旧命名空间。
+ *
+ * 云副本命名空间额外维护同步身份：`eventIds` 是 (流, 序号) → eventId 的 sidecar，
+ * `outbox` 是待推送事件，`sync` 是游标与已确认前缀。三者与业务写入**同一事务**：
+ * 业务提交成功而身份丢失（或反过来）都不会发生。
  */
+
+const SYNC_STORES = ['outbox', 'eventIds', 'sync'] as const;
+
+/** 把工作区分支裁剪成纯规划输入：只要身份相关字段，避免把整份存档塞进闭包。 */
+const slices = (branches: readonly { id: string; parentBranchId: string | null; forkAtEventCount: number | null; session: { events: readonly unknown[] } }[]): BranchSlice[] =>
+  branches.map((branch) => ({
+    id: branch.id, parentBranchId: branch.parentBranchId,
+    forkAtEventCount: branch.forkAtEventCount, events: branch.session.events,
+  }));
 export class WorkspaceRepository {
   private database: Promise<IDBDatabase>;
   private closed = false;
@@ -22,14 +39,13 @@ export class WorkspaceRepository {
         reject(new Error('当前浏览器无法使用本地存储，请使用普通模式的 Edge 或 Chrome'));
         return;
       }
-      const request = factory.open(namespace, 1);
+      // 版本 2 只新增 store，不动既有结构与数据：旧库原地升级，不重建、不清空。
+      const request = factory.open(namespace, 2);
       request.onupgradeneeded = () => {
         const db = request.result;
-        db.createObjectStore('meta');
-        db.createObjectStore('revisions');
-        db.createObjectStore('branches');
-        db.createObjectStore('objects');
-        db.createObjectStore('staging');
+        for (const name of ['meta', 'revisions', 'branches', 'objects', 'staging', ...SYNC_STORES]) {
+          if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
+        }
       };
       request.onsuccess = () => {
         // 外部升级库版本：关闭连接并标记，此后本实例只读失败提示可操作错误，
@@ -122,7 +138,7 @@ export class WorkspaceRepository {
     const db = await this.db();
     const rows = this.rows(workspace);
     return new Promise<{ existing: boolean; installation: CloudLocalInstallation }>((resolve, reject) => {
-      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging'], 'readwrite');
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging', 'sync'], 'readwrite');
       const meta = tx.objectStore('meta');
       const request = meta.get('cloud-installation');
       let result = { existing: false, installation: initial };
@@ -145,6 +161,7 @@ export class WorkspaceRepository {
             if (occupied) { error = '命名空间已有未识别数据，不会覆盖或重置'; tx.abort(); return; }
             meta.put({ ...rows.meta, management: rows.management }, 'workspace');
             meta.put(initial, 'cloud-installation');
+            tx.objectStore('sync').put(emptySyncState(), 'sync');
             for (const [name, values] of [['revisions', rows.revisions], ['branches', rows.branches], ['objects', rows.objects]] as const) {
               for (const value of values) tx.objectStore(name).put(value, value.id);
             }
@@ -204,11 +221,19 @@ export class WorkspaceRepository {
    *   修订、条目与采用变更（含结果选择）。
    * 删除、替换或改写进行中票据一律拒绝。
    */
-  async commit(next: Workspace, options: { closingTicketId?: string } = {}): Promise<void> {
+  async commit(
+    next: Workspace,
+    options: {
+      closingTicketId?: string;
+      /** 远端已确认的事件身份：重放云端变更时不再产生 Outbox 回环。 */
+      remote?: { streamId: string; startSeq: number; eventIds: readonly string[] };
+    } = {},
+  ): Promise<{ enqueued: number; replaced: string[] }> {
     const db = await this.db();
     const rows = this.rows(next);
+    const syncing = isCloudNamespace(this.namespace);
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging'], 'readwrite');
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging', ...SYNC_STORES], 'readwrite');
       let error = '保存失败，请检查可用空间后重试。本次操作尚未提交';
       type MetaRow = {
         key: string; identity: WorkspaceIdentity; profile: unknown; entries: unknown;
@@ -218,12 +243,28 @@ export class WorkspaceRepository {
       let revisions: unknown[] = [];
       let branches: unknown[] = [];
       let objects: Record<string, unknown>[] = [];
-      let pending = 4;
+      let sidecar = new Map<string, SidecarEntry>();
+      let syncState: CloudSyncState = emptySyncState();
+      let result = { enqueued: 0, replaced: [] as string[] };
+      let pending = 6;
       const metaStore = tx.objectStore('meta');
       metaStore.get('workspace').onsuccess = (e) => { meta = (e.target as IDBRequest).result; step(); };
       tx.objectStore('revisions').getAll().onsuccess = (e) => { revisions = (e.target as IDBRequest).result ?? []; step(); };
       tx.objectStore('branches').getAll().onsuccess = (e) => { branches = (e.target as IDBRequest).result ?? []; step(); };
       tx.objectStore('objects').getAll().onsuccess = (e) => { objects = (e.target as IDBRequest).result ?? []; step(); };
+      // 用游标一次读完 sidecar：避免在事务回调里再发请求，事务生命周期更好推理。
+      const sidecarCursor = tx.objectStore('eventIds').openCursor();
+      sidecarCursor.onsuccess = () => {
+        const cursor = sidecarCursor.result;
+        if (cursor) {
+          const value = cursor.value as SidecarEntry | undefined;
+          if (value && typeof value.eventId === 'string') sidecar.set(String(cursor.key), value);
+          cursor.continue();
+          return;
+        }
+        step();
+      };
+      tx.objectStore('sync').get('sync').onsuccess = (e) => { syncState = parseSyncState((e.target as IDBRequest).result); step(); };
 
       const canonical = (value: unknown): unknown => Array.isArray(value)
         ? value.map(canonical)
@@ -378,8 +419,27 @@ export class WorkspaceRepository {
         objectStore.clear();
         for (const object of rows.objects) objectStore.put(object, object.id);
         metaStore.put({ ...rows.meta, management: rows.management }, 'workspace');
+
+        if (syncing) {
+          // 事件身份与 Outbox 在同一事务内落库：业务提交成功而身份丢失不可能发生。
+          const plan = planOutbox({
+            stored: slices(branches as Parameters<typeof slices>[0]),
+            next: slices(rows.branches),
+            sidecar, remote: options.remote,
+            newId: () => globalThis.crypto.randomUUID(),
+          });
+          const outboxStore = tx.objectStore('outbox');
+          for (const entry of plan.enqueue) outboxStore.put(entry, `${entry.streamId}:${entry.seq}`);
+          const idStore = tx.objectStore('eventIds');
+          for (const item of plan.sidecar) idStore.put(item.value, item.key);
+          if (plan.replaced.length) {
+            const needsRebase = [...new Set([...syncState.needsRebase, ...plan.replaced])];
+            tx.objectStore('sync').put({ ...syncState, needsRebase }, 'sync');
+          }
+          result = { enqueued: plan.enqueue.length, replaced: plan.replaced };
+        }
       };
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => resolve(result);
       tx.onabort = () => reject(new Error(error));
       tx.onerror = () => reject(new Error(error));
     });
@@ -441,6 +501,104 @@ export class WorkspaceRepository {
       tx.oncomplete = () => resolve();
       tx.onabort = () => reject(new Error('清理暂存对象失败'));
       tx.onerror = () => reject(new Error('清理暂存对象失败'));
+    });
+  }
+
+  // ---------- 同步状态（仅云副本命名空间） ----------
+
+  private requireSync(): void {
+    if (!isCloudNamespace(this.namespace)) throw new Error('只有云副本命名空间参与增量同步');
+  }
+
+  async syncState(): Promise<CloudSyncState> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('sync', 'readonly');
+      const request = tx.objectStore('sync').get('sync');
+      tx.oncomplete = () => resolve(parseSyncState(request.result));
+      tx.onabort = tx.onerror = () => reject(new Error('无法读取同步状态；本机存档未被修改'));
+    });
+  }
+
+  async pendingOutbox(): Promise<OutboxEntry[]> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readonly');
+      const request = tx.objectStore('outbox').getAll();
+      tx.oncomplete = () => resolve((request.result ?? []) as OutboxEntry[]);
+      tx.onabort = tx.onerror = () => reject(new Error('无法读取待同步事件；本机存档未被修改'));
+    });
+  }
+
+  async saveSyncState(state: CloudSyncState): Promise<void> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('sync', 'readwrite');
+      tx.objectStore('sync').put(state, 'sync');
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(new Error('同步状态尚未保存'));
+    });
+  }
+
+  /** 推送成功：删除已确认事件并推进云端前缀，全部在同一事务。 */
+  async acknowledgePush(receipt: SyncPushReceipt, keys: readonly string[]): Promise<void> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['outbox', 'sync'], 'readwrite');
+      const outbox = tx.objectStore('outbox');
+      for (const key of keys) outbox.delete(key);
+      const store = tx.objectStore('sync');
+      const request = store.get('sync');
+      request.onsuccess = () => {
+        try {
+          const state = parseSyncState(request.result);
+          const streams = { ...state.streams };
+          for (const stream of receipt.streams) streams[stream.streamId] = { seq: stream.eventSeq, eventId: stream.lastEventId };
+          store.put({
+            ...state, streams, cloudVersion: receipt.cloudVersion,
+            lastError: null, lastSyncedAt: new Date().toISOString(),
+          }, 'sync');
+        } catch { tx.abort(); }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(new Error('推送回执尚未保存，可沿原批次重试'));
+    });
+  }
+
+  /** 明确放弃冲突：本机这批事件不再推送，云端前缀改为服务端当前流头。 */
+  async discardConflict(streamId: string, binding: { seq: number; eventId: string | null }): Promise<void> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['outbox', 'sync'], 'readwrite');
+      const outbox = tx.objectStore('outbox');
+      const cursor = outbox.openCursor();
+      cursor.onsuccess = () => {
+        const current = cursor.result;
+        if (!current) return;
+        if ((current.value as OutboxEntry).streamId === streamId) current.delete();
+        current.continue();
+      };
+      const store = tx.objectStore('sync');
+      const request = store.get('sync');
+      request.onsuccess = () => {
+        try {
+          const state = parseSyncState(request.result);
+          store.put({
+            ...state,
+            streams: { ...state.streams, [streamId]: binding },
+            conflicts: state.conflicts.filter((entry) => entry.streamId !== streamId),
+            needsRebase: [...new Set([...state.needsRebase, streamId])],
+            lastError: null,
+          }, 'sync');
+        } catch { tx.abort(); }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(new Error('放弃冲突的结果尚未保存'));
     });
   }
 

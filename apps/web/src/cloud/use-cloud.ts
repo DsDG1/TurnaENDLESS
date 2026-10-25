@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { CloudApi } from './client.js';
 import { CloudController } from './controller.js';
 import { WorkspaceRepository } from '../storage.js';
+import { content } from '../content/catalog.js';
 
 /**
  * 把云端控制器接到 React：控制器本身不依赖 React，这里只负责实例化、
@@ -15,6 +16,7 @@ export function createCloudController() {
   return new CloudController({
     api: new CloudApi(),
     openRepository: (namespace) => new WorkspaceRepository(globalThis.indexedDB, namespace),
+    content,
     digest: async (bytes) => hex(await globalThis.crypto.subtle.digest('SHA-256', bytes)),
     key: () => globalThis.crypto.randomUUID(),
   });

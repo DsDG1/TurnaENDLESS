@@ -19,6 +19,10 @@ export interface CloudActions {
   preview(bytes: ArrayBuffer): void;
   confirm(): void;
   claim(workspaceId: string): void;
+  openSync(workspaceId: string): void;
+  sync(): void;
+  pauseSync(paused: boolean): void;
+  discardConflict(conflictId: string): void;
 }
 
 const RETRY_HINT: Record<string, string> = {
@@ -75,6 +79,47 @@ function FailureCard({ failure }: { failure: NonNullable<CloudState['failure']> 
       {failure.retryAction && RETRY_HINT[failure.retryAction] ? ` ${RETRY_HINT[failure.retryAction]}` : ''}
     </span>
   </div>;
+}
+
+function SyncCard({ sync, enabled, busy, actions }: {
+  sync: NonNullable<CloudState['sync']>; enabled: boolean; busy: boolean; actions: CloudActions;
+}) {
+  return <section className="surface">
+    <div className="section-heading"><div><span className="eyebrow">SYNC</span><h2>增量同步</h2></div><Icon name="cloud" /></div>
+    {!enabled && <p className="muted-copy">这个部署没有启用增量同步，按钮不会假装可用。</p>}
+    <div className="cloud-facts" aria-label="同步状态">
+      <div><span>本机待推送</span><strong>{sync.pending} 条事件</strong></div>
+      <div><span>云端已确认版本</span><strong>{sync.cloudVersion ?? '尚未建立绑定'}</strong></div>
+      <div><span>上次同步</span><strong>{sync.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('zh-CN') : '还没有成功同步过'}</strong></div>
+      <div><span>状态</span><strong>{sync.paused ? '已暂停（事件继续排队）' : '运行中'}</strong></div>
+    </div>
+    <div className="button-row">
+      <button className="button button-dark" disabled={busy || !enabled || sync.paused} onClick={() => actions.sync()}>
+        <Icon name="arrow" size={17} />立即同步
+      </button>
+      <button className="button button-outline" disabled={busy || !enabled} onClick={() => actions.pauseSync(!sync.paused)}>
+        {sync.paused ? '恢复同步' : '暂停同步'}
+      </button>
+      <span className="generation-note">先推送本机事件，再拉取云端变更；冲突不会自动合并。</span>
+    </div>
+    {sync.report && <p className="generation-phase" role="status">{sync.report}</p>}
+    {sync.lastError && <p className="error-text" role="alert">{sync.lastError}</p>}
+    {!!sync.needsRebase.length && <p className="error-text" role="alert">
+      有 {sync.needsRebase.length} 个分支的本机历史被整体替换过，已停止推送：不会把替换后的历史当成「追加」上传。
+    </p>}
+    {!!sync.conflicts.length && <ul className="cloud-list" aria-label="同步冲突">
+      {sync.conflicts.map((conflict) => <li key={conflict.id}>
+        <span>冲突 · 分支 {short(conflict.streamId)}</span>
+        <small>本机前缀 {conflict.baseSeq}{conflict.cloudSeq >= 0 ? ` / 云端 ${conflict.cloudSeq}` : ''}</small>
+        <button className="text-button" disabled={busy} onClick={() => actions.discardConflict(conflict.id)}>放弃本机候选</button>
+      </li>)}
+    </ul>}
+    <p className="section-footnote">
+      同步只搬运真实阅读事件：同一批次只会生效一次，事件身份在本地提交时分配，重试沿用同一个。
+      跨设备「把云端事件应用到本机阅读器」还缺云库阅读入口；标题、标签、回收站等元数据同步和
+      「保留为独立分支」也尚未实现——这里不会显示成已完成。
+    </p>
+  </section>;
 }
 
 export function CloudPage({ state, actions, backup }: {
@@ -179,7 +224,7 @@ export function CloudPage({ state, actions, backup }: {
           <div><span>内容 / 修订</span><strong>{state.receipt.contentIds.length} / {state.receipt.revisionIds.length}</strong></div>
           <div><span>副本策略</span><strong>{state.receipt.copyPolicy}</strong></div>
         </div>}
-        <p className="section-footnote">这一轮只建立云副本。增量同步（本机继续阅读后云端自动更新）和云端生成都还没实现，界面不会暗示它们已可用。</p>
+        <p className="section-footnote">这一轮只建立云副本。云端生成、额度与付费都还没实现，界面不会暗示它们已可用。</p>
       </section>
 
       <section className="surface">
@@ -190,10 +235,14 @@ export function CloudPage({ state, actions, backup }: {
             <small>{workspace.status === 'active' ? '已激活' : workspace.status} · 云版本 {workspace.cloudVersion}</small>
             {workspace.status === 'active' && <button className="text-button" disabled={state.busy || !state.capabilities?.features.import}
               onClick={() => actions.claim(workspace.id)}>领取到这台设备</button>}
+            {workspace.status === 'active' && <button className="text-button" disabled={state.busy || !state.capabilities?.features.sync}
+              onClick={() => actions.openSync(workspace.id)}>同步状态</button>}
           </li>)}</ul>}
         {state.installation && <p className="generation-phase" role="status">安装回执已保存：{new Date(state.installation.installedAt).toLocaleString('zh-CN')} · 设备 {short(state.installation.deviceId)}</p>}
         <p className="section-footnote">领取会把同一份副本写进这台设备的独立云库，不覆盖游客存档，也不覆盖本机后续进度。云库阅读入口尚未接线。</p>
       </section>
+
+      {state.sync && <SyncCard sync={state.sync} enabled={!!state.capabilities?.features.sync} busy={state.busy} actions={actions} />}
     </>}
   </>;
 }
@@ -209,5 +258,9 @@ export function CloudRoute({ backup }: { backup(): unknown | null }) {
     preview: (bytes) => void controller.previewImport(bytes),
     confirm: () => void controller.confirmImport(),
     claim: (workspaceId) => void controller.claim(workspaceId),
+    openSync: (workspaceId) => void controller.openSync(workspaceId),
+    sync: () => void controller.runSync(),
+    pauseSync: (paused) => void controller.setSyncPaused(paused),
+    discardConflict: (conflictId) => void controller.discardConflict(conflictId),
   }} />;
 }

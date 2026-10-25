@@ -10,9 +10,11 @@ import {
 } from '@endless/cloud-contracts';
 import type { AuthContext } from '../auth/service.js';
 import type { CloudPool, Querier } from '../db/client.js';
+import { lockAccount } from '../db/locks.js';
 import type { CloudDeployment } from '../deployment.js';
 import { CloudError, idempotencyMismatch, notFound } from '../errors.js';
 import { commitObjectGraph, type ObjectService } from '../objects/service.js';
+import { seedSyncStreams } from '../sync/service.js';
 
 interface PreviewRow {
   id: string;
@@ -32,11 +34,6 @@ const changed = () => new CloudError(409, 'BASIS_CHANGED', 'contract', '来源�
 const expired = () => new CloudError(409, 'UPLOAD_EXPIRED', 'storage', '导入预览已过期，原件和游客存档保留');
 const rejected = () => new CloudError(422, 'CONTENT_REJECTED', 'contract', '备份格式、正文、引用、历史或容量未通过完整验证；原存档保留');
 const previewSelect = 'SELECT *, expires_at > now() AS retained FROM import_previews';
-
-async function lockAccount(q: Querier, account: string) {
-  await q.query('INSERT INTO account_control (account_id) VALUES ($1) ON CONFLICT DO NOTHING', [account]);
-  await q.query('SELECT account_id FROM account_control WHERE account_id = $1 FOR UPDATE', [account]);
-}
 
 async function claim(q: Querier, account: string, operation: string, key: string, digest: string) {
   await q.query(
@@ -238,6 +235,9 @@ export class ImportService {
       );
       if (!activated.rows[0]) throw changed();
       await commitObjectGraph(q, ctx.accountId, row.workspace_id, row.object_id);
+      // §8.2：第一次导入把整段前缀的事件身份一次性持久化，
+      // 之后新设备在本机不需要重新分配 ID，只沿服务端绑定追加。
+      await seedSyncStreams(q, ctx.accountId, row.workspace_id, copy);
       await q.query(
         `INSERT INTO workspace_imports (account_id, workspace_id, id, source_object_id, copy_digest, copy_created_at, receipt)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,

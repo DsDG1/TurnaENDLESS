@@ -75,7 +75,8 @@ describe('endless-workspace 原子存档', () => {
     await repo.close();
     // 直接写坏 meta：entries 与 revisions 不一致
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = factory.open('endless-workspace', 1);
+      // 与仓库一致使用当前库版本；用旧版本打开会直接被 IndexedDB 拒绝
+      const req = factory.open('endless-workspace', 2);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });

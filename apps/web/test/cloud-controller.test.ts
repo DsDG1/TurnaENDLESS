@@ -9,7 +9,7 @@ import { CloudController } from '../src/cloud/controller.js';
 import { CloudFailure, type CloudApiPort } from '../src/cloud/client.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
 import { WorkspaceRepository } from '../src/storage.js';
-import { cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
+import { cloudTestContent, cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
 
 /**
  * 控制器测试：真实 fake-indexeddb + 假云端，验证「不重复提交、不覆盖、不假装成功」。
@@ -118,6 +118,7 @@ function harness(options: { signedIn?: boolean } = {}): Harness {
   const controller = new CloudController({
     api,
     openRepository: (namespace) => new WorkspaceRepository(factory, namespace),
+    content: cloudTestContent,
     digest: async (bytes) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
       .map((byte) => byte.toString(16).padStart(2, '0')).join(''),
     key: () => `idem-key-${String(++counter).padStart(4, '0')}`,
