@@ -46,6 +46,11 @@ export const DeviceSchema = z.object({
 export type Device = z.infer<typeof DeviceSchema>;
 
 export const MeResponseSchema = z.object({
+  context: z.object({
+    deploymentId: UuidSchema,
+    environment: z.enum(['development', 'test', 'staging', 'production']),
+    localNamespace: z.string().regex(/^endless-cloud:[0-9a-f-]{36}:[0-9a-f-]{36}$/),
+  }),
   account: z.object({
     id: UuidSchema,
     status: z.enum(['active', 'deletion_pending', 'deleted']),

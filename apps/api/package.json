@@ -5,9 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
-    "dev:cloud": "tsx watch --env-file-if-exists=.env src/cloud/main.ts",
-    "migrate:cloud": "tsx --env-file-if-exists=.env src/cloud/db/migrate.ts",
-    "bootstrap:cloud": "tsx --env-file-if-exists=.env src/cloud/db/bootstrap.ts",
+    "dev:cloud": "tsx watch src/cloud/main.ts",
+    "start:cloud": "tsx src/cloud/main.ts",
+    "worker:cloud": "tsx src/cloud/worker.ts",
+    "test:cloud": "vitest run test/cloud",
+    "test:cloud:https": "vitest run test/cloud/https.test.ts",
+    "migrate:cloud": "tsx src/cloud/db/migrate.ts",
+    "bootstrap:cloud": "tsx src/cloud/db/bootstrap.ts",
     "start": "tsx --env-file-if-exists=.env src/main.ts",
     "preview": "tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit -p .",
@@ -19,6 +23,7 @@
     "@endless/director": "workspace:*",
     "@endless/esl": "workspace:*",
     "@endless/player": "workspace:*",
+    "nodemailer": "10.1.7",
     "pg": "8.23.1",
     "tsx": "^4.20.0",
     "yaml": "^2.8.0",
@@ -26,8 +31,13 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/nodemailer": "8.0.2",
     "@types/pg": "^8.23.1",
+    "@types/smtp-server": "3.5.13",
     "embedded-postgres": "18.4.0-beta.17",
+    "playwright": "1.64.1",
+    "selfsigned": "5.5.0",
+    "smtp-server": "3.20.2",
     "typescript": "^5.9.3",
     "vitest": "^3.2.0"
   }

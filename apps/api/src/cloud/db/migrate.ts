@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { join } from 'node:path';
+import { assertCloudDeployment, bindCloudDeployment, CloudEnvironmentSchema } from '../deployment.js';
 
 /**
  * 受控迁移执行（§18.1）：独立步骤，不由 Web 实例启动时竞相改表。
@@ -22,7 +24,7 @@ export async function loadMigrations(dir = MIGRATIONS_DIR): Promise<MigrationFil
   const names = (await readdir(dir)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
   const files: MigrationFile[] = [];
   for (const name of names) {
-    const sql = await readFile(new URL(`./migrations/${name}`, `file://${dir}`).pathname === `/${dir}` ? `${dir}/${name}` : `${dir}/${name}`, 'utf8');
+    const sql = await readFile(join(dir, name), 'utf8');
     files.push({
       version: Number.parseInt(name.slice(0, 4), 10),
       name,
@@ -50,14 +52,15 @@ export interface MigrationReport {
 }
 
 export async function migrate(client: pg.Client, migrations: MigrationFile[]): Promise<MigrationReport> {
-  await ensureSchemaTable(client);
   await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY]);
   try {
+    await ensureSchemaTable(client);
     const applied = await client.query<{ version: number; name: string; checksum: string }>(
       'SELECT version, name, checksum FROM schema_migrations ORDER BY version');
     const appliedByVersion = new Map(applied.rows.map((row) => [row.version, row]));
     for (const row of applied.rows) {
       const file = migrations.find((m) => m.version === row.version);
+      if (!file) throw new Error(`已应用迁移 ${row.name} 缺失，拒绝继续`);
       if (file && file.checksum !== row.checksum) {
         throw new Error(`迁移 ${row.name} 的 checksum 漂移（库内 ${row.checksum.slice(0, 12)}… != 文件 ${file.checksum.slice(0, 12)}…），拒绝继续；不要原地改写已应用迁移`);
       }
@@ -104,9 +107,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   } else {
     const client = new pg.Client({ connectionString: dsn });
     try {
+      const environment = CloudEnvironmentSchema.parse(process.env.ENDLESS_CLOUD_ENV);
       await client.connect();
+      const existing = await client.query<{ present: boolean }>("SELECT to_regclass('public.cloud_deployment') IS NOT NULL AS present");
+      if (existing.rows[0]?.present) await assertCloudDeployment(client, environment);
       const migrations = await loadMigrations();
       const report = await migrate(client, migrations);
+      await bindCloudDeployment(client, environment);
       console.log(`迁移完成：新应用 ${report.applied.length} 个（${report.applied.join(', ') || '无'}），水位 ${report.head}`);
     } catch (error) {
       console.error(`迁移失败：${error instanceof Error ? error.message : String(error)}`);

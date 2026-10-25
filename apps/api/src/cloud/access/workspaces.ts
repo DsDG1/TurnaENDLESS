@@ -64,12 +64,17 @@ export async function createWorkspace(
       // 竞态窗口：冲突方回滚导致行消失——直接走正常创建路径。
     }
     await q.query('INSERT INTO account_control (account_id) VALUES ($1) ON CONFLICT DO NOTHING', [ctx.accountId]);
+    await q.query('SELECT account_id FROM account_control WHERE account_id = $1 FOR UPDATE', [ctx.accountId]);
     // 导入锚幂等：同账号+原本地 ID 直接复用既有云实例，不重复创建。
     if (input.sourceLocalId) {
       const existing = await q.query<WorkspaceRow>(
         'SELECT * FROM workspaces WHERE account_id = $1 AND source_local_id = $2',
         [ctx.accountId, input.sourceLocalId]);
       if (existing.rows[0]) {
+        await q.query(
+          'INSERT INTO device_bindings (device_id, account_id, workspace_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [ctx.deviceId, ctx.accountId, existing.rows[0].id],
+        );
         const body = { workspace: toWire(existing.rows[0]) };
         await q.query('UPDATE idempotency_keys SET status_code = $1, response = $2, completed_at = now() WHERE account_id = $3 AND operation = $4 AND key = $5',
           [200, JSON.stringify(body), ctx.accountId, 'create_workspace', idempotencyKey]);

@@ -11,7 +11,7 @@ export interface TestCluster {
   stop(): Promise<void>;
 }
 
-export async function startTestCluster(): Promise<TestCluster | null> {
+export async function startTestCluster(): Promise<TestCluster> {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const dir = mkdtempSync(join(tmpdir(), 'endless-cloud-pg-'));
   const cluster = new EmbeddedPostgres({
@@ -23,9 +23,8 @@ export async function startTestCluster(): Promise<TestCluster | null> {
     await cluster.start();
     return { port, adminDsn: `postgres://postgres:postgres@127.0.0.1:${port}/postgres`, stop: () => cluster.stop() };
   } catch (error) {
-    console.warn('embedded-postgres 不可用，跳过真实数据库集成测试：', error instanceof Error ? error.message : error);
     await cluster.stop().catch(() => {});
-    return null;
+    throw new Error('真实 PostgreSQL 集成测试环境启动失败，不能用跳过代替验收', { cause: error });
   }
 }
 

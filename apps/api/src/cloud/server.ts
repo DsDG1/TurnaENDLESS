@@ -10,6 +10,7 @@ import { AuthService, type AuthContext } from './auth/service.js';
 import { createWorkspace, listWorkspaces } from './access/workspaces.js';
 import { badRequest, CloudError, forbidden, unauthorized } from './errors.js';
 import { clearSessionCookie, correlationId, readJsonBody, sendJson, sessionCookie, sessionTokenFrom } from './http.js';
+import { accountContext, assertCloudDeployment, type CloudDeployment } from './deployment.js';
 
 /**
  * 云 API HTTP 层（§14）。与本机 server.ts 完全分离：
@@ -27,6 +28,7 @@ interface CloudServerOptions {
   mailer: Mailer;
   mailEcho?: boolean;
   capabilities: CloudCapabilities;
+  deployment: CloudDeployment;
 }
 
 interface Route {
@@ -58,6 +60,17 @@ export function createCloudServer(options: CloudServerOptions) {
   }
 
   const routes: Route[] = [
+    { method: 'GET', access: 'public', pattern: /^\/health\/live$/,
+      handle: async () => ({ status: 200, body: { status: 'live' } }) },
+    { method: 'GET', access: 'public', pattern: /^\/health\/ready$/,
+      handle: async () => {
+        const deployments = await Promise.all([
+          assertCloudDeployment(options.auth, options.deployment.environment),
+          assertCloudDeployment(options.app, options.deployment.environment),
+        ]);
+        if (deployments.some((entry) => entry.id !== options.deployment.id)) throw new Error('CLOUD_ENVIRONMENT_MISMATCH');
+        return { status: 200, body: { status: 'ready' } };
+      } },
     { method: 'GET', access: 'public', pattern: /^\/capabilities$/,
       handle: async () => ({ status: 200, body: options.capabilities }) },
     { method: 'POST', access: 'public', pattern: /^\/auth\/challenges$/,
@@ -72,7 +85,9 @@ export function createCloudServer(options: CloudServerOptions) {
       handle: async ({ request, correlation }) => {
         const body = VerifyRequestSchema.safeParse(await readJsonBody(request));
         if (!body.success) throw badRequest('验证请求格式无效');
-        const result = await authService.verifyChallenge(body.data, correlation);
+        const result = await authService.verifyChallenge(
+          body.data, correlation, sessionTokenFrom(request), authService.clientIp(request),
+        );
         const expires = new Date(result.sessionExpiresAt);
         return {
           status: 200,
@@ -97,6 +112,7 @@ export function createCloudServer(options: CloudServerOptions) {
             account: { id: account.rows[0]!.id, status: account.rows[0]!.status, createdAt: account.rows[0]!.created_at.toISOString() },
             device: deviceWire(device.rows[0]!, auth.deviceId),
             entitlements: [],
+            context: accountContext(options.deployment, auth.accountId),
           },
         };
       } },
@@ -183,7 +199,7 @@ export function createCloudServer(options: CloudServerOptions) {
         if (error instanceof CloudError) sendJson(response, error.status, error.toBody(correlation));
         else {
           // 内部错误只给关联 ID；细节进服务端日志，不外发。
-          console.error(`[cloud] ${correlation}:`, error instanceof Error ? error.message : error);
+            console.error(`[cloud] ${correlation}: INTERNAL`);
           sendJson(response, 503, new CloudError(503, 'INTERNAL', 'internal', '服务暂不可用，请稍后重试', 'retry_read').toBody(correlation));
         }
       }

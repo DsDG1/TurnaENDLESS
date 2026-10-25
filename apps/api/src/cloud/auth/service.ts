@@ -4,6 +4,7 @@ import { CloudError, rateLimited, unauthorized } from '../errors.js';
 import type { Mailer } from '../mail.js';
 import { generateOtpCode, generateSessionToken, otpDigest, recipientDigest, sessionDigest, verifyOtp } from './secrets.js';
 import { SlidingWindow } from './rate-limit.js';
+import { consumeAuthLimit } from './limits.js';
 
 /**
  * 身份与会话服务（§4）。
@@ -57,10 +58,13 @@ export class AuthService {
   /** 签发一次性验证码。响应不暴露账号是否存在；限流失败是显式 429。 */
   async issueChallenge(input: { email: string; ip: string }, correlation: string): Promise<{ challengeId: string; expiresAt: string; resendAfterSeconds: number }> {
     const email = input.email;
+    this.ipWindow.sweep();
     const ipTake = this.ipWindow.take(`challenge:${input.ip}`);
     if (!ipTake.ok) throw rateLimited('验证码请求过于频繁，请稍后重试', ipTake.retryAfter);
+    await consumeAuthLimit(this.auth, this.pepper, 'challenge_ip', input.ip, 10, 3600);
     const recipient = recipientDigest(this.pepper, email);
     return this.auth.withSystem(async (q) => {
+      await q.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`challenge:${recipient.toString('hex')}`]);
       const recent = await q.query<{ count: string }>(
         'SELECT count(*)::text AS count FROM auth_challenges WHERE recipient_digest = $1 AND created_at > now() - interval \'1 hour\'',
         [recipient]);
@@ -74,6 +78,7 @@ export class AuthService {
         recipient: email,
         subject: 'ENDLESS 登录验证码',
         text: `你的 ENDLESS 登录验证码是 ${code}，10 分钟内有效。若非本人操作请忽略本邮件。`,
+        expiresAt,
       });
       // 摘要一次性绑定 用途+挑战+接收方+验证码；不存在先占位再写回的中间态。
       await q.query(
@@ -87,8 +92,9 @@ export class AuthService {
   }
 
   /** 校验验证码：一次消费；验证通过即建立身份/账号、设备与会话。 */
-  async verifyChallenge(input: { challengeId: string; code: string; deviceName?: string; email: string }, correlation: string): Promise<{ token: string; accountId: string; deviceId: string; sessionExpiresAt: string }> {
-    return this.auth.withSystem(async (q) => {
+  async verifyChallenge(input: { challengeId: string; code: string; deviceName?: string; email: string }, correlation: string, previousToken?: string | null, ip?: string): Promise<{ token: string; accountId: string; deviceId: string; sessionExpiresAt: string }> {
+    if (ip) await consumeAuthLimit(this.auth, this.pepper, 'verify_ip', ip, 60, 60);
+    const result = await this.auth.withSystem(async (q) => {
       const found = await q.query<ChallengeRow>('SELECT * FROM auth_challenges WHERE id = $1 FOR UPDATE', [input.challengeId]);
       const challenge = found.rows[0];
       if (!challenge || challenge.consumed_at !== null || challenge.expires_at <= this.now() || challenge.attempts >= challenge.max_attempts) {
@@ -99,7 +105,8 @@ export class AuthService {
       // 接收方绑定：挑战不属于该邮箱时与错误验证码同等失败，不区分提示。
       const bound = timingSafeEqual(recipientDigest(this.pepper, email), challenge.recipient_digest);
       if (!bound || !verifyOtp(this.pepper, challenge.id, email, input.code.trim(), challenge.code_digest)) {
-        throw unauthorized('验证码无效或已过期，请重新获取');
+        await this.audit(q, null, 'auth.challenge_rejected', 'auth_challenge', challenge.id, undefined, correlation);
+        return { error: unauthorized('验证码无效或已过期，请重新获取') };
       }
       await q.query('UPDATE auth_challenges SET consumed_at = now() WHERE id = $1', [challenge.id]);
       const accountId = await this.accountForIdentity(q, 'email', email);
@@ -107,13 +114,22 @@ export class AuthService {
       const token = generateSessionToken();
       const sessionExpiresAt = new Date(this.now().getTime() + SESSION_TTL_MS);
       const digest = sessionDigest(token);
+      const previous = previousToken ? await q.query<{ id: string; account_id: string }>(
+        'UPDATE sessions SET revoked_at = now() WHERE token_digest = $1 AND revoked_at IS NULL RETURNING id, account_id',
+        [sessionDigest(previousToken)],
+      ) : null;
+      if (previous?.rows[0]) {
+        await this.audit(q, previous.rows[0].account_id, 'auth.session_rotated', 'session', previous.rows[0].id, undefined, correlation);
+      }
       await q.query(
-        `INSERT INTO sessions (account_id, device_id, token_digest, auth_strength, expires_at)
-         VALUES ($1, $2, $3, 'email_otp', $4)`,
-        [accountId, deviceId, digest, sessionExpiresAt]);
+        `INSERT INTO sessions (account_id, device_id, token_digest, auth_strength, expires_at, rotated_from)
+         VALUES ($1, $2, $3, 'email_otp', $4, $5)`,
+        [accountId, deviceId, digest, sessionExpiresAt, previous?.rows[0]?.id ?? null]);
       await this.audit(q, accountId, 'auth.session_created', 'device', deviceId, undefined, correlation);
       return { token, accountId, deviceId, sessionExpiresAt: sessionExpiresAt.toISOString() };
     });
+    if ('error' in result) throw result.error;
+    return result;
   }
 
   /** 邮箱身份 → 账号；同邮箱并发验证用 advisory lock 串行化，避免双账号。 */
@@ -123,7 +139,7 @@ export class AuthService {
       'SELECT account_id FROM auth_identities WHERE issuer = $1 AND subject = $2', [issuer, subject]);
     if (existing.rows[0]) {
       const account = await q.query<{ id: string; status: string }>('SELECT id, status FROM accounts WHERE id = $1', [existing.rows[0].account_id]);
-      if (account.rows[0]?.status === 'deleted') throw unauthorized('该账号已注销');
+      if (account.rows[0]?.status !== 'active') throw unauthorized('该账号不可登录');
       return existing.rows[0].account_id;
     }
     const account = await q.query<{ id: string }>('INSERT INTO accounts DEFAULT VALUES RETURNING id');
@@ -152,7 +168,8 @@ export class AuthService {
     const digest = sessionDigest(token);
     const result = await this.auth.query<{ id: string; account_id: string; device_id: string | null; device_revoked: Date | null }>(
       `SELECT s.id, s.account_id, s.device_id, d.revoked_at AS device_revoked
-       FROM sessions s LEFT JOIN devices d ON d.id = s.device_id
+       FROM sessions s JOIN devices d ON d.id = s.device_id AND d.account_id = s.account_id
+       JOIN accounts a ON a.id = s.account_id AND a.status = 'active'
        WHERE s.token_digest = $1 AND s.revoked_at IS NULL AND s.expires_at > now()`,
       [digest]);
     const row = result.rows[0];
