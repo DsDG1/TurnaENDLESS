@@ -4,16 +4,19 @@ import { GenerationRequestSchema, type Content } from '@endless/content';
 import { ApiError, type JobManager } from './jobs.js';
 import { preparedFeatures } from './extensions/index.js';
 
-const origins = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173']);
+export const defaultOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173'];
 const MAX_BODY_BYTES = 3 * 1024 * 1024;
 
 export function createApiServer(options: {
   jobs: JobManager; content: Content; token: string; configured: boolean; model: string;
   ready?: () => boolean;
+  origins?: readonly string[];
+  handlePage?: (request: IncomingMessage, response: ServerResponse) => Promise<void>;
   /** Edition 路由：返回 false 表示不是它的路径，交回原有分发。 */
   edition?: { handle: (request: IncomingMessage, response: ServerResponse, url: URL) => Promise<boolean> };
 }) {
   const { jobs, content, token, configured, model } = options;
+  const origins = new Set(options.origins ?? defaultOrigins);
 
   function send(response: ServerResponse, status: number, body: unknown) {
     response.writeHead(status, {
@@ -60,6 +63,10 @@ export function createApiServer(options: {
       }
       if (request.method === 'GET' && request.url === '/api/status') {
         send(response, 200, { configured, acceptsUserKey: true, model, token, features: preparedFeatures });
+        return;
+      }
+      if (options.handlePage && !new URL(request.url ?? '/', 'http://127.0.0.1').pathname.startsWith('/api/')) {
+        await options.handlePage(request, response);
         return;
       }
       authorize(request);

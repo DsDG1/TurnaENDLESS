@@ -13,10 +13,10 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
 });
 
-async function start(configured = true) {
+async function start(configured = true, origins?: readonly string[]) {
   const jobs = new JobManager(new MemoryJobStore(), async () => { throw new Error('secret-provider-error'); });
   await jobs.initialize();
-  const server = createApiServer({ jobs, content, configured, token: 'test-token', model: 'test-model' });
+  const server = createApiServer({ jobs, content, configured, token: 'test-token', model: 'test-model', origins });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
@@ -24,6 +24,20 @@ async function start(configured = true) {
 }
 
 const headers = { Origin: 'http://127.0.0.1:4173', 'Content-Type': 'application/json', 'X-Endless-Token': 'test-token' };
+
+it('allows an explicit desktop origin without allowing unrelated browser origins', async () => {
+  const origin = 'http://127.0.0.1:4175';
+  const { url } = await start(false, [origin]);
+  expect((await fetch(`${url}/api/status`, { headers: { Origin: origin } })).status).toBe(200);
+  expect((await fetch(`${url}/api/status`, { headers })).status).toBe(403);
+  expect((await fetch(`${url}/api/generations`, {
+    method: 'POST', headers: { ...headers, Origin: origin, 'X-Endless-Token': 'wrong' }, body: '{}',
+  })).status).toBe(403);
+  const rejected = await fetch(`${url}/api/generations`, {
+    method: 'POST', headers: { ...headers, Origin: origin }, body: JSON.stringify({ requestId: crypto.randomUUID(), save: complete() }),
+  });
+  expect(rejected.status).toBe(401);
+});
 
 describe('本机 API 安全与数据边界', () => {
   it('状态接口不泄露模型密钥，跨站与未知 Host 均被拒绝', async () => {
