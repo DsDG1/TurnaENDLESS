@@ -38,6 +38,7 @@ export const CloudErrorCodeSchema = z.enum([
   'PROVIDER_TIMEOUT',
   'STORAGE_UNAVAILABLE',
   'STORAGE_QUOTA',
+  'UPLOAD_EXPIRED',
   'PAYMENT_PENDING',
 ]);
 export type CloudErrorCode = z.infer<typeof CloudErrorCodeSchema>;

@@ -37,6 +37,25 @@ export async function readJsonBody(request: IncomingMessage, limit = CLOUD_LIMIT
   }
 }
 
+export async function readObjectBody(request: IncomingMessage): Promise<Buffer> {
+  if (request.headers['content-encoding'] && request.headers['content-encoding'] !== 'identity') {
+    throw badRequest('对象上传只接受 identity 编码');
+  }
+  if (request.headers['content-type'] !== 'application/octet-stream') throw badRequest('对象上传要求 application/octet-stream');
+  const declared = Number(request.headers['content-length']);
+  if (Number.isFinite(declared) && declared > CLOUD_LIMITS.uploadObjectBytes) {
+    throw new CloudError(413, 'STORAGE_QUOTA', 'storage', '对象超过大小上限');
+  }
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request) {
+    bytes += chunk.length;
+    if (bytes > CLOUD_LIMITS.uploadObjectBytes) throw new CloudError(413, 'STORAGE_QUOTA', 'storage', '对象超过大小上限');
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks, bytes);
+}
+
 const COOKIE_NAME = '__Host-endless_session' as const;
 
 export function parseCookies(request: IncomingMessage): Map<string, string> {

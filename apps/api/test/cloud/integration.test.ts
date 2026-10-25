@@ -422,7 +422,7 @@ describe('云 C1 集成（真实 PostgreSQL）', () => {
     const { adminDsn } = cluster;
     const files = await loadMigrations();
     const results = await Promise.all(Array.from({ length: 2 }, () => withClient(adminDsn, (q) => migrate(q, files))));
-    expect(results.every((result) => result.applied.length === 0 && result.head === 2)).toBe(true);
+    expect(results.every((result) => result.applied.length === 0 && result.head === files.at(-1)!.version)).toBe(true);
     const drifted = files.map((file, index) => index === 0 ? { ...file, checksum: 'synthetic-drift' } : file);
     await expect(withClient(cluster.adminDsn, (q) => migrate(q, drifted))).rejects.toThrow('checksum');
     await expect(withClient(cluster.adminDsn, (q) => migrate(q, files.slice(1)))).rejects.toThrow('缺失');

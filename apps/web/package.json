@@ -12,6 +12,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@endless/cloud-contracts": "workspace:*",
     "@endless/content": "workspace:*",
     "@endless/esl": "workspace:*",
     "@endless/learning": "workspace:*",

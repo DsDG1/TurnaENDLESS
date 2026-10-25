@@ -2,7 +2,13 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-const proxy = { '/api': { target: 'http://127.0.0.1:4174', changeOrigin: true } };
+// 云 API 与本机 API 是两个独立进程：/api/cloud 必须先于 /api 匹配。
+// 云端默认端口 4178，可用 ENDLESS_CLOUD_WEB_TARGET 指到别的开发实例。
+const cloudTarget = process.env.ENDLESS_CLOUD_WEB_TARGET ?? 'http://127.0.0.1:4178';
+const proxy = {
+  '/api/cloud': { target: cloudTarget, changeOrigin: true },
+  '/api': { target: 'http://127.0.0.1:4174', changeOrigin: true },
+};
 
 export default defineConfig({
   server: { proxy, port: 5173, strictPort: true },

@@ -14,7 +14,7 @@ async function sources(directory: string): Promise<string[]> {
 }
 
 it('云端源文件不得导入本机 API 或实验应用，只使用明确依赖', async () => {
-  const allowed = new Set(['pg', 'zod', 'nodemailer', '@endless/cloud-contracts', '@endless/esl']);
+  const allowed = new Set(['pg', 'zod', 'nodemailer', '@endless/cloud-contracts', '@endless/esl', '@endless/content', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner']);
   for (const file of await sources(root)) {
     const source = ts.createSourceFile(file, await readFile(file, 'utf8'), ts.ScriptTarget.Latest, true);
     for (const statement of source.statements) {

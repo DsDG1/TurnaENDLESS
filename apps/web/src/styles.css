@@ -648,3 +648,14 @@ button:disabled { opacity: .55; }
   .edition-article { padding: 22px 16px; }
   .edition-article p { font-size: 17px; }
 }
+
+/* ---------- 云端：账号、导入预览与领取 ---------- */
+.cloud-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px 22px; margin: 20px 0 0; }
+.cloud-facts > div { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid #e3e6dc; border-radius: 10px; background: #fffef9; }
+.cloud-facts span { font-size: 11px; color: #7a8570; letter-spacing: .4px; }
+.cloud-facts strong { font-size: 14px; font-weight: 600; color: #26342d; overflow-wrap: anywhere; }
+.cloud-list { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; }
+.cloud-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid #e3e6dc; border-radius: 10px; background: #fffef9; font-size: 13px; }
+.cloud-list li > span:first-child { font-weight: 600; }
+.cloud-list li > small { color: #7a8570; }
+.cloud-list li > .text-button { margin-left: auto; }

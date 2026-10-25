@@ -102,7 +102,7 @@ export async function createWorkspace(
 
 export async function listWorkspaces(app: CloudPool, accountId: string) {
   return app.withTenant(accountId, async (q) => {
-    const rows = await q.query<WorkspaceRow>('SELECT * FROM workspaces WHERE account_id = $1 ORDER BY created_at', [accountId]);
+    const rows = await q.query<WorkspaceRow>("SELECT * FROM workspaces WHERE account_id = $1 AND status <> 'staging' ORDER BY created_at", [accountId]);
     return { workspaces: rows.rows.map((row) => toWire(row)) };
   });
 }

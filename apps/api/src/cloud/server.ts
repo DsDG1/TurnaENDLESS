@@ -2,15 +2,17 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import {
   ChallengeRequestSchema, CreateWorkspaceRequestSchema, IdempotencyKeySchema,
   LEGACY_PROVIDER_KEY_HEADER, VerifyRequestSchema, type CloudCapabilities,
-  CLOUD_API_PREFIX, type Device,
+  CLOUD_API_PREFIX, PrepareObjectRequestSchema, ActivateImportRequestSchema, InstallWorkspaceRequestSchema, type Device,
 } from '@endless/cloud-contracts';
 import type { CloudPool } from './db/client.js';
 import type { Mailer } from './mail.js';
 import { AuthService, type AuthContext } from './auth/service.js';
 import { createWorkspace, listWorkspaces } from './access/workspaces.js';
 import { badRequest, CloudError, forbidden, unauthorized } from './errors.js';
-import { clearSessionCookie, correlationId, readJsonBody, sendJson, sessionCookie, sessionTokenFrom } from './http.js';
+import { clearSessionCookie, correlationId, readJsonBody, readObjectBody, sendJson, sessionCookie, sessionTokenFrom } from './http.js';
 import { accountContext, assertCloudDeployment, type CloudDeployment } from './deployment.js';
+import type { ObjectService } from './objects/service.js';
+import type { ImportService } from './imports/service.js';
 
 /**
  * 云 API HTTP 层（§14）。与本机 server.ts 完全分离：
@@ -29,6 +31,8 @@ interface CloudServerOptions {
   mailEcho?: boolean;
   capabilities: CloudCapabilities;
   deployment: CloudDeployment;
+  objects?: ObjectService;
+  imports?: ImportService;
 }
 
 interface Route {
@@ -49,6 +53,12 @@ export function createCloudServer(options: CloudServerOptions) {
   const origins = new Set(options.origins);
   const hosts = new Set(options.hosts.map((host) => host.toLowerCase()));
   const prefix = CLOUD_API_PREFIX;
+  // §14.1：能力发现由「实际挂载了哪些路由」推出，不让声明与实现分叉。
+  // 显式启用对象/导入后若仍报 false，客户端会永远看不到入口。
+  const capabilities: CloudCapabilities = {
+    ...options.capabilities,
+    features: { ...options.capabilities.features, objects: !!options.objects, import: !!options.imports },
+  };
 
   function deviceWire(row: { id: string; name: string; created_at: Date; last_seen_at: Date; revoked_at: Date | null }, currentId: string): Device {
     return {
@@ -72,7 +82,7 @@ export function createCloudServer(options: CloudServerOptions) {
         return { status: 200, body: { status: 'ready' } };
       } },
     { method: 'GET', access: 'public', pattern: /^\/capabilities$/,
-      handle: async () => ({ status: 200, body: options.capabilities }) },
+      handle: async () => ({ status: 200, body: capabilities }) },
     { method: 'POST', access: 'public', pattern: /^\/auth\/challenges$/,
       handle: async ({ request, correlation }) => {
         const body = ChallengeRequestSchema.safeParse(await readJsonBody(request));
@@ -147,6 +157,62 @@ export function createCloudServer(options: CloudServerOptions) {
     { method: 'GET', access: 'session', pattern: /^\/workspaces$/,
       handle: async ({ auth }) => ({ status: 200, body: await listWorkspaces(options.app, auth.accountId) }) },
   ];
+
+  if (options.objects) {
+    const objects = options.objects;
+    routes.push(
+      { method: 'POST', access: 'session', pattern: /^\/objects\/uploads$/,
+        handle: async ({ request, auth }) => {
+          const body = PrepareObjectRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('对象准备请求格式无效或契约不支持');
+          return { status: 200, body: await objects.prepare(auth, body.data) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/objects\/usage$/,
+        handle: async ({ auth }) => ({ status: 200, body: await objects.usage(auth) }) },
+      { method: 'PUT', access: 'session', pattern: /^\/objects\/(?<id>[0-9a-f-]{36})\/body$/,
+        handle: async ({ request, auth, params }) => ({
+          status: 200, body: await objects.upload(auth, params.id!, await readObjectBody(request)),
+        }) },
+      { method: 'POST', access: 'session', pattern: /^\/objects\/(?<id>[0-9a-f-]{36})\/verify$/,
+        handle: async ({ auth, params }) => ({ status: 200, body: await objects.verify(auth, params.id!) }) },
+      { method: 'GET', access: 'session', pattern: /^\/objects\/(?<id>[0-9a-f-]{36})\/download$/,
+        handle: async ({ auth, params }) => ({ status: 200, body: await objects.download(auth, params.id!) }) },
+    );
+  }
+
+  if (options.imports) {
+    const imports = options.imports;
+    const key = (request: IncomingMessage) => {
+      const parsed = IdempotencyKeySchema.safeParse(request.headers['idempotency-key']);
+      if (!parsed.success) throw badRequest('缺少合法 Idempotency-Key');
+      return parsed.data;
+    };
+    routes.push(
+      { method: 'POST', access: 'session', pattern: /^\/workspaces\/import-previews$/,
+        handle: async ({ request, auth }) => {
+          const id = key(request);
+          return { status: 200, body: await imports.preview(auth, await readObjectBody(request), id) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/workspaces\/import-previews\/(?<id>[0-9a-f-]{36})$/,
+        handle: async ({ auth, params }) => ({ status: 200, body: await imports.previewStatus(auth, params.id!) }) },
+      { method: 'POST', access: 'session', pattern: /^\/workspaces\/imports$/,
+        handle: async ({ request, auth }) => {
+          const id = key(request);
+          const body = ActivateImportRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('导入确认格式无效');
+          return { status: 200, body: await imports.activate(auth, body.data, id) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/workspaces\/(?<id>[0-9a-f-]{36})\/package$/,
+        handle: async ({ auth, params }) => ({ status: 200, body: await imports.package(auth, params.id!) }) },
+      { method: 'POST', access: 'session', pattern: /^\/workspaces\/(?<id>[0-9a-f-]{36})\/installations$/,
+        handle: async ({ request, auth, params }) => {
+          const id = key(request);
+          const body = InstallWorkspaceRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('安装回执格式无效');
+          return { status: 200, body: await imports.install(auth, params.id!, body.data, id) };
+        } },
+    );
+  }
 
   const server = createServer((request, response) => {
     void (async () => {

@@ -2,6 +2,8 @@ import {
   ContractError, describeUnsupportedSave, parseWorkspace,
   type Workspace, type WorkspaceIdentity,
 } from '@endless/content';
+import type { CloudImportReceipt, WorkspaceInstallation } from '@endless/cloud-contracts';
+import { cloudDigest, isCloudNamespace, parseCloudInstallation, type CloudLocalInstallation } from './cloud/local.js';
 
 /**
  * `endless-workspace` 本地仓库：多对象存储 + repositoryRevision CAS。
@@ -13,13 +15,14 @@ export class WorkspaceRepository {
   private database: Promise<IDBDatabase>;
   private closed = false;
 
-  constructor(factory: IDBFactory = globalThis.indexedDB) {
+  constructor(factory: IDBFactory = globalThis.indexedDB, readonly namespace = 'endless-workspace') {
+    if (namespace !== 'endless-workspace' && !isCloudNamespace(namespace)) throw new Error('本地库命名空间无效');
     this.database = new Promise((resolve, reject) => {
       if (!factory) {
         reject(new Error('当前浏览器无法使用本地存储，请使用普通模式的 Edge 或 Chrome'));
         return;
       }
-      const request = factory.open('endless-workspace', 1);
+      const request = factory.open(namespace, 1);
       request.onupgradeneeded = () => {
         const db = request.result;
         db.createObjectStore('meta');
@@ -108,6 +111,87 @@ export class WorkspaceRepository {
       };
       tx.onabort = () => reject(new Error('读取本地存档失败，已有数据未被修改'));
       tx.onerror = () => reject(new Error('读取本地存档失败，已有数据未被修改'));
+    });
+  }
+
+  async installCloudCopy(workspace: Workspace, receipt: CloudImportReceipt, deviceId: string) {
+    if (!isCloudNamespace(this.namespace) || !this.namespace.endsWith(`:${receipt.workspaceId}`)) throw new Error('云副本不能写入游客库或其他工作区');
+    parseWorkspace(workspace);
+    if (workspace.identity.repositoryRevision !== 0 || await cloudDigest(workspace) !== receipt.copyDigest) throw new Error('云副本摘要不匹配，已有数据未修改');
+    const initial = parseCloudInstallation({ receipt, acknowledgements: [{ deviceId, key: globalThis.crypto.randomUUID() }] });
+    const db = await this.db();
+    const rows = this.rows(workspace);
+    return new Promise<{ existing: boolean; installation: CloudLocalInstallation }>((resolve, reject) => {
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging'], 'readwrite');
+      const meta = tx.objectStore('meta');
+      const request = meta.get('cloud-installation');
+      let result = { existing: false, installation: initial };
+      let error = '云副本安装失败，原有数据未修改';
+      request.onsuccess = () => {
+        try {
+          if (request.result) {
+            const held = parseCloudInstallation(request.result);
+            if (held.receipt.id !== receipt.id || held.receipt.copyDigest !== receipt.copyDigest) throw new Error('本机已有不同云副本，不能覆盖未同步进度');
+            if (!held.acknowledgements.some((entry) => entry.deviceId === deviceId)) held.acknowledgements.push(initial.acknowledgements[0]!);
+            meta.put(held, 'cloud-installation');
+            result = { existing: true, installation: held };
+            return;
+          }
+          const stores = ['revisions', 'branches', 'objects', 'staging'] as const;
+          let pending = stores.length + 1;
+          let occupied = false;
+          const checked = () => {
+            if (--pending) return;
+            if (occupied) { error = '命名空间已有未识别数据，不会覆盖或重置'; tx.abort(); return; }
+            meta.put({ ...rows.meta, management: rows.management }, 'workspace');
+            meta.put(initial, 'cloud-installation');
+            for (const [name, values] of [['revisions', rows.revisions], ['branches', rows.branches], ['objects', rows.objects]] as const) {
+              for (const value of values) tx.objectStore(name).put(value, value.id);
+            }
+          };
+          meta.get('workspace').onsuccess = (event) => { occupied ||= !!(event.target as IDBRequest).result; checked(); };
+          for (const name of stores) tx.objectStore(name).count().onsuccess = (event) => { occupied ||= (event.target as IDBRequest<number>).result > 0; checked(); };
+        } catch (cause) {
+          error = cause instanceof Error ? cause.message : error;
+          tx.abort();
+        }
+      };
+      tx.oncomplete = () => resolve(result);
+      tx.onabort = tx.onerror = () => reject(new Error(error));
+    });
+  }
+
+  async cloudInstallation(): Promise<CloudLocalInstallation | null> {
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('meta', 'readonly');
+      const request = tx.objectStore('meta').get('cloud-installation');
+      tx.oncomplete = () => {
+        try { resolve(request.result ? parseCloudInstallation(request.result) : null); }
+        catch (error) { reject(error); }
+      };
+      tx.onabort = tx.onerror = () => reject(new Error('无法读取云副本安装记录'));
+    });
+  }
+
+  async acknowledgeCloudInstallation(receipt: WorkspaceInstallation): Promise<void> {
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('meta', 'readwrite');
+      const store = tx.objectStore('meta');
+      const request = store.get('cloud-installation');
+      request.onsuccess = () => {
+        try {
+          const held = parseCloudInstallation(request.result);
+          const pending = held.acknowledgements.find((entry) => entry.deviceId === receipt.deviceId);
+          if (!pending || held.receipt.id !== receipt.importId || held.receipt.copyDigest !== receipt.copyDigest
+            || held.receipt.workspaceId !== receipt.workspaceId) throw new Error('安装回执与本机副本不一致');
+          pending.receipt = receipt;
+          store.put(held, 'cloud-installation');
+        } catch { tx.abort(); }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(new Error('安装回执尚未保存，可沿原请求恢复'));
     });
   }
 

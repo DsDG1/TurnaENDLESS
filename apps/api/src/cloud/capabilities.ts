@@ -5,7 +5,7 @@ import { CLOUD_LIMITS, CLOUD_PROTOCOL_VERSION } from '@endless/cloud-contracts';
  * 能力发现（§14.1）：如实报告。未实现的能力恒为 false，
  * 客户端据此隐藏入口；不得把目标写成已完成。
  */
-export function cloudCapabilities(): CloudCapabilities {
+export function cloudCapabilities(enabled: { objects?: boolean; imports?: boolean } = {}): CloudCapabilities {
   return {
     protocol: CLOUD_PROTOCOL_VERSION,
     features: {
@@ -13,8 +13,8 @@ export function cloudCapabilities(): CloudCapabilities {
       sessions: true,
       devices: true,
       workspaces: true,
-      import: false,
-      objects: false,
+      import: enabled.imports ?? false,
+      objects: enabled.objects ?? false,
       sync: false,
       generation: false,
       credits: false,
