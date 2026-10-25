@@ -187,8 +187,12 @@ export function createEditionRouter(options: EditionRouterOptions) {
         const body = await readJson(request, CONTROL_LIMIT);
         const kind = edition.CompileJobKindSchema.parse(body.kind);
         const unitIds = Array.isArray(body.unitIds) ? body.unitIds : [];
-        if (!unitIds.length || unitIds.length > 20 || unitIds.some((id) => typeof id !== 'string')) {
-          throw new EditionJobError(400, 'unitIds 必须是 1–20 个字符串');
+        if (!unitIds.length || unitIds.length > 20 ||
+            unitIds.some((id) => typeof id !== 'string' || !isEditionRef(id))) {
+          throw new EditionJobError(400, 'unitIds 必须是 1–20 个合法 Edition 对象 ID');
+        }
+        if (new Set(unitIds).size !== unitIds.length) {
+          throw new EditionJobError(400, 'unitIds 不能重复');
         }
         const editorialRevisionId = body.editorialRevisionId === null || body.editorialRevisionId === undefined
           ? null : stringField(body, 'editorialRevisionId');
@@ -274,6 +278,7 @@ export function createEditionRouter(options: EditionRouterOptions) {
           throw new EditionJobError(400, 'targetType 只能是 sources / plan / issue');
         }
         const targetId = stringField(body, 'targetId', 80);
+        if (!isEditionRef(targetId)) throw new EditionJobError(400, '审批目标 ID 不合法');
         const digest = stringField(body, 'digest', 80);
         if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new EditionJobError(400, '审批必须绑定 sha256 摘要');
         const record = store.getEdition(editionId);
@@ -374,6 +379,9 @@ export function createEditionRouter(options: EditionRouterOptions) {
         // 按 ID 精确取单元：分页读会在大项目里悄悄丢单元，不能用于导出
         const unitIds = [...new Set(releases.flatMap((release) => release.orderedUnitRevisionIds))];
         const units = store.getUnitsByIds(unitIds);
+        if (units.length !== unitIds.length) {
+          throw new EditionJobError(422, '发行引用的单元修订不完整，拒绝导出缺单元的项目');
+        }
         const payload = {
           contract: 'edition-project-export/1',
           exportedAt: new Date().toISOString(),

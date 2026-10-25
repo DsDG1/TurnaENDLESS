@@ -64,12 +64,21 @@ const INJECTION_PATTERNS: readonly { code: string; pattern: RegExp }[] = [
 
 /**
  * 主机级速率限制跨调用生效：抓取器是长驻服务，不能每次请求都重置窗口。
+ * 同一主机的等待必须串行排队——两个并发请求若各自计算间隔会同时放行。
  * 测试可显式清空，生产不在正常路径调用。
  */
-const hostLastHit = new Map<string, number>();
+const hostNextSlot = new Map<string, Promise<number>>();
 
 export function resetFetchRateLimiter(): void {
-  hostLastHit.clear();
+  hostNextSlot.clear();
+}
+
+/** 返回放行时刻；同主机的并发请求按队列依次获得间隔开的放行时间。 */
+function rateSlot(host: string, now: () => number): Promise<number> {
+  const previous = hostNextSlot.get(host) ?? Promise.resolve(0);
+  const slot = previous.then((readyAt) => Math.max(readyAt, now()));
+  hostNextSlot.set(host, slot.then((readyAt) => readyAt + FETCH_LIMITS.hostIntervalMs));
+  return slot;
 }
 
 export function detectInjection(text: string): string[] {
@@ -79,6 +88,17 @@ export function detectInjection(text: string): string[] {
 const ENTITIES: Record<string, string> = {
   '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&apos;': "'", '&nbsp;': ' ',
 };
+
+/**
+ * 数字/十六进制字符引用：超出 Unicode 范围或空引用一律丢弃，
+ * 不抛异常、也不让恶意实体毁掉整页提取。
+ */
+function decodeEntity(code: string): string {
+  const radix = code.startsWith('x') || code.startsWith('X') ? 16 : 10;
+  const value = Number.parseInt(radix === 16 ? code.slice(1) : code, radix);
+  if (!Number.isFinite(value) || value < 0 || value > 0x10ffff) return '';
+  return String.fromCodePoint(value);
+}
 
 /** HTML → 纯文本：先整块丢弃脚本/样式/框架，再按段落切分，绝不保留标签。 */
 export function extractText(raw: string, contentType: string): string {
@@ -97,7 +117,7 @@ export function extractText(raw: string, contentType: string): string {
       .replace(/<[^>]+>/g, ' ');
   }
   return text
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#(x[0-9a-fA-F]+|\d+);/g, (_, code: string) => decodeEntity(code))
     .replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (entity) => ENTITIES[entity] ?? entity)
     .split('\n')
     .map((line) => line.replace(/[ \t\f\v]+/g, ' ').trim())
@@ -105,13 +125,18 @@ export function extractText(raw: string, contentType: string): string {
     .join('\n\n');
 }
 
-function decodeBody(body: Buffer, headers: Record<string, string>): Buffer {
+/**
+ * 压缩编码白名单：只允许 gzip/deflate/br/identity；未知编码必须拒绝，
+ * 不能当成原文返回（否则一份 zstd 页面会以乱码进快照）。
+ */
+function decodeBody(body: Buffer, headers: Record<string, string>): Buffer | null {
   const encoding = (headers['content-encoding'] ?? '').toLowerCase().trim();
   const options = { maxOutputLength: FETCH_LIMITS.maxDecodedBytes };
   if (encoding === 'gzip' || encoding === 'x-gzip') return gunzipSync(body, options);
   if (encoding === 'deflate') return inflateSync(body, options);
   if (encoding === 'br') return brotliDecompressSync(body, options);
-  return body;
+  if (encoding === '' || encoding === 'identity') return body;
+  return null;
 }
 
 function truncate(text: string, limit: number): { text: string; truncated: boolean } {
@@ -150,11 +175,10 @@ export async function fetchSource(
     const hopCheck = assertFetchRedirect(previous, current, input.allowedHosts, addresses);
     if (!hopCheck.ok) return hopCheck;
 
-    // 每主机每 2 秒一个请求：限制对目标站点的压力
-    const last = hostLastHit.get(host);
-    const elapsed = last === undefined ? Number.POSITIVE_INFINITY : now() - last;
-    if (elapsed < FETCH_LIMITS.hostIntervalMs) await sleep(FETCH_LIMITS.hostIntervalMs - elapsed);
-    hostLastHit.set(host, now());
+    // 每主机每 2 秒一个请求：等待被串行分配，并发请求不会同时放行
+    const readyAt = await rateSlot(host, now);
+    const wait = readyAt - now();
+    if (wait > 0) await sleep(wait);
 
     let response: TransportResponse;
     try {
@@ -195,15 +219,23 @@ export async function fetchSource(
     if (isUntrustedContentType(contentType)) {
       return { ok: false, code: 'E-FETCH-TYPE', message: '内容类型不在允许清单（只要文本页面）' };
     }
+    // 字符集白名单：快照按 UTF-8 提取，声明其他编码的一律拒绝而不是猜
+    const charset = /charset\s*=\s*"?([a-z0-9_-]+)"?/i.exec(contentType)?.[1]?.toLowerCase();
+    if (charset && charset !== 'utf-8' && charset !== 'utf8') {
+      return { ok: false, code: 'E-FETCH-TYPE', message: `不支持的字符集 ${charset}（只按 UTF-8 提取）` };
+    }
     const declared = Number(response.headers['content-length'] ?? '0');
     if (Number.isFinite(declared) && declared > FETCH_LIMITS.maxDecodedBytes) {
       return { ok: false, code: 'E-FETCH-SIZE', message: '响应体超过解压后上限' };
     }
-    let decoded: Buffer;
+    let decoded: Buffer | null;
     try {
       decoded = decodeBody(response.body, response.headers);
     } catch {
       return { ok: false, code: 'E-FETCH-SIZE', message: '响应解压失败或解压后超过上限' };
+    }
+    if (decoded === null) {
+      return { ok: false, code: 'E-FETCH-TYPE', message: '压缩编码不在允许清单（gzip / deflate / br）' };
     }
     if (decoded.length > FETCH_LIMITS.maxDecodedBytes) {
       return { ok: false, code: 'E-FETCH-SIZE', message: '响应解压后超过上限' };

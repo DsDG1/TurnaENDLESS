@@ -68,7 +68,7 @@ export async function writeWorkspace(page: Page, ws: Workspace) {
 /** 等价于旧 seed()：写入工作区存档后刷新页面。 */
 export async function seed(page: Page, ws = playedWorkspace()) {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '让英语，接着发生。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '故事频道。' })).toBeVisible();
   await writeWorkspace(page, ws);
   await page.reload();
 }
@@ -140,7 +140,7 @@ export function generatedDocV4(save: Parameters<typeof content.restore>[0], batc
 }
 
 const advanceName = (kind: string, index: number, total: number) =>
-  index === total - 1 ? '看完这一集' : kind === 'story' ? '继续故事' : '继续';
+  index === total - 1 ? '看完这一集' : '继续';
 
 /** 确定性播放整集（10–20 节）：选项点正确项、卡片翻面、逐节前进。 */
 export async function playDoc(page: Page, document: { batch: { scenes: any[] } }, kind = 'story', from = 0) {
@@ -163,5 +163,5 @@ export async function playDoc(page: Page, document: { batch: { scenes: any[] } }
     await expect(advance).toBeEnabled();
     await advance.click();
   }
-  await expect(page.getByRole('heading', { name: kind === 'story' ? '这一段故事，留下来了。' : '这一段内容，留下来了。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
 }

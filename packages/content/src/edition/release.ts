@@ -249,6 +249,8 @@ export interface InstalledUnit {
   batch: Batch;
   sceneSources: Record<string, string>;
   estimatedMinutes: number;
+  /** 随发行冻结的教学目标清单（本单元首次教学目标）；旧安装包没有此字段 → 目标达成显示「目标信息不可用」。 */
+  goalItems?: string[];
 }
 
 /** 离线安装包：正文、语言包、署名与编译依据必须自足，不依赖 API 或外部 URL。 */
@@ -284,6 +286,7 @@ export function buildPublicationPackage(
     batch: unit.batch,
     sceneSources: unit.creation.sceneSources,
     estimatedMinutes: unit.reports.teaching.estimatedMinutes,
+    goalItems: [...new Set(unit.reports.teaching.contexts.map((entry) => entry.item))],
   }));
   const body = {
     contract: 'edition-publication/1' as const,

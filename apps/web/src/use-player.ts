@@ -147,7 +147,10 @@ export function usePlayer() {
     setSaving(true);
     setNotice('');
     try {
-      return await commit(fn(current.current));
+      // 管理命令只执行一次；在任何持久化前先过临时 Key 护栏，再提交
+      const next = fn(current.current);
+      assertNoSecrets(next, [apiKey]);
+      return await commit(next);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '操作未保存，请重试');
       return false;
@@ -165,6 +168,7 @@ export function usePlayer() {
     const abort = new AbortController();
     controller.current = abort;
     try {
+      const isResume = !!currentTicket.current;
       let ticket = currentTicket.current;
       let request: GenerationRequest | null = null;
       if (!ticket) {
@@ -187,14 +191,22 @@ export function usePlayer() {
         currentTicket.current = ticket;
         const submitted = markTicketSubmitted(committed, ticket.id);
         if (!(await commit(submitted))) return false;
+        // 预留路径已提交：引用必须刷新为落库后的票据，否则下面的共享检查会重复提交
+        ticket = current.current!.tickets.find((t) => t.id === ticket!.id)!;
       } else {
         const rt = bridge(content, current.current, ticket.branchId);
         const context = buildGenerationContext(current.current, rt);
         request = { requestId: ticket.id.slice(4), save: context.save, archives: context.archives };
       }
+      // 库内恢复的 reserved 票据必须先流转 submitted，再发出请求
+      if (ticket.status === 'reserved') {
+        const submitted = markTicketSubmitted(current.current!, ticket.id);
+        if (!(await commit(submitted))) return false;
+        ticket = current.current!.tickets.find((t) => t.id === ticket!.id)!;
+      }
       currentTicket.current = ticket;
       setPhase('正在连接本机 AI 服务…');
-      const result = await generateEpisode(request, setPhase, abort.signal, apiKey, !!currentTicket.current);
+      const result = await generateEpisode(request, setPhase, abort.signal, apiKey, isResume);
       if (abort.signal.aborted) return false;
       if (result.failed) {
         const failedWs = markTicketFailed(current.current!, ticket.id, result.failure?.category ?? 'unknown');
@@ -212,13 +224,12 @@ export function usePlayer() {
         setNotice('生成结果与当前历史不匹配，已保留结果但未写入分支。请检查分支状态');
         return false;
       }
-      if (!(await commit(next, { closingTicketId: ticket.id }))) return false;
-      currentTicket.current = null;
-      // 选中新内容
+      // 结果采用与选中新内容在同一事务提交，不留「已采用但未选中」的中间态
       const adopted = next.branches.find((b) => b.id === next.activeBranchId)!;
       const episodeId = next.revisions.find((r) => r.id === adopted.adopted.at(-1)!.revisionId)!.episodeId;
       const selected = applyPlayerCommand(content, next, { type: 'select', episode: episodeId });
-      await commit(selected);
+      if (!(await commit(selected, { closingTicketId: ticket.id }))) return false;
+      currentTicket.current = null;
       setPhase('新一集已校验并保存到此设备');
       void refreshApi();
       return true;
@@ -285,9 +296,13 @@ export function usePlayer() {
   const previewImport = (raw: unknown): ImportPreview => parseBackup(raw, current.current);
   const importBackup = async (preview: ImportPreview): Promise<boolean> => {
     const repo = repository.current;
-    if (!repo) return false;
+    if (!repo || pending.current || currentTicket.current) return false;
+    pending.current = true;
+    setSaving(true);
     const key = 'pending-import';
     try {
+      // 含已知 Key 的对象进入 staging 也属于落库：在 repo.stage 前拒绝
+      assertNoSecrets(preview.backup.workspace.data, [apiKey]);
       // 先落到隔离暂存区，再对暂存副本校验，最后单事务发布；失败也不会留下半份数据
       await repo.stage(key, preview.backup);
       const staged = await repo.staged(key);
@@ -298,6 +313,8 @@ export function usePlayer() {
       setNotice(error instanceof Error ? error.message : '导入未提交，请重试');
       return false;
     } finally {
+      pending.current = false;
+      setSaving(false);
       await repo.clearStaging().catch(() => {});
     }
     const open = current.current?.tickets.find((t) => t.status === 'reserved' || t.status === 'submitted');

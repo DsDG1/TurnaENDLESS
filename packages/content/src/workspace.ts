@@ -336,7 +336,7 @@ export function forkForRevision(workspace: Workspace, parentBranchId: string, co
     ...revision,
     ordinal,
     parentRevisionId: forkRevision?.id ?? revision.parentRevisionId,
-    basis: { ...revision.basis, branchId },
+    basis: { ...revision.basis },
   };
   const adopted = parent.adopted.slice(0, index).concat([{ contentId, revisionId: registered.id }]);
   const session: PlayerSession = {
@@ -355,7 +355,10 @@ export function forkForRevision(workspace: Workspace, parentBranchId: string, co
     ...workspace,
     revisions: [...workspace.revisions, registered],
     entries: workspace.entries.map((e) => e.id === contentId
-      ? { ...e, revisionIds: [...e.revisionIds, registered.id], headRevisionId: registered.id, updatedAt: at.toISOString() } : e),
+      ? {
+        ...e, revisionIds: [...e.revisionIds, registered.id], headRevisionId: registered.id, updatedAt: at.toISOString(),
+        display: { ...e.display, title: registered.title, subtitle: registered.subtitle, description: registered.description },
+      } : e),
     branches: [...workspace.branches, branch],
     activeBranchId: branch.id,
     management: [...workspace.management, manage(workspace, 'branch', [contentId, branch.id], at.toISOString(), parent.id)],
@@ -486,8 +489,12 @@ export function adoptRevisionInPlace(workspace: Workspace, contentId: string, re
   const next: Workspace = {
     ...workspace,
     revisions: [...workspace.revisions, revision],
+    // 采用新修订时同步展示信息：display 跟随当前采用修订的标题/副标题/说明（不改正文）。
     entries: workspace.entries.map((e) => e.id === contentId
-      ? { ...e, revisionIds: [...e.revisionIds, revision.id], headRevisionId: revision.id, updatedAt: time } : e),
+      ? {
+        ...e, revisionIds: [...e.revisionIds, revision.id], headRevisionId: revision.id, updatedAt: time,
+        display: { ...e.display, title: revision.title, subtitle: revision.subtitle, description: revision.description },
+      } : e),
     branches: workspace.branches.map((b) => b.id === branch.id
       ? { ...b, adopted: b.adopted.map((a) => a.contentId === contentId ? { contentId, revisionId: revision.id } : a) } : b),
     obligations: workspace.obligations.map((o) => o.contentId === contentId && !o.waivedAt ? { ...o, revisionId: revision.id } : o),

@@ -299,7 +299,7 @@ export class EditionStore {
   }
 
   listEditions(limit = 50, offset = 0): EditionRecord[] {
-    const rows = this.db.prepare('SELECT body FROM editions ORDER BY updated_at DESC LIMIT ? OFFSET ?')
+    const rows = this.db.prepare('SELECT body FROM editions ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?')
       .all(limit, offset) as { body: string }[];
     return rows.map((row) => JSON.parse(row.body) as EditionRecord);
   }
@@ -359,7 +359,7 @@ export class EditionStore {
   }
 
   listJobs(editionId: string, limit = 50): CompileJob[] {
-    const rows = this.db.prepare('SELECT body FROM jobs WHERE edition_id = ? ORDER BY created_at DESC LIMIT ?')
+    const rows = this.db.prepare('SELECT body FROM jobs WHERE edition_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?')
       .all(editionId, limit) as { body: string }[];
     return rows.map((row) => JSON.parse(row.body) as CompileJob);
   }
@@ -453,7 +453,7 @@ export class EditionStore {
   }
 
   listReleases(editionId: string): IssueRelease[] {
-    const rows = this.db.prepare('SELECT body FROM releases WHERE edition_id = ? ORDER BY published_at DESC')
+    const rows = this.db.prepare('SELECT body FROM releases WHERE edition_id = ? ORDER BY published_at DESC, rowid DESC')
       .all(editionId) as { body: string }[];
     return rows.map((row) => JSON.parse(row.body) as IssueRelease);
   }

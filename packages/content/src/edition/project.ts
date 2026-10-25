@@ -9,6 +9,7 @@ import { validateBatch } from '@endless/esl';
 import { loadLexicon, type Lexicon } from '@endless/learning';
 import {
   assertEditorialRevision,
+  EDITION_COMPILER_VERSION,
   editorialDigest,
   newEditionId,
   unitRevisionDigest,
@@ -307,7 +308,7 @@ export function buildEditionProject(input: BuildProjectInput): BuiltProject {
         languagePackRevisionId: pack.id,
         materialCatalogVersion: 'material-catalog-1',
         promptVersion: 'edition-prompt-1',
-        compilerVersion: 'edition-compiler-1',
+        compilerVersion: EDITION_COMPILER_VERSION,
         validationPolicyVersion: 'edition-validation-1',
       };
       const compiled = compileEditionDraft(seed.draft, {

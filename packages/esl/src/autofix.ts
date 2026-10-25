@@ -165,13 +165,13 @@ export function autoFixBatch(batch: Batch, ctx: ValidationContext): AutoFixResul
       });
     }
     if (scene.cast) {
-      scene.cast = scene.cast.map((id) => {
+      scene.cast = [...new Set(scene.cast.map((id) => {
         const fixed = aliasEntity(id);
         return fixed ?? id;
-      });
+      }))];
     }
   }
-  next.cast = next.cast.map((id) => aliasEntity(id) ?? id);
+  next.cast = [...new Set(next.cast.map((id) => aliasEntity(id) ?? id))];
   // 替换只改了引用、没改批次 cast 的补进去：不补就是「说话者不在 cast」（E-ENTITY-UNKNOWN）
   for (const id of renamedChars) {
     if (next.cast.includes(id)) continue;
@@ -215,6 +215,12 @@ export function autoFixBatch(batch: Batch, ctx: ValidationContext): AutoFixResul
     const referenced = new Set<string>();
     if (scene.type === 'chat' && scene.reply) {
       for (const o of scene.reply.options) {
+        const eff = (o as { effect?: string }).effect;
+        if (eff) referenced.add(eff);
+      }
+    }
+    if (scene.type === 'pick') {
+      for (const o of scene.options) {
         const eff = (o as { effect?: string }).effect;
         if (eff) referenced.add(eff);
       }

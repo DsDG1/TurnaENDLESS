@@ -15,9 +15,9 @@ export default defineConfig({
       includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         id: '/',
-        name: 'ENDLESS · 让英语接着发生',
+        name: 'ENDLESS · 故事频道',
         short_name: 'ENDLESS',
-        description: '在小故事里遇见英语。AI 续写故事，已保存内容可离线播放。',
+        description: 'AI 续写互动故事。已保存的内容可离线阅读。',
         lang: 'zh-CN',
         start_url: '/',
         scope: '/',

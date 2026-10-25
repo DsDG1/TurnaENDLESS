@@ -79,6 +79,24 @@ describe('Edition 阅读恢复边界', () => {
     expect(() => edition.assertReaderState([sample.install.package, install.package], [run], [review])).not.toThrow();
   });
 
+  it('含复习事件的 Run 缺复习修订时投影必须抛错，而不是静默视为未读', () => {
+    // 旧缺陷：书架用「当前阅读器 Run」过滤复习修订，run === null 时恒为空，
+    // projectSession 在 review:* 事件上抛「存档场景顺序无效」并落到全页兜底。
+    let run = readUnit(sample.run);
+    const review = edition.buildReviewRevision(
+      edition.buildReviewBasis(run, [sample.install], sample.pack, sample.release.issueId), sample.pack,
+    ).revision;
+    const scene = review.batch.scenes[0]!;
+    run = edition.appendRunEvent(run, [sample.install], {
+      revisionId: review.id, unitId: `review:${review.id}`, sceneId: scene.id, action: 'answer',
+      payload: { choice: 0 }, at: '2026-10-24T10:00:00.000Z',
+    }, [review]).run;
+    expect(() => edition.projectRun(run, [sample.install], [])).toThrow('存档场景顺序无效');
+    const projection = edition.projectRun(run, [sample.install], [review]);
+    expect(projection.units.length).toBeGreaterThan(0);
+    expect(projection.view.episodes[review.id]?.scenes[scene.id]?.answer).toBeTruthy();
+  });
+
   it('容器记录的外层 ID、类型与正文必须一致', () => {
     // 同 ID 的不同记录类型不能冒充引用闭包
     const crossType = edition.buildContainer('edition-backup/1', [

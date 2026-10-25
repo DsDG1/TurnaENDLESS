@@ -12,7 +12,7 @@ import {
 import { createEpisode, getOptions, getScenes, projectSession, transition, type Library } from '@endless/player';
 import { materialAssetCatalog, materialEntityExists, materialEntityRows } from '../materials.js';
 import {
-  EDITION_VALIDATION_POLICY_VERSION,
+  EDITION_COMPILER_VERSIONS, EDITION_VALIDATION_POLICY_VERSION,
   unitRevisionDigest,
   type EditorialRevision,
   type UnitLevelPlan,
@@ -203,6 +203,14 @@ export function validateEditionUnit(input: EditionValidationInput): EditionValid
     push('E-EDITION-DIGEST', '单元修订摘要不匹配：正文、选项或来源被改动');
   }
 
+  // 复核按修订冻结的编译器版本执行：旧修订重放 v1 原语义，新修订用修正语义。
+  if (!EDITION_COMPILER_VERSIONS.includes(input.revision.basis.compilerVersion)) {
+    push('E-EDITION-VERSION', `编译器版本不受支持：${input.revision.basis.compilerVersion}`);
+    return { ok: false, issues, difficulty: null, compiled: null };
+  }
+  if (input.revision.creation.compilerVersion !== input.revision.basis.compilerVersion) {
+    push('E-EDITION-VERSION', '创作绑定与生成依据的编译器版本不一致');
+  }
   const compiled = compileEditionDraft(input.revision.draft, {
     seed: input.revision.id,
     batchId: input.revision.batch.batch,
@@ -214,6 +222,7 @@ export function validateEditionUnit(input: EditionValidationInput): EditionValid
     targets: input.targets,
     priorLines: input.priorLines,
     allowedCharacters: input.allowedCharacters,
+    compilerVersion: input.revision.basis.compilerVersion,
     validate: (batch) => validateBatch(batch, editionValidationContext(input.pack, input.levelPlan, input.targets)).issues,
   });
   if (!compiled.ok) {

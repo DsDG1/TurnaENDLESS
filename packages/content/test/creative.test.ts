@@ -536,29 +536,67 @@ ${fillerNeutral('duck', 'cat', 'agency_office').slice(0, 9).join('\n')}`;
 
   it('@fact 之后接 cloze 时取材必须落在真实英文上，不能把中文词义当原句', () => {
     const t = task();
-    const intro = t.targets.find((x) => t.brief.introduce.includes(x.item))!;
-    const draft = `ENDLESS-DRAFT/1
+    const intros = t.targets.filter((x) => t.brief.introduce.includes(x.item));
+    const intro = intros[0]!;
+    const retrieval = t.targets.find((x) => x.interaction && x.interaction !== 'practice' && x.item !== intro.item);
+    const expose = t.targets.filter((x) => x.interaction === null && !t.brief.introduce.includes(x.item));
+    // knowledge 的语境是「一份 fact 词义 + 一份 example 原句」：每个新词成对出现，并各自有 practice 互动
+    const build = (blocks: readonly string[]) => `ENDLESS-DRAFT/1
 @kind knowledge
 @series word_window
 @title 词义窗
 @subtitle Word window
 @description 本地词库的小窗口
-@fact ${intro.alias}
-@end
-@quiz cloze ${intro.alias}
-@end
-${padBlocks([], [intro].flatMap((x) => [`@card ${x.alias}\n@end`, `@example ${x.alias}\n@end`])).join('\n')}`;
-    const compiled = content.compileDraft(draft, t, content.pilot, 'ai-fact-cloze');
-    if (!compiled.ok) {
-      // 找不到英文原句时明确拒绝，而不是拿词义卡合成句蒙混
-      expect(compiled.issues.some((i) => i.message.includes('cloze'))).toBe(true);
-      return;
+${padBlocks([...blocks], []).join('\n')}`;
+
+    // ① @fact 紧跟 @quiz cloze，中间还没有英文原句时，编译器必须明确拒绝，
+    //    不能拿 @fact 的中文词义硬凑句子（example 放在 cloze 之后，取材时前文还没有原句）
+    const withoutSource = build([
+      ...(retrieval ? [`@quiz meaning ${retrieval.alias}\n@end`] : []),
+      ...intros.flatMap((x) => [`@fact ${x.alias}\n@end`]),
+      `@quiz cloze ${intro.alias}\n@end`,
+      ...intros.flatMap((x) => [`@example ${x.alias}\n@end`]),
+      ...intros.map((x) => `@quiz meaning ${x.alias}\n@end`),
+      ...expose.map((x) => `@fact ${x.alias}\n@end`),
+    ]);
+    const rejected = content.compileDraft(withoutSource, t, content.pilot, 'ai-fact-cloze');
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      // 必须明确报「找不到可取材原句」，而不是拿词义卡凑句子蒙混
+      expect(rejected.issues.some((i) => i.message.includes('cloze'))).toBe(true);
+      expect(rejected.issues.some((i) => i.message.includes('找不到含'))).toBe(true);
     }
-    const quiz = compiled.batch.scenes.find((s) => s.type === 'quiz');
+
+    // ② @example（词库英文例句）在 @quiz cloze 之前时，cloze 只能从英文原句挖空：
+    //    题干不含中文，来源记为 prior（原句）而不是 gloss（中文词义）
+    const withSource = build([
+      ...(retrieval ? [`@quiz meaning ${retrieval.alias}\n@end`] : []),
+      ...intros.flatMap((x) => [`@fact ${x.alias}\n@end`, `@example ${x.alias}\n@end`]),
+      `@quiz cloze ${intro.alias}\n@end`,
+      ...intros.map((x) => `@quiz meaning ${x.alias}\n@end`),
+      ...expose.map((x) => `@fact ${x.alias}\n@end`),
+      `@card ${intro.alias}\n@end`,
+    ]);
+    const compiled = content.compileDraft(withSource, t, content.pilot, 'ai-fact-cloze');
+    assertOk(compiled);
+    if (!compiled.ok) return;
+    const quiz = compiled.batch.scenes.find((s) => s.type === 'quiz' && s.kind === 'cloze');
     expect(quiz?.type).toBe('quiz');
-    if (quiz?.type === 'quiz') expect(quiz.question).not.toMatch(/[\u4e00-\u9fa5]/);
-    const source = compiled.creation.sources.find((entry) => entry.field === 'text');
-    if (source) expect(source.text).not.toMatch(/[\u4e00-\u9fa5]/);
+    if (quiz?.type === 'quiz') {
+      // quiz 的题干在 prompt 上（不是 question）；cloze 题干必须来自英文原句
+      expect(quiz.prompt).not.toMatch(/[\u4e00-\u9fa5]/);
+      expect(quiz.prompt).toContain('____');
+      expect(quiz.options.some((o) => o.correct)).toBe(true);
+    }
+    // @fact 的词义卡来源是 gloss；cloze 的取材必须是 prior（英文原句），两者不能混
+    expect(compiled.creation.sources.some((e) => e.field === 'gloss' && e.item === intro.item)).toBe(true);
+    const clozeSource = compiled.creation.sources.find((e) => e.field === 'prior');
+    expect(clozeSource).toBeTruthy();
+    if (clozeSource) {
+      expect(clozeSource.text).not.toMatch(/[\u4e00-\u9fa5]/);
+      // 词义卡正面是「buy — 购买」，含破折号；英文原句不含
+      expect(clozeSource.text).not.toContain('—');
+    }
   });
 
   it('v4 文档可验收与恢复；篡改草稿/正文/来源/系列都被拒绝；mixed v3+v4 恢复不推断新来源', () => {

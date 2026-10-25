@@ -155,47 +155,66 @@ export function isBlockedAddress(address: string): boolean {
   return false;
 }
 
-function isBlockedIpv6(address: string): boolean {
+/** 把 IPv6 文本（含压缩、内嵌 IPv4、扩展前导零）规范化为 16 字节；解析失败返回 null。 */
+function parseIpv6Bytes(address: string): number[] | null {
   const bare = address.replace(/^\[|\]$/g, '');
-  if (bare === '::' || bare === '::1') return true;
-  if (/^f[cd]/.test(bare)) return true; // ULA fc00::/7
-  if (/^fe[89ab]/.test(bare)) return true; // 链路本地 fe80::/10
-  if (bare.startsWith('::ffff:')) {
-    const mapped = bare.slice('::ffff:'.length);
-    if (mapped.includes('.')) return isBlockedAddress(mapped);
-    const hex = mapped.split(':');
-    if (hex.length === 2) {
-      const high = parseInt(hex[0] ?? '0', 16);
-      const low = parseInt(hex[1] ?? '0', 16);
-      const dotted = [high >> 8, high & 0xff, low >> 8, low & 0xff].join('.');
-      return isBlockedAddress(dotted);
-    }
-    return true;
+  if (!bare || bare.length > 45) return null;
+  const halves = bare.split('::');
+  if (halves.length > 2) return null;
+  const expandTail = (group: string): string[] | null => {
+    if (!group.includes('.')) return group ? group.split(':') : [];
+    const parts = group.split(':');
+    const v4 = parts.pop()!.split('.');
+    if (v4.length !== 4) return null;
+    const octets = v4.map((part) => Number(part));
+    if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+    return [...parts, (octets[0]! << 8 | octets[1]!).toString(16), (octets[2]! << 8 | octets[3]!).toString(16)];
+  };
+  const left = expandTail(halves[0]!);
+  if (left === null) return null;
+  let hextets: string[];
+  if (halves.length === 2) {
+    const right = expandTail(halves[1]!);
+    if (right === null || left.length + right.length >= 8) return null;
+    hextets = [...left, ...Array.from({ length: 8 - left.length - right.length }, () => '0'), ...right];
+  } else {
+    if (left.length !== 8) return null;
+    hextets = left;
   }
-  if (bare.startsWith('64:ff9b')) return true; // NAT64
-  if (bare.startsWith('2001:db8')) return true; // 文档保留
-  // IPv4 兼容地址 ::a.b.c.d / ::xxxx:xxxx：也内嵌 IPv4，按 IPv4 规则判断
-  if (bare.startsWith('::')) {
-    const tail = bare.slice(2);
-    if (tail.includes('.')) return isBlockedAddress(tail);
-    const hex = tail.split(':').filter(Boolean);
-    if (hex.length === 1) {
-      const value = parseInt(hex[0]!, 16);
-      if (!Number.isInteger(value)) return true;
-      return isBlockedAddress([value >> 24, (value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff].join('.'));
-    }
-    if (hex.length === 2) {
-      const high = parseInt(hex[0]!, 16);
-      const low = parseInt(hex[1]!, 16);
-      if (!Number.isInteger(high) || !Number.isInteger(low)) return true;
-      return isBlockedAddress([high >> 8, high & 0xff, low >> 8, low & 0xff].join('.'));
-    }
-    return true;
+  const bytes: number[] = [];
+  for (const hextet of hextets) {
+    if (!/^[0-9a-f]{1,4}$/i.test(hextet)) return null;
+    const value = parseInt(hextet, 16);
+    bytes.push(value >> 8, value & 0xff);
   }
-  if (bare.startsWith('2002')) return true; // 6to4 2002::/16 内嵌 IPv4
-  if (/^2001:0{1,4}:/.test(bare) || bare.startsWith('2001:0000')) return true; // Teredo 2001::/32
-  if (/^ff/i.test(bare)) return true; // 组播 ff00::/8
-  if (bare.startsWith('100:')) return true; // discard 100::/64
+  return bytes;
+}
+
+/** 私网 / 保留 / 内嵌 IPv4 的 IPv6 一律拦截；无法解析的地址也拦。 */
+function isBlockedIpv6(address: string): boolean {
+  const bytes = parseIpv6Bytes(address);
+  if (!bytes) return true;
+  const hextet = (index: number) => bytes[index * 2]! << 8 | bytes[index * 2 + 1]!;
+  if (bytes.every((byte) => byte === 0)) return true; // ::
+  if (bytes.slice(0, 15).every((byte) => byte === 0) && bytes[15] === 1) return true; // ::1
+  // IPv4 映射 / 兼容：前 10 字节为 0，按内嵌 IPv4 规则判断
+  if (bytes.slice(0, 10).every((byte) => byte === 0)) {
+    if (bytes[10] === 0xff && bytes[11] === 0xff) {
+      return isBlockedAddress([bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!].join('.'));
+    }
+    if (hextet(6) !== 0 || hextet(7) !== 0) {
+      return isBlockedAddress([bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!].join('.'));
+    }
+  }
+  const first = hextet(0);
+  if ((first & 0xfe00) === 0xfc00) return true; // ULA fc00::/7
+  if ((first & 0xffc0) === 0xfe80 || (first & 0xffc0) === 0xfec0) return true; // 链路本地 fe80::/10、站点本地 fec0::/10
+  if (first === 0x64 && hextet(1) === 0xff9b) return true; // NAT64 64:ff9b::/96
+  if (first === 0x2001 && hextet(1) === 0x0db8) return true; // 文档保留 2001:db8::/32
+  if (first === 0x2001 && hextet(1) === 0x0000) return true; // Teredo 2001::/32
+  if (first === 0x2002) return true; // 6to4 2002::/16 内嵌 IPv4
+  if (bytes[0] === 0xff) return true; // 组播 ff00::/8
+  if (first === 0x0100) return true; // discard 100::/64
   return false;
 }
 

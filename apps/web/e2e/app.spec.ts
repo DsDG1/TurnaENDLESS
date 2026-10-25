@@ -4,7 +4,7 @@ test('频道界面、窄屏布局和安装清单可用', async ({ page }, testIn
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '让英语，接着发生。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '故事频道。' })).toBeVisible();
   await expect(page.getByRole('button', { name: /播放第 \d 集/ })).toHaveCount(3);
   if (testInfo.project.name === 'mobile') {
     const action = await page.getByRole('button', { name: '进入故事', exact: true }).boundingBox();
@@ -31,42 +31,42 @@ test('频道界面、窄屏布局和安装清单可用', async ({ page }, testIn
 
 test('真实作答、提示、恢复和回看不会重复刷记录', async ({ page }, testInfo) => {
   await page.goto('/#watch');
-  await page.getByRole('button', { name: '继续故事', exact: true }).click();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByRole('button', { name: '2. Where was your hat last night?', exact: true }).click();
-  await expect(page.getByText('就是这个意思。', { exact: true })).toBeVisible();
+  await expect(page.getByText('回答正确。', { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('button', { name: '2. Where was your hat last night?', exact: true })).toBeDisabled();
   await expect(page.getByText('首次独立作答已记入学习记录，复习时间由 FSRS 安排。')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('chat.png'), fullPage: true });
-  await page.getByRole('button', { name: '继续故事', exact: true }).click();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByRole('button', { name: '需要一点提示？' }).click();
   await page.reload();
   await expect(page.getByText(/看过提示后，这一题会记为练习/)).toBeVisible();
   await page.getByRole('button', { name: '3. under', exact: true }).click();
   await expect(page.getByText('这次是练习，不推进间隔复习记录。')).toBeVisible();
   await page.getByRole('button', { name: '看完这一集' }).click();
-  await expect(page.getByRole('heading', { name: '这一段故事，留下来了。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
   await page.getByRole('button', { name: '回看本集' }).click();
   for (let i = 0; i < 3; i++) await page.getByRole('button', { name: '继续回看' }).click();
   await page.goto('/#progress');
-  await expect(page.locator('.stat').filter({ hasText: '有效检索记录' }).locator('strong')).toHaveText('1');
-  await expect(page.locator('.stat').filter({ hasText: '真实互动尝试' }).locator('strong')).toHaveText('2');
+  await expect(page.locator('.stat').filter({ hasText: '计入复习的题' }).locator('strong')).toHaveText('1');
+  await expect(page.locator('.stat').filter({ hasText: '答题次数' }).locator('strong')).toHaveText('2');
   await expect(page.getByText('你问起了那顶失踪帽子的去向。')).toBeVisible();
 });
 
 test('跳过不伪造学习记录，偏好在刷新后保留', async ({ page }) => {
   await page.goto('/#watch');
-  await page.getByRole('button', { name: '继续故事', exact: true }).click();
-  await expect(page.getByRole('button', { name: '继续故事', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
+  await expect(page.getByRole('button', { name: '继续', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '先跳过' }).click();
   await page.getByRole('button', { name: '先跳过' }).click();
-  await expect(page.getByRole('heading', { name: '这一段故事，留下来了。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
   await page.goto('/#progress');
-  await expect(page.locator('.stat').filter({ hasText: '真实互动尝试' }).locator('strong')).toHaveText('0');
+  await expect(page.locator('.stat').filter({ hasText: '答题次数' }).locator('strong')).toHaveText('0');
   await page.goto('/#settings');
-  await page.getByRole('switch', { name: '更大的故事文字' }).click();
+  await page.getByRole('switch', { name: '更大的文字' }).click();
   await page.reload();
-  await expect(page.getByRole('switch', { name: '更大的故事文字' })).toBeChecked();
+  await expect(page.getByRole('switch', { name: '更大的文字' })).toBeChecked();
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出完整备份' }).click();
   expect((await downloaded).suggestedFilename()).toMatch(/^endless-workspace-.*\.endless\.json$/);
@@ -84,19 +84,19 @@ test('缓存就绪后断网刷新，仍可播放并保存答题', async ({ page,
   });
   await context.setOffline(true);
   await page.reload();
-  await expect(page.getByRole('heading', { name: '让英语，接着发生。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '故事频道。' })).toBeVisible();
   await expect(page.getByText('正在离线体验')).toBeVisible();
   await page.getByRole('button', { name: '进入故事', exact: true }).click();
-  await page.getByRole('button', { name: '继续故事', exact: true }).click();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByRole('button', { name: '2. Where was your hat last night?', exact: true }).click();
   await page.reload();
-  await expect(page.getByText('就是这个意思。', { exact: true })).toBeVisible();
+  await expect(page.getByText('回答正确。', { exact: true })).toBeVisible();
   await context.setOffline(false);
 });
 
 test('损坏存档不会被静默重置或覆盖', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '让英语，接着发生。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '故事频道。' })).toBeVisible();
   await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve) => {
       const request = indexedDB.open('endless-workspace', 1);
@@ -129,12 +129,12 @@ test('损坏存档不会被静默重置或覆盖', async ({ page }) => {
 
 test('两个窗口不能互相覆盖进度', async ({ page, context }) => {
   await page.goto('/#watch');
-  await expect(page.getByText('每个小谜题，都从一句话开始。')).toBeVisible();
+  await expect(page.getByText('每个小谜题都从一句话开始。')).toBeVisible();
   const other = await context.newPage();
   await other.goto('/#watch');
-  await expect(other.getByText('每个小谜题，都从一句话开始。')).toBeVisible();
-  await page.getByRole('button', { name: '继续故事', exact: true }).click();
-  await other.getByRole('button', { name: '继续故事', exact: true }).click();
+  await expect(other.getByText('每个小谜题都从一句话开始。')).toBeVisible();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
+  await other.getByRole('button', { name: '继续', exact: true }).click();
   await expect(other.getByRole('alert')).toContainText('另一个窗口已更新进度');
   await other.reload();
   await expect(other.getByRole('button', { name: '2. Where was your hat last night?', exact: true })).toBeVisible();
@@ -146,12 +146,12 @@ test('只阅读遇到的新表达也会进入足迹，跳过和未读内容不�
   await expect(page.locator('[data-learning-item]')).toHaveCount(0);
   await page.goto('/#watch');
   await expect(page.getByRole('complementary', { name: '故事里的表达' })).toContainText('behind');
-  await page.getByRole('button', { name: '继续故事', exact: true }).click();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.goto('/#progress');
   const note = page.locator('[data-learning-item="lx:behind#prep.location"]');
   await expect(note).toContainText('已遇见 · 待练习');
   await expect(note).toContainText('已读 1 个片段 · 0 次互动');
-  await expect(page.locator('.stat').filter({ hasText: '有效检索记录' }).locator('strong')).toHaveText('0');
+  await expect(page.locator('.stat').filter({ hasText: '计入复习的题' }).locator('strong')).toHaveText('0');
   await expect(page.locator('[data-learning-item="lx:borrow#v.take-temporarily"]')).toHaveCount(0);
   await page.reload();
   await expect(note).toContainText('已遇见 · 待练习');

@@ -19,7 +19,7 @@ import {
 } from '@endless/player';
 import { materialAssetCatalog, materialEntityExists, materialEntityRows } from '../materials.js';
 import {
-  EDITION_COMPILER_VERSION, EDITION_LEARNING_POLICY, EDITION_REVIEW_CONSTRUCTOR_VERSION,
+  EDITION_POLICY_VERSION, EDITION_POLICY_VERSION_V1, EDITION_REVIEW_CONSTRUCTOR_VERSION,
   eventHash, newEditionId, reviewDigest,
   type Cefr, type EditorialRevision, type EditionRun, type EvidenceAction, type EvidenceEvent,
   type IssueRelease, type ReviewBasis, type ReviewRevision,
@@ -335,16 +335,20 @@ export function runExposureCounts(
   run: EditionRun,
   installs: readonly EditionInstall[],
   reviews: readonly ReviewRevision[] = [],
+  policyVersion: string = EDITION_POLICY_VERSION,
 ): Map<string, number> {
   const projection = projectRun(run, installs, reviews);
   const library = runLibrary(run, installs, reviews);
+  // v1 复核路径按原语义计次（同场景两处出现计两次）；当前版本同场景去重。
+  const legacy = policyVersion === EDITION_POLICY_VERSION_V1;
   const counts = new Map<string, number>();
   for (const episode of library.episodes) {
     for (const scene of getScenes(episode)) {
       if (!projection.view.episodes[episode.id]?.scenes[scene.id]?.completed) continue;
-      for (const target of episode.ast.targets.filter((entry) => entry.sceneId === scene.id)) {
-        counts.set(target.itemId, (counts.get(target.itemId) ?? 0) + 1);
-      }
+      const items = legacy
+        ? episode.ast.targets.filter((entry) => entry.sceneId === scene.id).map((entry) => entry.itemId)
+        : [...new Set(episode.ast.targets.filter((entry) => entry.sceneId === scene.id).map((entry) => entry.itemId))];
+      for (const itemId of items) counts.set(itemId, (counts.get(itemId) ?? 0) + 1);
     }
   }
   return counts;
@@ -353,7 +357,14 @@ export function runExposureCounts(
 export interface CompletionStatus {
   publication: { complete: boolean; issues: { issueId: string; state: 'published' | 'missing' }[] };
   reading: { complete: boolean; unitsRead: number; unitsTotal: number; finishedWithSkips: boolean };
-  goals: { achieved: number; total: number; items: { item: string; evidence: 'exposure' | 'practice' | 'retrieval' | 'none' }[] };
+  /**
+   * 目标达成只统计随发行冻结的教学目标清单（`InstalledUnit.goalItems`）。
+   * 旧安装包没有这份清单时 `unavailable` 为真——报告不可用，不伪造 0/0。
+   */
+  goals: {
+    unavailable: boolean; achieved: number; total: number;
+    items: { item: string; evidence: 'exposure' | 'practice' | 'retrieval' | 'none' }[];
+  };
 }
 
 /** 三种完成口径必须分开：出版完成 ≠ 阅读完成 ≠ 目标达成。 */
@@ -369,34 +380,38 @@ export function runCompletion(
     const install = adopted && installs.find((entry) => entry.release.id === adopted.releaseId);
     return { issueId: issue.id, state: install ? 'published' as const : 'missing' as const };
   });
-  const counts = new Map<string, { exposure: number; practice: number; retrieval: number }>();
+  // 分母只取随发行冻结的教学目标清单；语言包其余词条与正文额外出现词不进入目标分母。
+  const goalItems = new Set<string>();
+  let goalsUnavailable = false;
   for (const adopted of run.adoptedReleases) {
     const install = installs.find((entry) => entry.release.id === adopted.releaseId);
     if (!install) continue;
-    for (const entry of install.package.pack.entries) counts.set(entry.item, { exposure: 0, practice: 0, retrieval: 0 });
+    for (const unit of install.package.units) {
+      if (unit.goalItems === undefined) goalsUnavailable = true;
+      else for (const item of unit.goalItems) goalItems.add(item);
+    }
   }
-  const exposures = new Map<string, number>();
-  for (const item of projection.view.exposed) exposures.set(item, (exposures.get(item) ?? 0) + 1);
-  for (const [item, value] of exposures) {
-    const bucket = counts.get(item) ?? { exposure: 0, practice: 0, retrieval: 0 };
-    bucket.exposure = value;
-    counts.set(item, bucket);
+  const counts = new Map<string, { exposure: number; practice: number; retrieval: number }>();
+  for (const item of goalItems) counts.set(item, { exposure: 0, practice: 0, retrieval: 0 });
+  for (const item of projection.view.exposed) {
+    const bucket = counts.get(item);
+    if (bucket) bucket.exposure += 1;
   }
   for (const answer of projection.view.answers) {
     if (!answer.item) continue;
-    const bucket = counts.get(answer.item) ?? { exposure: 0, practice: 0, retrieval: 0 };
+    const bucket = counts.get(answer.item);
+    if (!bucket) continue;
     if (answer.grade) bucket.retrieval += 1;
     else bucket.practice += 1;
-    counts.set(answer.item, bucket);
   }
-  const targets = [...counts.entries()]
-    .filter(([, value]) => value.exposure + value.practice + value.retrieval > 0)
-    .map(([item, value]) => ({
-      item,
-      evidence: value.retrieval > 0 ? 'retrieval' as const
-        : value.practice > 0 ? 'practice' as const
-          : 'exposure' as const,
-    }));
+  const targets = [...counts.entries()].map(([item, value]) => ({
+    item,
+    evidence: value.retrieval > 0 ? 'retrieval' as const
+      : value.practice > 0 ? 'practice' as const
+        : value.exposure > 0 ? 'exposure' as const
+          : 'none' as const,
+  }));
+  const achieved = targets.filter((entry) => entry.evidence !== 'none').length;
   const readingComplete = projection.units.length > 0 && projection.units.every((unit) => unit.status === 'read');
   return {
     publication: { complete: issues.every((issue) => issue.state === 'published'), issues },
@@ -406,11 +421,9 @@ export function runCompletion(
       unitsTotal: projection.units.length,
       finishedWithSkips: projection.finishedWithSkips,
     },
-    goals: {
-      achieved: targets.length,
-      total: targets.length,
-      items: targets,
-    },
+    goals: goalsUnavailable
+      ? { unavailable: true, achieved: 0, total: 0, items: [] }
+      : { unavailable: false, achieved, total: targets.length, items: targets },
   };
 }
 
@@ -431,10 +444,11 @@ export function buildReviewBasis(
   issueId: string,
   now = new Date(),
   reviews: readonly ReviewRevision[] = [],
+  policyVersion: string = EDITION_POLICY_VERSION,
 ): ReviewBasis {
   const projection = projectRun(run, installs, reviews);
   const cards = new Map(projection.view.srs.allCards().map((entry) => [entry.key, entry.card]));
-  const exposures = runExposureCounts(run, installs, reviews);
+  const exposures = runExposureCounts(run, installs, reviews, policyVersion);
   const dueItems: ReviewBasis['dueItems'] = [];
   for (const entry of pack.entries) {
     const count = exposures.get(entry.item) ?? 0;
@@ -467,7 +481,7 @@ export function buildReviewBasis(
     dueItems: dueItems.slice(0, 40),
     sourceRefs: sourceRefs.slice(0, 40),
     constructorVersion: EDITION_REVIEW_CONSTRUCTOR_VERSION,
-    policyVersion: `${EDITION_LEARNING_POLICY}/${EDITION_COMPILER_VERSION}`,
+    policyVersion,
     createdAt: now.toISOString(),
   };
 }

@@ -65,7 +65,7 @@ test('模拟模型连续续写两集，刷新、离线与导出保留原文和�
   await expect(page.getByText('正在离线体验')).toBeVisible();
   await expect(page.getByRole('button', { name: /查看第 \d 集/ })).toHaveCount(5);
   await page.getByRole('button', { name: '查看第 5 集：新的线索' }).click();
-  await expect(page.getByRole('heading', { name: '这一段故事，留下来了。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
   await page.getByRole('button', { name: '回看本集' }).click();
   await expect(page.getByRole('heading', { name: '新的线索', exact: true, level: 1 })).toBeVisible();
   await context.setOffline(false);

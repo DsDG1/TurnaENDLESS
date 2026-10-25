@@ -519,11 +519,12 @@ export function compileDraft(
             const options = placeCorrect(choice.correct, choice.distractors, target.alias, ordinal);
             const evidence = decideEvidence(target.item, options.length, target.alias);
             if (evidence === null) bad = true;
+            const correctIndex = options.indexOf(choice.correct);
             const effects: Record<string, { user_fact: { predicate: string; object: string } }[]> = {};
             reply = {
               prompt: choice.prompt,
               options: options.map((label, oi) => {
-                const option: { label: string; correct?: boolean; effect?: string } = { label, ...(label === choice.correct ? { correct: true } : {}) };
+                const option: { label: string; correct?: boolean; effect?: string } = { label, ...(oi === correctIndex ? { correct: true } : {}) };
                 if (choice.remember) {
                   option.effect = `remember_${oi}`;
                   effects[option.effect] = [{ user_fact: { predicate: 'chose', object: `${seriesId}:${label}` } }];
@@ -562,11 +563,12 @@ export function compileDraft(
         const options = placeCorrect(choice.correct, choice.distractors, target.alias, ordinal);
         const evidence = decideEvidence(target.item, options.length, target.alias);
         if (evidence === null) break;
+        const correctIndex = options.indexOf(choice.correct);
         const effects: Record<string, { user_fact: { predicate: string; object: string } }[]> = {};
         const scene: Scene = {
           id, type: 'pick', question: choice.prompt,
           options: options.map((label, oi) => {
-            const option: { label: string; correct?: boolean; effect?: string } = { label, ...(label === choice.correct ? { correct: true } : {}) };
+            const option: { label: string; correct?: boolean; effect?: string } = { label, ...(oi === correctIndex ? { correct: true } : {}) };
             if (choice.remember) {
               option.effect = `remember_${oi}`;
               effects[option.effect] = [{ user_fact: { predicate: 'chose', object: `${seriesId}:${label}` } }];
@@ -611,7 +613,7 @@ export function compileDraft(
             id, type: 'quiz', kind, item: target.item, prompt,
             options: ordered.map((label, oi) => ({
               label,
-              ...(label === correct ? { correct: true } : {}),
+              ...(oi === correctIndex ? { correct: true } : {}),
               ...(optionAssets?.[oi === correctIndex ? 0 : picked.indexOf(label) + 1] ? { asset: optionAssets[oi === correctIndex ? 0 : picked.indexOf(label) + 1] } : {}),
             })),
             feedback: { on_correct: `答对了——「${correct}」。`, on_wrong: `再想想——正确的是「${correct}」。` },

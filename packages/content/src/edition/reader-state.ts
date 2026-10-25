@@ -1,5 +1,5 @@
 import {
-  EDITION_COMPILER_VERSION, EDITION_LEARNING_POLICY, EDITION_REVIEW_CONSTRUCTOR_VERSION,
+  EDITION_POLICY_VERSIONS, EDITION_REVIEW_CONSTRUCTOR_VERSION,
   EditionRunSchema, ReviewRevisionSchema, assertRun, isEditionId,
   type EditionId, type EditionRun, type ReviewRevision,
 } from './contract.js';
@@ -141,12 +141,15 @@ export function assertReaderState(
       if (!install || basis.runId !== run.id || basis.issueId !== review.issueId ||
           basis.cefr !== install.release.cefr || basis.eventCount > run.events.length ||
           basis.constructorVersion !== EDITION_REVIEW_CONSTRUCTOR_VERSION ||
-          basis.policyVersion !== `${EDITION_LEARNING_POLICY}/${EDITION_COMPILER_VERSION}`) {
+          !EDITION_POLICY_VERSIONS.includes(basis.policyVersion)) {
         throw new Error('复习修订的发行、事件前缀或版本不受支持');
       }
       const prefix = { ...run, events: run.events.slice(0, basis.eventCount) };
       if (eventPrefixHash(prefix) !== basis.eventHash) throw new Error('复习修订的事件前缀摘要不一致');
-      const expectedBasis = buildReviewBasis(prefix, installs, install.package.pack, review.issueId, new Date(basis.createdAt), validated);
+      // 按冻结时记录的策略版本重算：旧依据走 v1 原语义，新依据走当前修正语义。
+      const expectedBasis = buildReviewBasis(
+        prefix, installs, install.package.pack, review.issueId, new Date(basis.createdAt), validated, basis.policyVersion,
+      );
       if (canonicalJson(expectedBasis) !== canonicalJson(basis)) throw new Error('复习资格、取材行或到期状态与真实阅读前缀不一致');
       const expected = buildReviewRevision(basis, install.package.pack, review.id as EditionId, new Date(review.createdAt)).revision;
       if (canonicalJson(expected) !== canonicalJson(review)) throw new Error('复习正文、选项或证据与确定性构造结果不一致');

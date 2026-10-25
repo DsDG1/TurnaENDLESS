@@ -126,8 +126,17 @@ button:disabled { opacity: .55; }
 .section-heading > h2 { margin-top: 0; }
 .section-count { font-size: 10px; color: #828c76; font-variant-numeric: tabular-nums; letter-spacing: 2px; }
 .episode-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 19px; }
-.episode-card { display: block; min-width: 0; width: 100%; text-align: left; background: #fdfcf7; border: 1px solid #e1e4d8; border-radius: 12px; padding: 0; overflow: hidden; }
-.episode-card:hover:not(:disabled) { transform: translateY(-4px); border-color: #adbc9d; box-shadow: 0 10px 24px #2c432d09; }
+.episode-card { position: relative; min-width: 0; }
+.episode-open { display: block; min-width: 0; width: 100%; text-align: left; background: #fdfcf7; border: 1px solid #e1e4d8; border-radius: 12px; padding: 0; overflow: hidden; color: inherit; font: inherit; cursor: pointer; }
+.episode-open:disabled { cursor: default; }
+.episode-open:hover:not(:disabled) { transform: translateY(-4px); border-color: #adbc9d; box-shadow: 0 10px 24px #2c432d09; }
+.episode-card > .entry-menu { position: absolute; right: 17px; bottom: 15px; z-index: 2; }
+.entry-menu-gap { display: inline-block; width: 35px; height: 35px; flex-shrink: 0; }
+.entry-menu { display: inline-block; position: relative; }
+.entry-menu-list { position: absolute; top: 100%; right: 0; z-index: 5; min-width: 150px; background: #fdfcf7; border: 1px solid #e1e4d8; border-radius: 10px; padding: 6px; box-shadow: 0 12px 30px #2c432d22; display: flex; flex-direction: column; }
+.entry-menu-list button { display: block; width: 100%; text-align: left; background: transparent; border: 0; padding: 8px 10px; font-size: 11px; color: inherit; border-radius: 6px; }
+.entry-menu-list button:hover:not(:disabled) { background: #edf0e3; }
+.entry-menu-list button:disabled { color: #a9b39c; cursor: default; }
 .episode-art { height: 146px; overflow: hidden; background: #d9e1cd; position: relative; }
 .episode-card-1 .episode-art { background: #e1dccc; }
 .episode-card-2 .episode-art { background: #dfdfec; }
@@ -404,7 +413,7 @@ button:disabled { opacity: .55; }
   .hero-illustration > .story-art { min-width: 320px; width: 160%; margin-left: -83px; }
   .hero-chinese { font-size: 12px; }
   .episode-grid { grid-template-columns: 1fr; }
-  .episode-card { display: grid; grid-template-columns: 180px minmax(0, 1fr); }
+  .episode-open { display: grid; grid-template-columns: 180px minmax(0, 1fr); }
   .episode-art { height: auto; min-height: 172px; }
   .episode-art .story-art { top: 0; height: 178px; width: 250px; left: -35px; }
   .episode-copy { padding: 19px; }
@@ -454,7 +463,8 @@ button:disabled { opacity: .55; }
   .section-heading h2 { font-size: 18px; }
   .section-count { font-size: 9px; }
   .episode-grid { gap: 15px; }
-  .episode-card { grid-template-columns: 116px minmax(0, 1fr); border-radius: 10px; }
+  .episode-open { grid-template-columns: 116px minmax(0, 1fr); border-radius: 10px; }
+  .episode-card > .entry-menu { right: 13px; bottom: 13px; }
   .episode-art { min-height: 170px; height: 100%; }
   .episode-art .story-art { height: 205px; width: 265px; left: -92px; top: 4px; }
   .episode-number { top: 10px; left: 9px; font-size: 7px; padding: 4px 5px; letter-spacing: 1px; }
@@ -567,7 +577,8 @@ button:disabled { opacity: .55; }
   .page-heading h1 { font-size: 26px; }
   .hero-copy { padding-left: 21px; padding-right: 21px; }
   .hero-action { padding-left: 21px; padding-right: 21px; }
-  .episode-card { grid-template-columns: 96px minmax(0, 1fr); }
+  .episode-open { grid-template-columns: 96px minmax(0, 1fr); }
+  .episode-card > .entry-menu { right: 11px; bottom: 11px; }
   .episode-art .story-art { left: -104px; }
   .episode-copy { padding-left: 11px; padding-right: 11px; }
   .episode-copy h3 { font-size: 13px; }

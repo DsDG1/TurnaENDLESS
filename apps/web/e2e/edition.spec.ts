@@ -25,7 +25,7 @@ test('安装样刊、读完一段并在刷新后保留进度', async ({ page }) 
     if (await next.isEnabled()) {
       await next.click();
     } else {
-      const skip = page.getByRole('button', { name: '跳过这一段' });
+      const skip = page.getByRole('button', { name: '跳过这一小节' });
       if (await skip.isVisible()) await skip.click();
     }
     await page.waitForTimeout(120);

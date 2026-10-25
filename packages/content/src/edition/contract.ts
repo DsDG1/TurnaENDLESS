@@ -14,7 +14,23 @@ export const EDITION_CONTRACT = 'edition-draft-v1' as const;
 export const EDITION_DRAFT_HEADER = 'EDITION-DRAFT/1' as const;
 export const EDITION_DRAFT_PROTOCOL = 'edition-draft-v1' as const;
 export const EDITION_LEARNING_POLICY = 'S-B' as const;
-export const EDITION_COMPILER_VERSION = 'edition-compiler-1' as const;
+/**
+ * 编译器/学习策略版本分派（bugfix §2.0）：
+ * - `edition-compiler-1` 只服务于已冻结的修订、复习依据与安装包的复核；
+ * - `edition-compiler-2` 起修正：@fact 词义不进叙述原句池、uses 只统计叙述单元、
+ *   同场景曝光去重、find 干扰项确定性抽样。
+ * 新内容一律走当前版本；旧版本仅用于按原语义重放既有冻结数据。
+ */
+export const EDITION_COMPILER_VERSION_V1 = 'edition-compiler-1' as const;
+export const EDITION_COMPILER_VERSION = 'edition-compiler-2' as const;
+export const EDITION_COMPILER_VERSIONS: readonly string[] = [
+  EDITION_COMPILER_VERSION_V1, EDITION_COMPILER_VERSION,
+];
+export const EDITION_POLICY_VERSION_V1 = `${EDITION_LEARNING_POLICY}/${EDITION_COMPILER_VERSION_V1}` as const;
+export const EDITION_POLICY_VERSION = `${EDITION_LEARNING_POLICY}/${EDITION_COMPILER_VERSION}` as const;
+export const EDITION_POLICY_VERSIONS: readonly string[] = [
+  EDITION_POLICY_VERSION_V1, EDITION_POLICY_VERSION,
+];
 export const EDITION_VALIDATION_POLICY_VERSION = 'edition-validation-1' as const;
 export const EDITION_REVIEW_CONSTRUCTOR_VERSION = 'edition-review-1' as const;
 export const EDITION_SCENE_POLICY_VERSION = 'edition-scene-policy-1' as const;

@@ -18,7 +18,7 @@ const FLOW: SeriesPlan[] = [
 ];
 const seriesLabel = (id: CreativeSeriesId) => creativeSeries[id].label;
 const advanceName = (kind: string, index: number, total: number) =>
-  index === total - 1 ? '看完这一集' : kind === 'story' ? '继续故事' : '继续';
+  index === total - 1 ? '看完这一集' : '继续';
 
 /** 用真实任务编译一份 v4 文档（指定系列/形态；真实 planCreative，不改写目标）。 */
 function creativeDocument(save: SavedPlayer, requestId: string, plan: SeriesPlan): GeneratedEpisode {
@@ -139,7 +139,7 @@ async function playEpisode(page: Page, document: GeneratedEpisode, kind: string,
     await expect(advance).toBeEnabled();
     await advance.click();
   }
-  await expect(page.getByRole('heading', { name: kind === 'story' ? '这一段故事，留下来了。' : '这一段内容，留下来了。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
   await page.goto('/');
 }
 

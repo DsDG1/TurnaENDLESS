@@ -14,6 +14,17 @@ import {
 const uuid = () => globalThis.crypto.randomUUID();
 const isGenerated = (r: { origin: string }): r is ContentRevision => r.origin !== 'bundled';
 
+/**
+ * 当前分支实际采用的修订（不是全局 headRevisionId）。
+ * 编辑器、预览与已交互判定必须共用这份解析：不能让编辑器显示 A 分支草稿、
+ * 预览却按 B 分支依据编译。当前分支未采用该内容时返回 null。
+ */
+export function adoptedRevision(workspace: Workspace, contentId: string): Workspace['revisions'][number] | null {
+  const active = workspace.branches.find((b) => b.id === workspace.activeBranchId);
+  const adoptedId = active?.adopted.find((a) => a.contentId === contentId)?.revisionId;
+  return workspace.revisions.find((r) => r.id === adoptedId) ?? null;
+}
+
 /** 依据中的前缀：生成该修订时实际看到的历史（采用清单 + 事件前缀）。 */
 export function basisPrefix(content: Content, workspace: Workspace, basis: GenerationBasis) {
   const branch = workspace.branches.find((b) => b.id === basis.branchId)
@@ -48,8 +59,9 @@ export interface RevisionPreview {
 
 /** 编译编辑后的草稿。task 由原修订的计划依据重建，plannedAt 保持原值以复现学习任务。 */
 export function previewRevision(content: Content, workspace: Workspace, entry: ContentEntry, draftText: string, at = new Date()): RevisionPreview {
-  const head = workspace.revisions.find((r) => r.id === entry.headRevisionId);
-  if (!head || !isGenerated(head)) return { ok: false, issues: [{ code: 'E-REVISION', level: 'error', message: '只有生成内容可以编辑正文' }] };
+  const head = adoptedRevision(workspace, entry.id);
+  if (!head) return { ok: false, issues: [{ code: 'E-REVISION', level: 'error', message: '当前分支未采用该内容，不能编辑正文' }] };
+  if (!isGenerated(head)) return { ok: false, issues: [{ code: 'E-REVISION', level: 'error', message: '只有生成内容可以编辑正文' }] };
   const scenesOf = (batch: { scenes: { id: string; type: string }[] }) => batch.scenes.map((s) => ({ id: s.id, type: s.type }));
   let prefix;
   try {
@@ -57,13 +69,14 @@ export function previewRevision(content: Content, workspace: Workspace, entry: C
   } catch (error) {
     return { ok: false, issues: [{ code: 'E-REVISION', level: 'error', message: `生成依据无法恢复：${error instanceof Error ? error.message : error}` }] };
   }
-  // 复现学习任务必须用生成当时的计划时间（basis.plannedAt），不是文档生成时间
-  const task = content.planCreative(prefix.session, prefix.library, new Date(head.basis.plannedAt));
+  // 复现学习任务必须用生成当时的计划时间：修订的 plannedAt 就是生成时的
+  // document.generatedAt。basis.plannedAt 是票据预留时刻，跨过 FSRS 到期边界会算出不同 brief。
+  const task = content.planCreative(prefix.session, prefix.library, new Date(head.plannedAt));
   const compiled = content.compileDraft(draftText, task, prefix.library, head.episodeId);
   if (!compiled.ok) return { ok: false, issues: compiled.issues, before: { scenes: scenesOf(head.batch) } };
   // 路径验收：把前缀 + 新修订还原成库，验证该集全部选项与跳过路径
   const save: SavedPlayer = { ...prefix.save, generated: [...prefix.save.generated, {
-    version: 1, generatedAt: head.basis.plannedAt,
+    version: 1, generatedAt: head.plannedAt,
     basedOn: { eventCount: head.basis.eventCount, hash: head.basis.eventHash },
     title: compiled.title, subtitle: compiled.subtitle, description: compiled.description,
     batch: compiled.batch, hash: contentHash(compiled.batch),

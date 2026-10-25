@@ -1,9 +1,9 @@
 /**
- * 内容管理界面：展示信息编辑、正文修订（草稿编辑 → 编译 → 预览 → 采用）、
+ * 内容管理界面：展示信息编辑、内容修订（草稿编辑 → 编译 → 预览 → 采用）、
  * 回收站、归档卷与完整备份/导入。所有操作走工作区管理命令，不伪造学习事件。
  */
 import { useEffect, useRef, useState } from 'react';
-import type { ContentEntry, RevisionPreview } from '@endless/content';
+import { adoptedRevision, type ContentEntry, type RevisionPreview } from '@endless/content';
 import { downloadSession } from '../storage.js';
 import { Icon } from './icons.js';
 import type { usePlayer } from '../use-player.js';
@@ -14,7 +14,8 @@ function Dialog({ title, onClose, children }: { title: string; onClose(): void; 
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
   return <dialog ref={ref} className="install-dialog library-dialog" onClose={onClose}
-    onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    onKeyDown={(event) => event.stopPropagation()}
+    onClick={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose(); }}>
     <button className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><Icon name="close" /></button>
     <h2>{title}</h2>
     {children}
@@ -27,7 +28,7 @@ export function DisplayEditor({ entry, player, onClose }: { entry: ContentEntry;
   const [tags, setTags] = useState(entry.display.tags.join(', '));
   const [note, setNote] = useState(entry.display.note);
   return <Dialog title="编辑展示信息" onClose={onClose}>
-    <p className="section-footnote">只改展示名称、标签和备注；正文与已有阅读记录不变。</p>
+    <p className="section-footnote">只改展示名称、标签和备注；内容本身与已有阅读记录不变。</p>
     <label>显示名称<input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={100} /></label>
     <label>标签（逗号分隔）<input value={tags} onChange={(e) => setTags(e.target.value)} maxLength={200} /></label>
     <label>个人备注<textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} rows={3} /></label>
@@ -38,18 +39,19 @@ export function DisplayEditor({ entry, player, onClose }: { entry: ContentEntry;
   </Dialog>;
 }
 
-/** 正文修订：编辑 ENDLESS-DRAFT/1 草稿 → 编译校验 → 预览差异 → 确认采用。 */
+/** 内容修订：编辑 ENDLESS-DRAFT/1 草稿 → 编译校验 → 预览差异 → 确认采用。 */
 export function DraftEditor({ entry, player, onClose }: { entry: ContentEntry; player: Player; onClose(): void }) {
-  const head = player.workspace?.revisions.find((r) => r.id === entry.headRevisionId);
+  const head = player.workspace ? adoptedRevision(player.workspace, entry.id) : null;
   const [draft, setDraft] = useState(head && head.origin !== 'bundled' ? head.draft : '');
   const [preview, setPreview] = useState<RevisionPreview | null>(null);
   const read = !!player.runtime && player.runtime.branch.session.events.some((e) => e.episode === head?.episodeId);
-  return <Dialog title="编辑正文" onClose={onClose}>
+  return <Dialog title="编辑内容" onClose={onClose}>
     <p className="section-footnote">
       修改 ENDLESS-DRAFT/1 草稿后先「编译并预览」。采用新修订必须满足 10–20 节、素材、词汇与来源约束；
-      {read ? ' 本内容已有真实阅读记录，采用将创建新分支，原分支保留。' : ' 尚无交互记录，采用将原位替换当前修订。'}
+      {read ? ' 本内容已有阅读记录，采用将创建新分支，原分支保留。' : ' 尚无交互记录，采用将原位替换当前修订。'}
     </p>
-    <textarea className="draft-editor" value={draft} onChange={(e) => setDraft(e.target.value)} rows={16} spellCheck={false} />
+    <textarea className="draft-editor" value={draft}
+      onChange={(e) => { setDraft(e.target.value); setPreview(null); }} rows={16} spellCheck={false} />
     <div className="button-row">
       <button className="button button-outline" onClick={() => setPreview(player.previewEdit(entry, draft))}>编译并预览</button>
       {preview?.ok && preview.revision && <button className="button button-dark"
@@ -70,18 +72,35 @@ export function EntryMenu({ entry, player }: { entry: ContentEntry; player: Play
   const [display, setDisplay] = useState(false);
   const [body, setBody] = useState(false);
   const [confirmPurge, setConfirmPurge] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
   const info = player.purgeInfo(entry);
   const blocked = !!info && (info.usedByEvents.length + info.usedByBasis.length + info.usedByTickets.length > 0);
+  useEffect(() => {
+    if (!open) return;
+    const pointer = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', pointer);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('pointerdown', pointer);
+      document.removeEventListener('keydown', key);
+    };
+  }, [open]);
   if (entry.sourceKind !== 'generated') return null;
-  return <span className="entry-menu">
-    <button className="icon-button" aria-label="管理此内容" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><Icon name="settings" size={16} /></button>
-    {open && <div className="entry-menu-list" onClick={(e) => e.stopPropagation()}>
-      <button onClick={() => { setDisplay(true); setOpen(false); }}>编辑展示信息</button>
-      <button onClick={() => { setBody(true); setOpen(false); }}>编辑正文</button>
-      <button onClick={() => void player.trash(entry).then(() => setOpen(false))}>移入回收站</button>
+  const busy = player.busy;
+  return <span className="entry-menu" ref={root}>
+    <button className="icon-button" aria-label="管理此内容" aria-haspopup="menu" aria-expanded={open}
+      onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><Icon name="settings" size={16} /></button>
+    {open && <div className="entry-menu-list" role="menu" onClick={(e) => e.stopPropagation()}>
+      <button role="menuitem" disabled={busy} onClick={() => { setDisplay(true); setOpen(false); }}>编辑展示信息</button>
+      <button role="menuitem" disabled={busy} onClick={() => { setBody(true); setOpen(false); }}>编辑内容</button>
+      {entry.lifecycle !== 'trashed' &&
+        <button role="menuitem" disabled={busy} onClick={() => void player.trash(entry).then(() => setOpen(false))}>移入回收站</button>}
       {entry.lifecycle === 'trashed' && <>
-        <button onClick={() => void player.restore(entry).then(() => setOpen(false))}>恢复</button>
-        <button disabled={blocked} onClick={() => setConfirmPurge(true)}>
+        <button role="menuitem" disabled={busy} onClick={() => void player.restore(entry).then(() => setOpen(false))}>恢复</button>
+        <button role="menuitem" disabled={busy || blocked} onClick={() => setConfirmPurge(true)}>
           {blocked ? '仍被引用，不能彻底删除' : '彻底删除'}
         </button>
       </>}
@@ -89,7 +108,7 @@ export function EntryMenu({ entry, player }: { entry: ContentEntry; player: Play
     {display && <DisplayEditor entry={entry} player={player} onClose={() => setDisplay(false)} />}
     {body && <DraftEditor entry={entry} player={player} onClose={() => setBody(false)} />}
     {confirmPurge && <Dialog title="彻底删除" onClose={() => setConfirmPurge(false)}>
-      <p>将从本机移除该内容与修订。删除不会抹去已产生的真实消耗。</p>
+      <p>将从本机移除该内容与修订，已产生的记录不会被删除。</p>
       <button className="button button-dark" onClick={() => void player.purge(entry).then((ok) => { if (ok) setConfirmPurge(false); })}>确认删除</button>
     </Dialog>}
   </span>;
@@ -114,7 +133,7 @@ export function LibraryPage({ player }: { player: Player }) {
     });
   };
   return <>
-    <section className="page-heading"><div><span className="eyebrow">YOUR LIBRARY</span><h1>归档与回收站<span className="heading-dot">。</span></h1></div></section>
+    <section className="page-heading"><div><span className="eyebrow">LIBRARY</span><h1>归档与回收站<span className="heading-dot">。</span></h1></div></section>
     <section className="surface"><div className="section-heading"><h2>归档卷</h2></div>
       {!player.volumes.length && <p className="muted-copy">还没有归档。{player.suggestions.length ? '有内容可以成卷：' : '完成更多集后可以按系列成卷。'}</p>}
       {player.suggestions.map((s, i) => <div key={i} className="volume-row">
@@ -127,7 +146,7 @@ export function LibraryPage({ player }: { player: Player }) {
       </div>)}
     </section>
     <section className="surface"><div className="section-heading"><h2>回收站</h2></div>
-      {!trashed.length && <p className="muted-copy">回收站是空的。移入回收站不移除真实历史。</p>}
+      {!trashed.length && <p className="muted-copy">回收站是空的。移入回收站不会移除已有历史。</p>}
       {trashed.map((entry) => <div key={entry.id} className="volume-row">
         <div><strong>{entry.display.title}</strong><small>{obligationIds.has(entry.id) ? '仍有阅读义务' : '无阅读义务'}</small></div>
         <div className="button-row">

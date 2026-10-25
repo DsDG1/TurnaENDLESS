@@ -4,18 +4,28 @@ import { Icon } from './icons.js';
 
 const names: Record<string, string> = Object.fromEntries(CHARACTER_NAME_BY_ID);
 
+/**
+ * ENDLESS 与 Edition 的正文称谓必须分开，否则 Edition 阅读器会自称「故事」。
+ * ENDLESS：故事类内容说「故事」，日常/短帖/知识类说「内容」。
+ * Edition：一律说「正文」，其层级用期/单元，与 ENDLESS 的集/段不混用。
+ */
+const bodyWord = (kind?: string): '故事' | '内容' | '正文' =>
+  kind === 'edition' || kind === 'review' ? '正文'
+    : kind === 'daily' || kind === 'social' || kind === 'knowledge' ? '内容'
+      : '故事';
+
 const quizKind: Record<string, [string, string]> = {
-  cloze: ['FILL THE BLANK', '这句话刚在故事里读过——缺了一个词。'],
-  meaning: ['WORD CHECK', '故事里遇见过它——挑一个意思。'],
-  sentence: ['PICK THE LINE', '哪一句在故事里说得对？'],
-  find: ['FIND IT', '把词和图案对上。'],
+  cloze: ['FILL THE BLANK', '这句在{B}刚出现过，缺了一个词。'],
+  meaning: ['WORD CHECK', '{B}出现过这个词，选一个意思。'],
+  sentence: ['PICK THE LINE', '哪一句在{B}出现过？'],
+  find: ['FIND IT', '把词和对应的图对上。'],
 };
 
 const chatSkins: Record<string, [string, string]> = {
-  messenger: ['消息', '也是聊天的一员'],
-  dating: ['约会对话', '慢慢聊'],
-  forum: ['社区帖子', '小故事的公开角落'],
-  news_comments: ['评论区', '读完再说两句'],
+  messenger: ['消息', '聊天记录'],
+  dating: ['约会对话', '轻松聊天'],
+  forum: ['社区帖子', '公开的帖子'],
+  news_comments: ['评论区', '读完可以回复'],
 };
 
 function Actor({ reference }: { reference: string }) {
@@ -44,10 +54,12 @@ export function SceneRenderer({
   const channelLabel = presentation?.label ?? '鸭侦探事务所';
   const skin = scene.type === 'chat' ? scene.skin : 'messenger';
   const isForumLike = skin === 'forum' || skin === 'news_comments';
+  const body = bodyWord(presentation?.kind);
+  const quizCaption = (text: string) => text.replaceAll('{B}', body);
 
   return <div className={`scene-body scene-${scene.type}`}>
     {scene.type === 'comic' && <>
-      <div className="scene-intro"><h2>{!presentation || presentation.legacy ? '每个小谜题，都从一句话开始。' : '这一段内容，都从一句话开始。'}</h2><p>慢慢读就好，不用记住每个单词。</p></div>
+      <div className="scene-intro"><h2>{!presentation || presentation.legacy ? '每个小谜题都从一句话开始。' : body === '正文' ? '这一段正文从一句话开始。' : '这一段内容从一句话开始。'}</h2><p>读不懂的地方可以先跳过。</p></div>
       <div className="comic-panels">
         {scene.panels.map((panel, index) => <div className={`comic-panel panel-${index}`} key={index}>
           {index === 0 && <SceneBackdrop tag={scene.setting} />}
@@ -91,7 +103,7 @@ export function SceneRenderer({
           : <div className="clue-prop"><PropArt reference="@emoji:magnifying_glass" /></div>}
       </div>
       <h2 className="pick-question" lang="en">{scene.question}</h2>
-      <p className="question-caption">{presentation?.kind === 'knowledge' ? '根据出处，选一个正确的表达。' : '跟着线索，选一个最合适的表达。'}</p>
+      <p className="question-caption">{presentation?.kind === 'knowledge' ? '根据标注的出处，选出正确的表达。' : '根据上下文，选一个合适的表达。'}</p>
     </>}
     {scene.type === 'quiz' && <>
       <div className="clue-frame"><span className="eyebrow">{quizKind[scene.kind]?.[0] ?? 'PRACTICE'}</span>
@@ -101,7 +113,7 @@ export function SceneRenderer({
       <h2 className="pick-question" lang={scene.kind === 'cloze' || scene.kind === 'sentence' ? 'en' : 'zh'}>
         {scene.prompt.split('____').map((part, i, arr) => <span key={i}>{part}{i < arr.length - 1 && <span className="quiz-blank" aria-label="空"> </span>}</span>)}
       </h2>
-      <p className="question-caption">{quizKind[scene.kind]?.[1] ?? '练一练。'}</p>
+      <p className="question-caption">{quizCaption(quizKind[scene.kind]?.[1] ?? '做一道练习题。')}</p>
     </>}
     {scene.type === 'card' && <div className={`word-card${state.revealed || review ? ' flipped' : ''}`}>
       <span className="eyebrow">WORD CARD · 单词卡</span>
@@ -110,8 +122,8 @@ export function SceneRenderer({
       {state.revealed || review
         ? <div className="word-card-back">{entry && <><strong lang="en">{entry.label}</strong><span>{entry.gloss}</span></>}
             <small>{presentation?.kind === 'knowledge'
-              ? '这是本地词库里有出处的词义或例句，混个脸熟即可。'
-              : '这句话在故事里出现过——混个脸熟，之后才会考你。'}</small></div>
+              ? '释义和例句来自本地词库。'
+              : `这句话在${body}里出现过，之后会再考你一次。`}</small></div>
         : <button className="text-button hint-button" disabled={busy} onClick={onReveal}><Icon name="eye" size={16} />翻面看释义</button>}
     </div>}
     {!!options.length && <>
@@ -134,20 +146,20 @@ export function SceneRenderer({
       <div aria-live="polite" className="feedback-region">
         {answer ? <div className={`answer-feedback ${answer.correct ? 'feedback-good' : 'feedback-try'}`}>
           <Icon name={answer.correct ? 'check' : 'leaf'} size={19} />
-          <div><strong>{answer.correct ? '就是这个意思。' : '没关系，又认识了一种表达。'}</strong>
+          <div><strong>{answer.correct ? '回答正确。' : '答错了。'}</strong>
             {(scene.type === 'pick' || scene.type === 'quiz') && <p lang={scene.type === 'quiz' && scene.kind !== 'cloze' ? 'zh' : 'en'}>{answer.correct ? scene.feedback.on_correct : scene.feedback.on_wrong}</p>}
             {entry && <p className="word-explanation"><span lang="en">{entry.label}</span><span>{entry.gloss}</span></p>}
             <small>{answer.qualified ? '首次独立作答已记入学习记录，复习时间由 FSRS 安排。' : '这次是练习，不推进间隔复习记录。'}</small>
           </div>
-        </div> : !review && entry && <div className="hint-area">
+        </div> : !review && presentation?.kind !== 'review' && entry && <div className="hint-area">
           {state.revealed ? <p className="hint-text"><Icon name="book" size={16} /><span><strong>{entry.label}</strong> · {entry.gloss}。看过提示后，这一题会记为练习。</span></p> : <button className="text-button hint-button" disabled={busy} onClick={onReveal}><Icon name="eye" size={16} />需要一点提示？</button>}
         </div>}
       </div>
     </>}
     {!!readingItems.length && (!scene.evidence || scene.evidence.type === 'practice' || showSolution) &&
-      <aside className="scene-vocabulary" aria-label="故事里的表达"><strong><Icon name="book" size={16} />故事里的表达</strong>
+      <aside className="scene-vocabulary" aria-label={`${body}里的表达`}><strong><Icon name="book" size={16} />{body}里的表达</strong>
         {readingItems.map((item) => glossary[item] && <div key={item}><span lang="en">{glossary[item]!.label}</span><span>{glossary[item]!.gloss}</span></div>)}
-        <small>先理解，不急着记住。读完本片段后会记入学习足迹。</small>
+        <small>读完本片段后，这些表达会计入阅读记录。</small>
       </aside>}
   </div>;
 }

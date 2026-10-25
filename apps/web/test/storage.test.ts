@@ -55,7 +55,11 @@ describe('endless-workspace 原子存档', () => {
     const loaded = await reopened.load();
     expect(loaded?.tickets.find((t) => t.id === ticket.id)?.status).toBe('reserved');
     const cancelled = bump(cancelTicket(loaded!, ticket.id));
-    await reopened.commit(cancelled);
+    // 不写锁声明就关不了已打开的任务；顺带改别的状态也会被拒绝
+    await expect(reopened.commit(cancelled)).rejects.toThrow(/关闭/);
+    const sneaky = bump({ ...cancelled, profile: { ...cancelled.profile, label: '顺带修改' } });
+    await expect(reopened.commit(sneaky, { closingTicketId: ticket.id })).rejects.toThrow();
+    await reopened.commit(cancelled, { closingTicketId: ticket.id });
     const after = await reopened.load();
     expect(after?.tickets.find((t) => t.id === ticket.id)?.status).toBe('cancelled');
     const played = bump(applyPlayerCommand(content, after!, { type: 'text', large: true }));

@@ -13,7 +13,8 @@ import {
 } from '@endless/esl';
 import type { PassageRevision } from './sources.js';
 import {
-  EDITION_COMPILER_VERSION, EDITION_DRAFT_PROTOCOL,
+  EDITION_COMPILER_VERSION, EDITION_COMPILER_VERSION_V1, EDITION_COMPILER_VERSIONS,
+  EDITION_DRAFT_PROTOCOL,
   type Cefr, type EditionCreation, type EditionSourceBinding, type UnitLevelPlan,
 } from './contract.js';
 import { materialBackgrounds, materialCharacters, materialPictureOf, materialProps } from '../materials.js';
@@ -58,6 +59,11 @@ export interface EditionCompileInput {
   allowedCharacters?: readonly string[];
   /** 传入批量校验器（结构 / 素材 / 学习证据）。 */
   validate?: (batch: Batch) => ValidationIssue[];
+  /**
+   * 编译器版本：复核旧修订时传入其冻结的 `basis.compilerVersion`，
+   * 新编译缺省为当前版本。旧版本按原语义重放，不套新修正。
+   */
+  compilerVersion?: string;
 }
 
 export interface EditionTeachingReport {
@@ -116,6 +122,12 @@ function sentencesOf(text: string): string[] {
 
 export function compileEditionDraft(raw: string, input: EditionCompileInput): EditionCompileResult {
   const issues: ValidationIssue[] = [];
+  const compilerVersion = input.compilerVersion ?? EDITION_COMPILER_VERSION;
+  if (!EDITION_COMPILER_VERSIONS.includes(compilerVersion)) {
+    return { ok: false, issues: [{ code: 'E-EDITION-COMPILE', level: 'error', message: `编译器版本不受支持：${compilerVersion}` }] };
+  }
+  // 旧版本只服务于既有冻结数据的复核：按原语义重放，不套用新修正。
+  const legacy = compilerVersion === EDITION_COMPILER_VERSION_V1;
   const parsed = parseEditionDraft(raw);
   if (!parsed.ok) return parsed;
   const { meta, components } = parsed.draft;
@@ -397,7 +409,9 @@ export function compileEditionDraft(raw: string, input: EditionCompileInput): Ed
         id, type: 'quiz', kind: sceneKind, item: target.item, prompt,
         options: ordered.map((label, index) => {
           const asset = optionAssets?.[index === correctIndex ? 0 : picked.indexOf(label) + 1];
-          return { label, ...(label === correct ? { correct: true } : {}), ...(asset ? { asset } : {}) };
+          // v2 按位置标记正确项，避免重名标签被重复标记；v1 重放原标签匹配。
+          const isCorrect = legacy ? label === correct : index === correctIndex;
+          return { label, ...(isCorrect ? { correct: true } : {}), ...(asset ? { asset } : {}) };
         }),
         feedback: { on_correct: `答对了——「${correct}」。`, on_wrong: `再想想——正确的是「${correct}」。` },
         evidence: { item: target.item, type: 'practice' },
@@ -417,7 +431,15 @@ export function compileEditionDraft(raw: string, input: EditionCompileInput): Ed
     if (kind === 'find') {
       const prop = materialPictureOf(target.item);
       if (!prop) { error(issues, `@quiz find：${target.item} 没有登记图片素材，不能编造图案`); return; }
-      const others = materialProps.filter((prop2) => prop2.id !== prop).slice(0, 3);
+      // 干扰图：v1 固定取前三件，v2 用修订种子做确定性抽样，并排除与答案同名道具。
+      const others = legacy
+        ? materialProps.filter((prop2) => prop2.id !== prop).slice(0, 3)
+        : materialProps
+          .filter((prop2) => prop2.id !== prop && prop2.label !== target.entry.glossZh)
+          .map((prop2) => ({ prop2, key: fnv1a32(`${input.seed}:${id}:${target.item}:${prop2.id}`) }))
+          .sort((a, b) => a.key - b.key || a.prop2.id.localeCompare(b.prop2.id))
+          .slice(0, 3)
+          .map((entry) => entry.prop2);
       build('find', `「${forms[0]}」是哪一个？`, target.entry.glossZh, others.map((entry) => entry.label),
         [undefined, ...others.map((entry) => `@emoji:${entry.id}`)]);
       const scene = scenes.at(-1);
@@ -481,7 +503,11 @@ export function compileEditionDraft(raw: string, input: EditionCompileInput): Ed
       });
       sceneSources[id] = '本地语言包 · 词义';
       sources.push({ sceneId: id, field: 'gloss', reference: entry.sourceRef, text: entry.glossZh, hash: digestText(entry.glossZh) });
-      narrative.push({ sceneId: id, text: `${form} — ${entry.glossZh}`, kind: 'comic', reference: entry.sourceRef });
+      // v1 缺陷重放：词义串曾进入叙述原句池（被 @card 取材、被语境覆盖误计）。
+      // 新版本不再注入；fact 已通过 scene.uses 与 sources(gloss) 绑定目标词。
+      if (legacy) {
+        narrative.push({ sceneId: id, text: `${form} — ${entry.glossZh}`, kind: 'comic', reference: entry.sourceRef });
+      }
       return;
     }
     const example = entry.example;
@@ -583,12 +609,14 @@ export function compileEditionDraft(raw: string, input: EditionCompileInput): Ed
       }
     } else if (scene.type === 'chat') {
       for (const message of scene.messages) texts.push(message.text);
-      if (scene.reply) {
+      if (legacy && scene.reply) {
         texts.push(...scene.reply.options.map((option) => option.label));
         if (scene.reply.prompt) texts.push(scene.reply.prompt);
       }
-    } else if (scene.type === 'pick') texts.push(scene.question, ...scene.options.map((option) => option.label));
-    else if (scene.type === 'quiz') texts.push(scene.prompt);
+    } else if (legacy && scene.type === 'pick') texts.push(scene.question, ...scene.options.map((option) => option.label));
+    else if (legacy && scene.type === 'quiz') texts.push(scene.prompt);
+    // 只统计叙述单元：题干、干扰项、反馈里出现目标词不等于「在正文里读过」。
+    // card.front 保持计入（esl/text.ts 把它定义为 narrative）。
     else if (scene.type === 'card') texts.push(scene.front);
     const uses = new Set(scene.uses ?? []);
     for (const item of taskItems) {
@@ -626,7 +654,7 @@ export function compileEditionDraft(raw: string, input: EditionCompileInput): Ed
       protocol: EDITION_DRAFT_PROTOCOL,
       draft: raw,
       unitId: input.unitId,
-      compilerVersion: EDITION_COMPILER_VERSION,
+      compilerVersion,
       passageBindings,
       sources,
       sceneSources,

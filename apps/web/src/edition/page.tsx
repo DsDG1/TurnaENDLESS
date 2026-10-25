@@ -23,12 +23,15 @@ const download = (text: string, name: string) => {
 export function EditionPage() {
   const local = useEditionStore();
   const packages = local.store?.packages ?? [];
-  const [run, setRun] = useState<edition.EditionRun | null>(null);
-  const [review, setReview] = useState<edition.ReviewRevision | null>(null);
+  // 只保存 ID；Run / 复习修订对象从最新 store 派生，跨标签页落库后自动更新阅读器。
+  const [runId, setRunId] = useState<string | null>(null);
+  const [reviewId, setReviewId] = useState<string | null>(null);
   const [unitIndex, setUnitIndex] = useState(0);
   const [reading, setReading] = useState(false);
   const [selectedReleaseId, setSelectedReleaseId] = useState<string | null>(null);
 
+  const run = useMemo(() => local.store?.runs.find((entry) => entry.id === runId) ?? null, [local.store, runId]);
+  const review = useMemo(() => local.store?.reviews.find((entry) => entry.id === reviewId) ?? null, [local.store, reviewId]);
   const install = useMemo(() => {
     const releaseId = selectedReleaseId ?? run?.adoptedReleases[0]?.releaseId;
     return packages.find((entry) => entry.release.id === releaseId) ?? null;
@@ -38,22 +41,20 @@ export function EditionPage() {
     ...(local.store?.reviews ?? []).filter((entry) => entry.runId === run?.id && entry.id !== review?.id), ...(review ? [review] : []),
   ], [local.store?.reviews, review, run?.id]);
 
-  const library = useMemo(() => {
+  const built = useMemo((): { library: ReturnType<typeof edition.runLibrary>; projection: edition.RunProjection } | { error: string } | null => {
     if (!install || !run) return null;
     try {
-      return edition.runLibrary(run, installs, reviews);
-    } catch {
-      return null;
+      return {
+        library: edition.runLibrary(run, installs, reviews),
+        projection: edition.projectRun(run, installs, reviews),
+      };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : '无法重建阅读进度' };
     }
   }, [install, installs, reviews, run]);
-  const projection = useMemo(() => {
-    if (!install || !run) return null;
-    try {
-      return edition.projectRun(run, installs, reviews);
-    } catch {
-      return null;
-    }
-  }, [install, installs, reviews, run]);
+  const library = built && 'library' in built ? built.library : null;
+  const projection = built && 'projection' in built ? built.projection : null;
+  const projectionError = built && 'error' in built ? built.error : '';
 
   const unit = install?.units[unitIndex] ?? null;
   const episodeId = review ? review.id : unit?.revisionId;
@@ -98,11 +99,20 @@ export function EditionPage() {
         if (!saved) return;
         next = saved;
       }
-      setRun(next);
+      // 定位要用这个 Run 自己的完整复习修订；缺了它们，含复习事件的 Run 会无法投影。
+      const runReviews = (local.store?.reviews ?? []).filter((entry) => entry.runId === next.id);
+      let first: number;
+      try {
+        first = firstUnread(next, installs, runReviews, pkg);
+      } catch (error) {
+        local.setError(`无法恢复阅读位置：${error instanceof Error ? error.message : '进度投影失败'}；原始阅读记录未被修改。`);
+        return;
+      }
+      setRunId(next.id);
       setSelectedReleaseId(pkg.release.id);
-      setUnitIndex(firstUnread(next, pkg));
+      setUnitIndex(first);
       setReading(true);
-      setReview(null);
+      setReviewId(null);
       return;
     }
     const created = edition.createRun({
@@ -115,11 +125,11 @@ export function EditionPage() {
       return created;
     });
     if (saved) {
-      setRun(saved);
+      setRunId(saved.id);
       setSelectedReleaseId(pkg.release.id);
       setUnitIndex(0);
       setReading(true);
-      setReview(null);
+      setReviewId(null);
     }
   };
 
@@ -130,7 +140,7 @@ export function EditionPage() {
       await repo.commitRun(appended.run, local.store?.revision ?? 0, { reviews });
       return appended.run;
     });
-    if (next) setRun(next);
+    if (next) setRunId(next.id);
     return next !== null;
   };
 
@@ -143,15 +153,15 @@ export function EditionPage() {
       return built.revision;
     });
     if (saved) {
-      setReview(saved);
-      local.setNotice(built.hasGradedItems ? '这次复习有合格条目：独立检索会记录到 Edition 的复习进度。' : '这次没有合格条目：只作为练习显示，不写学习记录。');
+      setReviewId(saved.id);
+      local.setNotice(built.hasGradedItems ? '这次复习有合格条目，独立检索会计入 Edition 的复习进度。' : '这次没有合格条目，只作为练习显示，不写记录。');
     }
   };
 
   if (local.error && !local.store) {
     return <section className="page-heading"><span className="eyebrow">EDITION</span><h1>Edition 暂时打不开<span className="heading-dot">。</span></h1>
       <p role="alert">{local.error}</p>
-      <p className="muted-copy">这只影响 Edition 书架；原有 ENDLESS 的离线故事与进度没有被修改。</p>
+      <p className="muted-copy">这只影响 Edition 书架，原有 ENDLESS 的内容和进度不会被修改。</p>
       <button className="button button-dark" onClick={() => void local.reload()}>重新读取</button></section>;
   }
 
@@ -161,7 +171,7 @@ export function EditionPage() {
         <div>
           <span className="eyebrow">A FINITE EDITION</span>
           <h1>有限专题，读完为止<span className="heading-dot">。</span></h1>
-          <p>每期都有固定目录、已审阅正文和一个终点。这里不追加同刊，也不把目录预览算成读过。</p>
+          <p>每期都有固定目录、已审阅正文和一个终点。不追加同刊，目录预览不计为已读。</p>
         </div>
       </div>
       {local.notice && <div className="notice" role="status"><Icon name="check" size={18} /><span>{local.notice}</span></div>}
@@ -184,11 +194,25 @@ export function EditionPage() {
           <p className="section-footnote">样刊只包含自有文本与仓库自带词库，不联网、不调用模型。</p></section>
         : <div className="edition-shelf">{packages.map((pkg) => {
           const existing = local.store?.runs.find((entry) => entry.editionId === pkg.release.editionId);
-          const done = existing
-            ? edition.projectRun(existing, installs, reviews).units.filter((entry) => pkg.units.some((unit) => unit.revisionId === entry.revisionId))
-            : [];
-          const read = done.filter((entry) => entry.status === 'read').length;
-          const started = done.some((entry) => entry.status !== 'unread');
+          // 投影失败要单独标出：不能把失败伪装成空进度，也不能让整页崩溃。
+          let done: edition.UnitProgress[] | null = null;
+          let progressError = '';
+          if (existing) {
+            try {
+              const runReviews = (local.store?.reviews ?? []).filter((entry) => entry.runId === existing.id);
+              const unitsByRevision = new Map(
+                edition.projectRun(existing, installs, runReviews).units.map((entry) => [entry.revisionId, entry]),
+              );
+              done = pkg.units
+                .map((unit) => unitsByRevision.get(unit.revisionId))
+                .filter((entry): entry is edition.UnitProgress => !!entry);
+            } catch (error) {
+              progressError = error instanceof Error ? error.message : '无法重建阅读进度';
+            }
+          }
+          const read = done?.filter((entry) => entry.status === 'read').length ?? 0;
+          const started = done?.some((entry) => entry.status !== 'unread') ?? false;
+          const statusOf = (revisionId: string) => done?.find((entry) => entry.revisionId === revisionId)?.status;
           return <article key={pkg.release.id} className="surface edition-card">
             <div className="section-heading">
               <div>
@@ -198,25 +222,27 @@ export function EditionPage() {
               </div>
               <Icon name="book" />
             </div>
-            <ul className="edition-unit-list">{pkg.units.map((entry, index) => {
-              const progress = done[index];
-              return <li key={entry.revisionId}>
-                <span className="edition-unit-index">{String(index + 1).padStart(2, '0')}</span>
-                <span>{entry.title}</span>
-                <span className={`subtle-badge${progress?.status === 'read' ? ' badge-ready' : ''}`}>
-                  {progress?.status === 'read' ? '已读' : progress?.status === 'finished_with_skips' ? '含跳过' : progress?.status === 'reading' ? '进行中' : '未读'}
-                </span>
-              </li>;
-            })}</ul>
+            {progressError
+              ? <p className="error-text" role="alert">无法恢复这一期的阅读进度：{progressError}；原始记录未被修改。</p>
+              : <ul className="edition-unit-list">{pkg.units.map((entry, index) => {
+                const status = statusOf(entry.revisionId);
+                return <li key={entry.revisionId}>
+                  <span className="edition-unit-index">{String(index + 1).padStart(2, '0')}</span>
+                  <span>{entry.title}</span>
+                  <span className={`subtle-badge${status === 'read' ? ' badge-ready' : ''}`}>
+                    {status === 'read' ? '已读' : status === 'finished_with_skips' ? '含跳过' : status === 'reading' ? '进行中' : '未读'}
+                  </span>
+                </li>;
+              })}</ul>}
             <div className="edition-card-foot">
-              <span className="section-footnote">{read}/{pkg.units.length} 单元读完 · 来源 {pkg.release.manifest.sourceAcks.length} 项 · 离线可用</span>
-              <button className="button button-dark" onClick={() => void startReading(pkg)} disabled={local.busy}>
+              <span className="section-footnote">{progressError ? '进度不可用' : `${read}/${pkg.units.length} 单元读完`} · 来源 {pkg.release.manifest.sourceAcks.length} 项 · 离线可用</span>
+              <button className="button button-dark" onClick={() => void startReading(pkg)} disabled={local.busy || !!progressError}>
                 <Icon name="play" size={16} />{started ? '继续阅读' : '开始阅读'}
               </button>
             </div>
           </article>;
         })}</div>}
-      <p className="section-footnote">Edition 的学习记录与 ENDLESS 分开保存：算法相同，进度不合并。清理浏览器数据会移除本地期刊，请先导出备份。</p>
+      <p className="section-footnote">Edition 的记录与 ENDLESS 分开保存，进度不合并。清理浏览器数据会移除本地期刊，请先导出备份。</p>
     </section>;
   }
 
@@ -225,17 +251,17 @@ export function EditionPage() {
   const presentation = { kind: review ? 'review' : 'edition', series: 'edition', label: sceneLabel, sceneSources: unit?.sceneSources };
   const finishUnit = () => {
     if (review) {
-      setReview(null);
+      setReviewId(null);
       setReading(false);
       return;
     }
     if (unitIndex + 1 < install.units.length) setUnitIndex(unitIndex + 1);
-    else { setReading(false); local.setNotice('这一期读完了。可以进入复习，或回到书架看看阅读覆盖与跳过记录。'); }
+    else { setReading(false); local.setNotice('这一期读完了。可以进入复习，或回到书架查看阅读覆盖和跳过记录。'); }
   };
 
   return <section className="edition-page edition-reader">
     <div className="watch-heading">
-      <button className="text-button back-button" onClick={() => { setReading(false); setReview(null); }}><Icon name="back" size={17} />返回书架</button>
+      <button className="text-button back-button" onClick={() => { setReading(false); setReviewId(null); }}><Icon name="back" size={17} />返回书架</button>
       <span>{review ? '复习 · 只使用真正读过的内容' : `${install.display?.editionTitle ?? 'Edition'} · ${install.display?.issueTitle ?? ''}`}</span>
       <span className="save-status" role="status">{local.busy ? '正在保存…' : '本地自动保存'}<Icon name={local.busy ? 'clock' : 'check'} size={14} /></span>
     </div>
@@ -246,16 +272,19 @@ export function EditionPage() {
     </div>
     {local.error && <div className="notice notice-error" role="alert"><Icon name="info" size={18} /><span>{local.error}</span></div>}
     <div className="watch-main">
-      {!scene && <section className="surface"><p>这一单元已经结束。</p><div className="button-row">
+      {projectionError && <section className="surface"><p role="alert">无法恢复这一期的阅读进度：{projectionError}</p>
+        <p className="muted-copy">原始阅读记录与复习修订未被修改；可能缺少对应的复习修订或数据受损。</p>
+        <div className="button-row"><button className="button button-dark" onClick={() => { setReading(false); setReviewId(null); }}>返回书架</button></div></section>}
+      {!projectionError && !scene && <section className="surface"><p>这一单元已经结束。</p><div className="button-row">
         {!review && <button className="button button-dark" onClick={() => void startReview()}>进入复习</button>}
         <button className="button button-outline" onClick={finishUnit}>返回</button>
       </div></section>}
-      {scene && <section className="scene-card" key={`${episode?.id}-${scene.id}-${review ? 'r' : 'u'}`}>
+      {!projectionError && scene && <section className="scene-card" key={`${episode?.id}-${scene.id}-${review ? 'r' : 'u'}`}>
         <div className="scene-card-header">
           <span><Icon name={isReadingScene ? 'book' : scene.type === 'chat' ? 'chat' : 'target'} size={17} />{isReadingScene ? '已审阅正文' : review ? '合格检索 / 练习' : '读到这里'}</span>
           <span>{String(cursor + 1).padStart(2, '0')} / {String(scenes.length).padStart(2, '0')}</span>
         </div>
-        <div className="scene-progress" aria-label={`第 ${cursor + 1} 段，共 ${scenes.length} 段`}>{scenes.map((_, index) => <span key={index} className={index <= cursor ? 'filled' : ''} />)}</div>
+        <div className="scene-progress" aria-label={`第 ${cursor + 1} 小节，共 ${scenes.length} 小节`}>{scenes.map((_, index) => <span key={index} className={index <= cursor ? 'filled' : ''} />)}</div>
         {isReadingScene ? <article className="edition-article">
           {scene.type === 'comic' && scene.panels.map((panel, index) => panel.caption ? <p key={index}>{panel.caption}</p> : null)}
           <footer className="edition-source">
@@ -263,7 +292,7 @@ export function EditionPage() {
             <span>{unit?.sceneSources[scene.id] ?? '已审阅正文'}</span>
           </footer>
         </article> : <SceneRenderer scene={scene} state={state} glossary={library?.glossary ?? {}} presentation={presentation}
-          readingItems={[]} busy={local.busy} review={!!review || !!state.answer}
+          readingItems={[]} busy={local.busy} review={false}
           onAnswer={(choice) => void push({
             revisionId: review ? review.id : unit!.revisionId,
             unitId: review ? `review:${review.id}` : unit!.unitId,
@@ -287,21 +316,29 @@ export function EditionPage() {
             revisionId: review ? review.id : unit!.revisionId,
             unitId: review ? `review:${review.id}` : unit!.unitId,
             sceneId: scene.id, action: 'advance', payload: { skip: true },
-          }).then((saved) => { if (saved && cursor + 1 >= scenes.length) finishUnit(); })}>跳过这一段</button>
+          }).then((saved) => { if (saved && cursor + 1 >= scenes.length) finishUnit(); })}>跳过这一小节</button>
           {!review && !state.answer && getOptions(scene).length > 0 && <span className="section-footnote">跳过不会记为完成，也不会产生曝光。</span>}
         </div>
       </section>}
     </div>
-    <p className="section-footnote">阅读正文用「继续」推进；跳过会单独统计为 finished_with_skips，不会被当成学会。复习按钮只在有真实阅读记录后出现。</p>
+    <p className="section-footnote">阅读正文用「继续」推进；跳过会单独统计为 finished_with_skips，不计为读完。复习按钮只在有真实阅读记录后出现。</p>
   </section>;
 }
 
-function firstUnread(run: edition.EditionRun, pkg: edition.EditionPublicationPackage): number {
-  try {
-    const units = edition.projectRun(run, [{ release: pkg.release, package: pkg }]).units;
-    const index = units.findIndex((entry) => entry.status !== 'read');
-    return index < 0 ? 0 : index;
-  } catch {
-    return 0;
-  }
+/**
+ * 定位第一个未读完单元。必须拿到这个 Run 的完整 installs 与复习修订——
+ * 复习事件的存在会让缺料的投影直接抛错。进度按 revisionId 对齐，
+ * 不依赖数组下标；投影失败向外抛，由调用方决定不进入阅读位置。
+ */
+function firstUnread(
+  run: edition.EditionRun,
+  installs: readonly edition.EditionInstall[],
+  reviews: readonly edition.ReviewRevision[],
+  pkg: edition.EditionPublicationPackage,
+): number {
+  const unitsByRevision = new Map(
+    edition.projectRun(run, installs, reviews).units.map((entry) => [entry.revisionId, entry]),
+  );
+  const index = pkg.units.findIndex((unit) => (unitsByRevision.get(unit.revisionId)?.status ?? 'unread') !== 'read');
+  return index < 0 ? 0 : index;
 }

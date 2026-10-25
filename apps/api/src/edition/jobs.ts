@@ -61,10 +61,10 @@ function nowIso() {
 }
 
 function categorize(error: unknown): string {
-  const chain: { statusCode?: number; name?: string }[] = [];
+  const chain: { statusCode?: number; name?: string; message?: string }[] = [];
   let cause = error;
   while (cause && typeof cause === 'object' && chain.length < 4) {
-    chain.push(cause as { statusCode?: number; name?: string });
+    chain.push(cause as { statusCode?: number; name?: string; message?: string });
     cause = (cause as { cause?: unknown }).cause;
   }
   const status = chain.find((entry) => entry.statusCode)?.statusCode;
@@ -72,7 +72,12 @@ function categorize(error: unknown): string {
   if (status === 429) return 'rate-limit';
   if (chain.some((entry) => entry.name === 'EditorialModelUnavailableError')) return 'unconfigured';
   if (chain.some((entry) => entry.name === 'AbortError' || entry.name === 'TimeoutError')) return 'timeout';
-  if (chain.some((entry) => entry.name === 'TypeError' || entry.name === 'FetchError')) return 'network';
+  if (chain.some((entry) => entry.name === 'FetchError')) return 'network';
+  // 不是每个 TypeError 都是网络错误：只有消息指向 fetch/socket/连接行为才归类 network
+  if (chain.some((entry) => entry.name === 'TypeError' &&
+      /fetch|network|socket|econn|enotfound|eai_again|etimedout|terminated|unreachable|connection/i.test(entry.message ?? ''))) {
+    return 'network';
+  }
   if (error instanceof Error && /校验|验收|复核|未通过|契约|compile|E-EDITION|EDITION-DRAFT/i.test(error.message)) return 'content';
   return 'unknown';
 }
@@ -317,6 +322,16 @@ export class EditionJobManager {
             job, unitId, workKey, apiKey,
             attempt: { ...attempt, status: 'call_started' },
           });
+          // 结果缺省字段是明确的内部错误，不能让 SQLite 约束错误充当失败分类
+          if (!result || typeof result.objectType !== 'string' || !result.objectType ||
+              typeof result.objectId !== 'string' || !result.objectId ||
+              typeof result.objectDigest !== 'string' || !result.objectDigest || result.body === undefined) {
+            throw new Error('编纂结果缺少对象类型、ID、摘要或正文');
+          }
+          // 临时 Key 在任一结果字段回显都拒绝写入；错误消息本身绝不含 Key
+          if (apiKey && apiKey.length >= 6 && JSON.stringify(result).includes(apiKey)) {
+            throw new Error('编纂结果回显了本次临时凭据，已拒绝写入');
+          }
           // 3) 先保存结果，再开始下一个单元
           this.store.transaction(() => {
             this.store.putObject(result.objectType, result.objectId, result.objectDigest, result.body);
@@ -353,16 +368,20 @@ export class EditionJobManager {
   private fail(id: string, code: string) {
     const row = this.store.getJob(id);
     if (!row) return;
+    // 失败不得把 cancel_requested 覆盖成 failed：无论取消标志与失败谁先落库，
+    // 终态都收敛到 cancelled，而不是可重试的 failed。
+    const cancelled = row.job.status === 'cancel_requested' || row.job.status === 'cancelled';
+    const status: CompileJobStatus = cancelled ? 'cancelled' : 'failed';
     try {
       this.store.updateJob({
         ...row.job,
-        status: 'failed',
+        status,
         updatedAt: nowIso(),
         attempts: this.attemptWindow(id),
-      }, code);
+      }, cancelled ? 'cancel' : code);
     } catch {
       // 写盘失败时不谎报成功；内存里也保留失败状态供本进程查询
-      this.store.updateJob({ ...row.job, status: 'failed', updatedAt: nowIso() }, code);
+      this.store.updateJob({ ...row.job, status, updatedAt: nowIso() }, cancelled ? 'cancel' : code);
     }
   }
 

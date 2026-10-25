@@ -19,6 +19,7 @@ export function useEditionStore() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
 
   const reload = useCallback(async () => {
     try {
@@ -35,6 +36,13 @@ export function useEditionStore() {
   }, [reload]);
 
   const run = useCallback(async <T,>(work: (repo: EditionRepository) => Promise<T>, message = ''): Promise<T | null> => {
+    // 同步重入锁：busy 要等一次渲染才可见，连续两次调用必须先在这里拦住，
+    // 否则同一份 work 会执行两次并交叉落库
+    if (running.current) {
+      setError('上一项操作仍在进行，请等它完成后再试');
+      return null;
+    }
+    running.current = true;
     setBusy(true);
     setError('');
     try {
@@ -47,6 +55,7 @@ export function useEditionStore() {
       setError((cause as Error).message);
       return null;
     } finally {
+      running.current = false;
       setBusy(false);
     }
   }, []);

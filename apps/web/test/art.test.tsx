@@ -119,5 +119,53 @@ describe('论坛/评论外观与来源标注', () => {
     />);
     expect(html).toContain('本地词库 · 词义');
     expect(html).not.toContain('在故事里出现过');
+    expect(html).toContain('释义和例句来自本地词库');
+  });
+});
+
+describe('ENDLESS 与 Edition 的正文用词分离', () => {
+  const quizScene = { id: 's1', type: 'quiz', kind: 'cloze', item: 'lx:hot#adj.temperature', prompt: 'The coffee is ____.', options: [], uses: [] } as unknown as PlayableScene;
+  const renderQuiz = (kind: string) => render(<SceneRenderer
+    scene={quizScene}
+    state={{}}
+    glossary={{}}
+    readingItems={[]}
+    busy={false}
+    review={false}
+    presentation={{ kind, series: 'x', label: '测试' }}
+    onAnswer={() => {}}
+    onReveal={() => {}}
+  />);
+
+  it('ENDLESS 故事类说「故事」，日常与知识类说「内容」', () => {
+    expect(renderQuiz('story')).toContain('这句在故事刚出现过');
+    expect(renderQuiz('daily')).toContain('这句在内容刚出现过');
+    expect(renderQuiz('knowledge')).toContain('这句在内容刚出现过');
+  });
+
+  it('Edition 一律说「正文」，不自称故事', () => {
+    const editionHtml = renderQuiz('edition');
+    expect(editionHtml).toContain('这句在正文刚出现过');
+    expect(editionHtml).not.toContain('故事');
+    const reviewHtml = renderQuiz('review');
+    expect(reviewHtml).toContain('这句在正文刚出现过');
+    expect(reviewHtml).not.toContain('故事');
+  });
+
+  it('词汇侧栏按内容类型命名，Edition 不叫「故事里的表达」', () => {
+    const withItems = (kind: string) => render(<SceneRenderer
+      scene={quizScene}
+      state={{}}
+      glossary={{ 'lx:hot#adj.temperature': { label: 'hot', gloss: '热的', forms: ['hot'] } }}
+      readingItems={['lx:hot#adj.temperature']}
+      busy={false}
+      review={false}
+      presentation={{ kind, series: 'x', label: '测试' }}
+      onAnswer={() => {}}
+      onReveal={() => {}}
+    />);
+    expect(withItems('story')).toContain('故事里的表达');
+    expect(withItems('edition')).toContain('正文里的表达');
+    expect(withItems('edition')).not.toContain('故事里的表达');
   });
 });

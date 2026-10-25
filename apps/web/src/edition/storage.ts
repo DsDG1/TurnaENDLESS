@@ -44,6 +44,7 @@ const chunkKey = (runId: string, index: number) => `${runId}:${String(index).pad
 
 export class EditionRepository {
   private database: Promise<IDBDatabase>;
+  private closed = false;
 
   constructor(factory: IDBFactory = globalThis.indexedDB) {
     this.database = new Promise((resolve, reject) => {
@@ -67,7 +68,7 @@ export class EditionRepository {
         if (!db.objectStoreNames.contains('management')) db.createObjectStore('management');
       };
       request.onsuccess = () => {
-        request.result.onversionchange = () => request.result.close();
+        request.result.onversionchange = () => { request.result.close(); this.closed = true; };
         resolve(request.result);
       };
       request.onerror = () => reject(new Error('无法打开 Edition 本地存储；不会重置或删除已有内容'));
@@ -75,8 +76,14 @@ export class EditionRepository {
     });
   }
 
+  /** 已关闭连接不再使用：后续操作得到可操作的错误，而不是裸 InvalidStateError。 */
+  private async db(): Promise<IDBDatabase> {
+    if (this.closed) throw new Error('Edition 存储连接已因版本变更或显式关闭而失效，请刷新页面；原始数据未被修改');
+    return this.database;
+  }
+
   async load(): Promise<EditionStore> {
-    const db = await this.database;
+    const db = await this.db();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['meta', 'installs', 'objects', 'runs', 'reviews', 'eventChunks', 'management'], 'readonly');
       let root: RootRow | null = null;
@@ -144,7 +151,7 @@ export class EditionRepository {
     const issues = edition.publicationIssues(pkg);
     if (issues.length) throw new Error(issues.map((entry) => `${entry.code}：${entry.message}`).join('；'));
     const release = pkg.release;
-    const db = await this.database;
+    const db = await this.db();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(['meta', 'installs', 'objects', 'references', 'management'], 'readwrite');
       let error = 'Edition 安装失败；原有已安装内容与阅读记录保持不变';
@@ -252,7 +259,7 @@ export class EditionRepository {
     }
     edition.assertReaderState(snapshot.packages,
       [...snapshot.runs.filter((entry) => entry.id !== run.id), run], [...reviewMap.values()]);
-    const db = await this.database;
+    const db = await this.db();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(['meta', 'runs', 'eventChunks', 'reviews', 'projections', 'management'], 'readwrite');
       let error = 'Edition 进度保存失败；本次操作尚未提交';
@@ -346,7 +353,7 @@ export class EditionRepository {
     const current = await this.load();
     const plan = prepareReaderRestore(current, text, options.trustReviewed === true);
     if (!plan.writes.length) return plan.result;
-    const db = await this.database;
+    const db = await this.db();
     await new Promise<void>((resolve, reject) => {
       const stores = ['meta', ...new Set(plan.writes.map((write) => write.store))];
       const tx = db.transaction(stores, 'readwrite');
@@ -378,36 +385,41 @@ export class EditionRepository {
   }
 
   async stage(key: string, value: unknown): Promise<void> {
-    const db = await this.database;
+    const db = await this.db();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('staging', 'readwrite');
       tx.objectStore('staging').put(value, key);
       tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(new Error('暂存 Edition 对象被中断；没有激活任何内容'));
       tx.onerror = () => reject(new Error('暂存 Edition 对象失败；没有激活任何内容'));
     });
   }
 
   async staged<T>(key: string): Promise<T | null> {
-    const db = await this.database;
+    const db = await this.db();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('staging', 'readonly');
       const request = tx.objectStore('staging').get(key);
       tx.oncomplete = () => resolve((request.result as T) ?? null);
+      tx.onabort = () => reject(new Error('读取暂存对象被中断'));
       tx.onerror = () => reject(new Error('读取暂存对象失败'));
     });
   }
 
   async clearStaging(): Promise<void> {
-    const db = await this.database;
+    const db = await this.db();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('staging', 'readwrite');
       tx.objectStore('staging').clear();
       tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(new Error('清理暂存对象被中断'));
       tx.onerror = () => reject(new Error('清理暂存对象失败'));
     });
   }
 
   async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
     (await this.database).close();
   }
 }
