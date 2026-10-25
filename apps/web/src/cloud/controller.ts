@@ -5,6 +5,7 @@ import type {
 } from '@endless/cloud-contracts';
 import { CloudFailure, type CloudApiPort } from './client.js';
 import { cloudDigest, cloudNamespace, type CloudLocalInstallation } from './local.js';
+import { cloudHash } from './routes.js';
 import { WorkspaceSync, type SyncRepository } from './sync.js';
 import type { CloudSyncState } from './outbox.js';
 
@@ -41,6 +42,8 @@ export interface CloudState {
   receipt: CloudImportReceipt | null;
   installation: WorkspaceInstallation | null;
   sync: CloudSyncView | null;
+  /** 本机已有安装记录的云工作区；只有这些才能直接打开阅读。 */
+  installed: string[];
   busy: boolean;
   phase: string;
   failure: CloudFailureView | null;
@@ -61,6 +64,7 @@ export interface CloudSyncView {
 }
 
 export interface CloudRepository extends SyncRepository {
+  cloudInstallation(): Promise<CloudLocalInstallation | null>;
   installCloudCopy(workspace: Workspace, receipt: CloudImportReceipt, deviceId: string): Promise<{ existing: boolean; installation: CloudLocalInstallation }>;
   acknowledgeCloudInstallation(receipt: WorkspaceInstallation): Promise<void>;
   close(): Promise<void>;
@@ -77,7 +81,7 @@ export interface CloudControllerDeps {
 
 const initial: CloudState = {
   status: 'loading', capabilities: null, me: null, devices: [], workspaces: [],
-  challenge: null, preview: null, receipt: null, installation: null, sync: null,
+  challenge: null, preview: null, receipt: null, installation: null, sync: null, installed: [],
   busy: false, phase: '', failure: null,
 };
 
@@ -139,7 +143,33 @@ export class CloudController {
 
   private async loadAccount(me: MeResponse) {
     const [devices, workspaces] = await Promise.all([this.deps.api.devices(), this.deps.api.workspaces()]);
-    this.patch({ me, devices, workspaces });
+    this.patch({ me, devices, workspaces, installed: await this.installedWorkspaces(me, workspaces) });
+  }
+
+  /**
+   * 本机哪些工作区已经领取过：逐库读安装记录。
+   * 读不到就不列进来——「本机有副本」这句话必须由安装记录支撑，不能凭工作区列表猜。
+   */
+  private async installedWorkspaces(me: MeResponse, workspaces: CloudWorkspace[]): Promise<string[]> {
+    const installed: string[] = [];
+    for (const workspace of workspaces) {
+      const repository = this.deps.openRepository(cloudNamespace(me.context.deploymentId, me.account.id, workspace.id));
+      try {
+        if (await repository.cloudInstallation()) installed.push(workspace.id);
+      } catch {
+        // 安装记录损坏时只是不提供「打开阅读」，不影响云端列表本身
+      } finally {
+        await repository.close().catch(() => {});
+      }
+    }
+    return installed;
+  }
+
+  /** 云副本阅读深链；未登录时没有可靠的部署/账号 ID，不生成链接。 */
+  readingHash(workspaceId: string): string | null {
+    const me = this.state.me;
+    if (!me) return null;
+    return cloudHash({ deploymentId: me.context.deploymentId, accountId: me.account.id, workspaceId });
   }
 
   async refresh(): Promise<boolean> {
@@ -276,6 +306,7 @@ export class CloudController {
       const repository = this.deps.openRepository(cloudNamespace(me.context.deploymentId, me.account.id, workspaceId));
       try {
         const local = await repository.installCloudCopy(workspace, delivered.receipt, me.device.id);
+        this.patch({ installed: Array.from(new Set([...this.state.installed, workspaceId])) });
         const pending = local.installation.acknowledgements.find((entry) => entry.deviceId === me.device.id && !entry.receipt);
         if (!pending) {
           this.patch({
@@ -288,7 +319,7 @@ export class CloudController {
           { importId: delivered.receipt.id, copyDigest: delivered.receipt.copyDigest }, pending.key);
         await repository.acknowledgeCloudInstallation(installation);
         this.patch({ receipt: delivered.receipt, installation });
-        return '云副本已保存到这台设备的独立云库；云库阅读入口属于后续阶段，当前还不能在这里打开';
+        return '云副本已保存到这台设备的独立云库；可以用「打开云端副本」继续阅读';
       } finally {
         await repository.close().catch(() => {});
       }

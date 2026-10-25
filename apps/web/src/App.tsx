@@ -7,19 +7,15 @@ import { SceneRenderer } from './components/scenes.js';
 import { EntryMenu, LibraryPage } from './components/library.js';
 import { EditionPage } from './edition/page.js';
 import { CloudRoute } from './cloud/page.js';
+import { CloudReadBanner } from './cloud/reader.js';
+import { cloudHash, parseRoute, type AppRoute, type Page } from './cloud/routes.js';
 import { downloadSession } from './storage.js';
 import { usePlayer } from './use-player.js';
 import { usePwa } from './use-pwa.js';
 
-type Page = 'home' | 'watch' | 'progress' | 'settings' | 'library' | 'edition' | 'cloud';
 const seriesOf = (episode: Episode) =>
   creativeSeries[(episode.presentation?.series ?? 'duck_detective') as CreativeSeriesId] ?? creativeSeries.duck_detective;
 const isPilotStory = (episode: Episode) => !episode.presentation || episode.presentation.series === 'duck_detective';
-const pageFromHash = (): Page => {
-  const hash = window.location.hash.slice(1);
-  return ['watch', 'progress', 'settings', 'library', 'edition', 'cloud'].includes(hash) ? hash as Page : 'home';
-};
-const navigate = (page: Page) => { window.location.hash = page; };
 const localDay = (date: string | Date) => new Date(date).toLocaleDateString('sv-SE');
 
 function Stat({ icon, value, label }: { icon: IconName; value: number | string; label: string }) {
@@ -100,7 +96,7 @@ function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
       <div className="hero-action"><button className="button button-lime" disabled={busy} onClick={() => onSelect(current)}><Icon name="play" size={17} />{started ? '继续上次的内容' : current.presentation && current.presentation.kind !== 'story' ? '进入内容' : '进入故事'}<Icon name="arrow" size={18} /></button><span className="hero-footnote">3 集试播 · 漫画、聊天与一点小互动</span></div>
     </section>
     <div className="home-note"><span className="note-symbol"><Icon name="leaf" size={20} /></span><p><strong>不用一次读完</strong>，进度会保留在这台设备上，下次接着看。</p><span className="quiet-label">随时可以停下</span></div>
-    <GenerationPanel player={player} onGenerate={onGenerate} />
+    {!player.cloudMode && <GenerationPanel player={player} onGenerate={onGenerate} />}
     <section className="episode-section"><div className="section-heading"><div><span className="eyebrow">EPISODES</span><h2>全部内容</h2></div><span className="section-count">01 — {String(library.episodes.length).padStart(2, '0')}</span></div>
       <div className="episode-grid">{library.episodes.map((episode, index) => {
         const progress = view.episodes[episode.id];
@@ -118,7 +114,7 @@ function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
         </div>;
       })}</div>
     </section>
-    <footer className="page-footer"><span>内容只保存在这台设备上。</span><span>ENDLESS / PILOT 001</span></footer>
+    <footer className="page-footer"><span>{player.cloudMode ? '云端副本：阅读进度会同步到同账号的其他设备。' : '内容只保存在这台设备上。'}</span><span>ENDLESS / PILOT 001</span></footer>
   </>;
 }
 
@@ -144,9 +140,23 @@ function Progress({ view, onDiscover, notes }: {
 }
 
 export default function App() {
-  const player = usePlayer();
+  const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.hash));
+  useEffect(() => {
+    const changed = () => setRoute(parseRoute(window.location.hash));
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
+  // 游客存档与云副本是两个独立的 IndexedDB 库：换库时整棵界面重建，
+  // 不把上一个库的会话、光标或未提交状态带进来。
+  return <StoryApp key={route.shell === 'cloud' ? route.target.namespace : 'local'} route={route} />;
+}
+
+function StoryApp({ route }: { route: AppRoute }) {
+  const player = usePlayer(route.shell === 'cloud'
+    ? { namespace: route.target.namespace, workspaceId: route.target.workspaceId }
+    : undefined);
   const pwa = usePwa();
-  const [page, setPage] = useState<Page>(pageFromHash);
+  const page = route.page;
   const [installOpen, setInstallOpen] = useState(false);
   const [reviewIndex, setReviewIndex] = useState<number | null>(null);
   const heading = useRef<HTMLElement>(null);
@@ -163,11 +173,16 @@ export default function App() {
     : scene.type === 'card' ? !!state.revealed : true));
   const today = session?.events.filter((event) => event.type === 'advance' && !event.skip && localDay(event.at) === localDay(new Date())).length ?? 0;
 
+  /** 页面链接：云副本里所有阅读页都带着三个云端 ID，刷新后仍落在同一个库。 */
+  const hrefFor = (destination: Page) => route.shell === 'cloud'
+    ? destination === 'cloud' ? '#cloud' : `#${cloudHash(route.target, destination)}`
+    : `#${destination}`;
+  const go = (destination: Page) => { window.location.hash = hrefFor(destination); };
+
   useEffect(() => {
-    const changed = () => { setPage(pageFromHash()); setReviewIndex(null); window.scrollTo(0, 0); };
-    window.addEventListener('hashchange', changed);
-    return () => window.removeEventListener('hashchange', changed);
-  }, []);
+    setReviewIndex(null);
+    window.scrollTo(0, 0);
+  }, [page]);
 
   useEffect(() => {
     if (!player.loading) heading.current?.focus({ preventScroll: true });
@@ -193,7 +208,7 @@ export default function App() {
   async function select(selected: Episode) {
     if (await player.dispatch({ type: 'select', episode: selected.id })) {
       setReviewIndex(null);
-      navigate('watch');
+      go('watch');
       window.scrollTo(0, 0);
     }
   }
@@ -208,43 +223,52 @@ export default function App() {
   async function generate() {
     if (await player.generate()) {
       setReviewIndex(null);
-      navigate('watch');
+      go('watch');
       window.scrollTo(0, 0);
     }
   }
 
   if (player.loading) return <div className="boot-screen"><Brand /><span className="loading-line" /><p>正在读取本地存档…</p></div>;
-  if (player.failure || !session || !view) return <div className="boot-screen failure-screen"><Brand /><h1>先等一下，存档还没准备好。</h1><p role="alert">{player.failure || '无法读取本地进度。'}</p><p>不会清除或覆盖你已有的数据。请检查浏览器存储权限后重试。</p><div className="button-row"><button className="button button-dark" onClick={() => location.reload()}>重新读取</button>{player.raw != null && <button className="button button-outline" onClick={() => downloadSession(player.raw)}>下载原始存档</button>}</div></div>;
+  if (player.failure || !session || !view) return <div className="boot-screen failure-screen"><Brand /><h1>先等一下，存档还没准备好。</h1><p role="alert">{player.failure || '无法读取本地进度。'}</p><p>不会清除或覆盖你已有的数据。请检查浏览器存储权限后重试。</p><div className="button-row"><button className="button button-dark" onClick={() => location.reload()}>重新读取</button>{route.shell === 'cloud' && <a className="button button-outline" href="#cloud">回到云端副本</a>}{player.raw != null && <button className="button button-outline" onClick={() => downloadSession(player.raw)}>下载原始存档</button>}</div></div>;
+
+  // 云副本里只保留阅读相关导航：内容管理、Edition 与偏好设置写的是本机存档的字段，
+  // 这一轮还没有元数据命令通道，放进来只会让人以为改动会同步。
+  const navItems = route.shell === 'cloud'
+    ? [['home', 'discover', '故事'], ['progress', 'progress', '阅读记录']] as const
+    : [['home', 'discover', '发现故事'], ['library', 'book', '内容管理'], ['edition', 'spark', 'Edition 专题'], ['cloud', 'cloud', '云端副本'], ['progress', 'progress', '阅读记录'], ['settings', 'settings', '偏好设置']] as const;
 
   return <div className={`app-shell${session.largeText ? ' large-text' : ''}`}>
     <a href="#main-content" className="skip-link" onClick={(event) => { event.preventDefault(); heading.current?.focus(); }}>跳到主要内容</a>
-    <aside className="sidebar"><a href="#home" className="brand-link" aria-label="ENDLESS 首页"><Brand /></a><span className="sidebar-caption">STAY FOR THE STORY.</span><nav aria-label="主要导航">{([
-      ['home', 'discover', '发现故事'], ['library', 'book', '内容管理'], ['edition', 'spark', 'Edition 专题'], ['cloud', 'cloud', '云端副本'], ['progress', 'progress', '阅读记录'], ['settings', 'settings', '偏好设置'],
-    ] as const).map(([destination, icon, label]) => <a key={destination} href={`#${destination}`} className={`nav-link${page === destination || (destination === 'home' && page === 'watch') ? ' active' : ''}`} aria-current={page === destination || (destination === 'home' && page === 'watch') ? 'page' : undefined}><Icon name={icon} /><span>{label}</span>{destination === 'home' && <span className="nav-dot" />}</a>)}</nav>
-      <div className="sidebar-bottom"><div className="sidebar-note"><span className="little-spark"><Icon name="spark" size={24} /></span><p>读一个故事<br />看它怎么结束。</p><span>NO STREAKS. JUST STORIES.</span></div><button className="install-sidebar" onClick={() => setInstallOpen(true)}><Icon name="download" size={18} /><span>{pwa.installed ? '已安装到此设备' : '安装到桌面'}</span><Icon name="arrow" size={16} /></button><div className="local-status"><span className="status-dot" />单设备 · 本地存档</div></div>
+    <aside className="sidebar"><a href={hrefFor('home')} className="brand-link" aria-label="ENDLESS 首页"><Brand /></a><span className="sidebar-caption">STAY FOR THE STORY.</span><nav aria-label="主要导航">{(navItems as readonly (readonly [Page, IconName, string])[]).map(([destination, icon, label]) => <a key={destination} href={hrefFor(destination)} className={`nav-link${page === destination || (destination === 'home' && page === 'watch') ? ' active' : ''}`} aria-current={page === destination || (destination === 'home' && page === 'watch') ? 'page' : undefined}><Icon name={icon} /><span>{label}</span>{destination === 'home' && <span className="nav-dot" />}</a>)}</nav>
+      <div className="sidebar-bottom"><div className="sidebar-note"><span className="little-spark"><Icon name="spark" size={24} /></span><p>读一个故事<br />看它怎么结束。</p><span>NO STREAKS. JUST STORIES.</span></div><button className="install-sidebar" onClick={() => setInstallOpen(true)}><Icon name="download" size={18} /><span>{pwa.installed ? '已安装到此设备' : '安装到桌面'}</span><Icon name="arrow" size={16} /></button>
+        {route.shell === 'cloud'
+          ? <a className="local-status cloud-exit" href="#cloud"><span className="status-dot" />退出云端阅读</a>
+          : <div className="local-status"><span className="status-dot" />单设备 · 本地存档</div>}
+      </div>
     </aside>
-    <div className="workspace"><header className="topbar"><a href="#home" className="mobile-brand" aria-label="ENDLESS 首页"><Brand small /></a><span className="topbar-greeting">内容都在本地，不需要登录。</span><div className="topbar-right"><span className="connection-state"><Icon name={pwa.offline ? 'cloud' : 'leaf'} size={15} />{pwa.offline ? '正在离线体验' : '已连接'}</span><span className="topbar-divider" /><span className="user-avatar" aria-label="本地用户">你</span></div></header>
+    <div className="workspace"><header className="topbar"><a href={hrefFor('home')} className="mobile-brand" aria-label="ENDLESS 首页"><Brand small /></a><span className="topbar-greeting">{route.shell === 'cloud' ? '正在读云端副本：只同步阅读事件。' : '内容都在本地，不需要登录。'}</span><div className="topbar-right"><span className="connection-state"><Icon name={pwa.offline ? 'cloud' : 'leaf'} size={15} />{pwa.offline ? '正在离线体验' : '已连接'}</span><span className="topbar-divider" /><span className="user-avatar" aria-label="本地用户">你</span></div></header>
       <main id="main-content" className="main-content" ref={heading} tabIndex={-1}>
         {player.notice && <div className="notice notice-error" role="alert"><Icon name="info" size={18} /><span>{player.notice}</span></div>}
+        {route.shell === 'cloud' && <CloudReadBanner view={player.cloudView} syncing={player.cloudSyncing} onSync={() => void player.syncNow()} exitHref="#cloud" />}
         {pwa.updateAvailable && <div className="notice"><Icon name="spark" size={18} /><span>有新版本可用。当前进度已保存后再更新。</span><button className="text-button" disabled={player.saving} onClick={() => void pwa.update()?.catch(() => {})}>更新应用<Icon name="arrow" size={15} /></button></div>}
         {page === 'home' && <Home view={view} current={episode} busy={player.busy} onSelect={(selected) => void select(selected)} library={library} player={player} onGenerate={() => void generate()} />}
         {page === 'library' && <LibraryPage player={player} />}
         {page === 'edition' && <EditionPage />}
         {page === 'cloud' && <CloudRoute backup={() => player.backup()} />}
-        {page === 'progress' && <Progress view={view} onDiscover={() => navigate('home')} notes={player.learningNotes} />}
+        {page === 'progress' && <Progress view={view} onDiscover={() => go('home')} notes={player.learningNotes} />}
         {page === 'settings' && <>
           <section className="page-heading"><div><span className="eyebrow">SETTINGS</span><h1>偏好设置<span className="heading-dot">。</span></h1><p>调整显示方式和本地数据。</p></div></section>
           <section className="surface settings-surface"><div className="section-heading"><h2>阅读与设备</h2><Icon name="settings" /></div><div className="setting-row"><div><strong>更大的文字</strong><p>让对白和选项再清楚一点。</p></div><button role="switch" aria-checked={session.largeText} aria-label="更大的文字" className={`toggle${session.largeText ? ' on' : ''}`} disabled={player.saving} onClick={() => void player.dispatch({ type: 'text', large: !session.largeText })}><span /></button></div>
             <div className="setting-row"><div><strong>离线内容</strong><p>{pwa.workerError ? '离线缓存注册失败，请检查浏览器设置后刷新。' : pwa.ready ? '试播内容和界面已缓存，断网也可以继续。' : import.meta.env.DEV ? '开发模式不启用离线缓存，请使用生产构建预览验证。' : '正在准备缓存，请保持联网。'}</p></div><span className={`subtle-badge${pwa.ready ? ' badge-ready' : ''}`}>{pwa.ready ? '已就绪' : pwa.workerError ? '待重试' : '准备中'}</span></div>
             <div className="setting-row"><div><strong>独立应用窗口</strong><p>固定到桌面或任务栏，下次直接继续。</p></div><button className="text-button" onClick={() => setInstallOpen(true)}>{pwa.installed ? '查看安装说明' : '安装说明'}<Icon name="arrow" size={16} /></button></div>
-            <div className="setting-row"><div><strong>云端副本</strong><p>手动把当前存档复制到云端，或在另一台设备领取同一份副本。</p></div><button className="text-button" onClick={() => navigate('cloud')}>打开云端副本<Icon name="arrow" size={16} /></button></div>
+            <div className="setting-row"><div><strong>云端副本</strong><p>手动把当前存档复制到云端，或在另一台设备领取同一份副本。</p></div><button className="text-button" onClick={() => go('cloud')}>打开云端副本<Icon name="arrow" size={16} /></button></div>
           </section>
           <section className="surface settings-surface"><div className="section-heading"><h2>你的数据，由你保管</h2><Icon name="desktop" /></div><p className="muted-copy">进度和已生成内容保存在当前浏览器。点击 AI 生成时，会将剧情与进度记录发送到本机服务，所需上下文会发送给模型供应商；服务端缓存生成任务与结果。本机模式没有账号，也不会自动跨设备同步；「云端副本」页可以手动把存档复制到云端，再由另一台设备领取（增量同步尚未实现）。清理站点数据会移除本地存档，可以先下载备份。</p><button className="button button-outline" onClick={() => { const b = player.backup(); if (b) downloadSession(b); }}><Icon name="download" size={17} />导出完整备份</button><p className="section-footnote">备份包含 AI 内容原件、修订、分支事件与归档；在「内容管理」页可导入恢复。</p></section>
           <GenerationPanel player={player} onGenerate={() => void generate()} />
           <div className="about-pilot"><Brand small /><span>LOCAL AI MVP · 本机 AI 续写版</span><p>三个预置故事作为起点。后续由 AI 续写，校验后保存；生成新内容需要联网并运行本机服务。</p></div>
         </>}
         {page === 'watch' && <>
-          <div className="watch-heading"><button className="text-button back-button" onClick={() => navigate('home')}><Icon name="back" size={17} />返回频道</button><span>{reviewIndex !== null ? '回看模式 · 不计入记录' : episode.presentation ? `${episode.presentation.series === 'duck_detective' ? 'DUCK DETECTIVE / ' : ''}${episode.presentation.label}` : 'DUCK DETECTIVE / 鸭侦探事务所'}</span><span className="save-status" role="status">{player.saving ? '正在保存…' : '本地自动保存'}<Icon name={player.saving ? 'clock' : 'check'} size={14} /></span></div>
+          <div className="watch-heading"><button className="text-button back-button" onClick={() => go('home')}><Icon name="back" size={17} />返回频道</button><span>{reviewIndex !== null ? '回看模式 · 不计入记录' : episode.presentation ? `${episode.presentation.series === 'duck_detective' ? 'DUCK DETECTIVE / ' : ''}${episode.presentation.label}` : 'DUCK DETECTIVE / 鸭侦探事务所'}</span><span className="save-status" role="status">{player.saving ? '正在保存…' : player.cloudMode ? (player.cloudSyncing ? '正在同步…' : player.cloudView?.pending ? `待同步 ${player.cloudView.pending} 条` : '已保存到云副本') : '本地自动保存'}<Icon name={player.saving || player.cloudSyncing ? 'clock' : 'check'} size={14} /></span></div>
           <div className="watch-title"><span className="eyebrow">EPISODE {String(library.episodes.indexOf(episode) + 1).padStart(2, '0')}</span><h1>{episode.title}</h1><span lang="en">{episode.subtitle}</span></div>
           <div className="watch-grid"><div className="watch-main">
             {scene ? <section className="scene-card" key={`${episode.id}-${scene.id}-${reviewIndex !== null}`}>
@@ -259,18 +283,21 @@ export default function App() {
                 <div className="completion-stats"><Stat icon="comic" value={Object.values(view.episodes[episode.id]?.scenes ?? {}).filter((s) => s.completed).length} label="读完的片段" /><Stat icon="chat" value={Object.values(view.episodes[episode.id]?.scenes ?? {}).filter((s) => s.answer).length} label="互动尝试" /></div>
                 <div className="completion-buttons">{library.episodes[library.episodes.indexOf(episode) + 1]
                   ? <button className="button button-dark" disabled={player.busy} onClick={() => void select(library.episodes[library.episodes.indexOf(episode) + 1]!)}>去看下一集<Icon name="arrow" size={17} /></button>
-                  : <button className="button button-dark" onClick={() => navigate('progress')}>查看阅读记录<Icon name="arrow" size={17} /></button>}
+                  : <button className="button button-dark" onClick={() => go('progress')}>查看阅读记录<Icon name="arrow" size={17} /></button>}
                   <button className="button button-outline" onClick={() => setReviewIndex(0)}><Icon name="repeat" size={16} />回看本集</button></div>
                 <span className="completion-note">已保存的内容可以随时回看；AI 新内容需要联网生成。</span>
               </section>
-              {(player.readyForGeneration || player.ticket) && <GenerationPanel player={player} onGenerate={() => void generate()} />}
+              {!player.cloudMode && (player.readyForGeneration || player.ticket) && <GenerationPanel player={player} onGenerate={() => void generate()} />}
             </>}
-            <p className="watch-bottom-note"><Icon name="leaf" size={15} />进度自动保存在这台设备上。</p>
+            <p className="watch-bottom-note"><Icon name="leaf" size={15} />{player.cloudMode ? '每次继续都会排队一条同步事件；断网时先存在本机。' : '进度自动保存在这台设备上。'}</p>
           </div><aside className="story-rail"><div className="rail-channel"><div className="rail-characters">{seriesOf(episode).cast.slice(0, 3).map((kind) => <Character key={kind} kind={kind} />)}</div><span className="eyebrow">YOUR STORY CHANNEL</span><h3>{isPilotStory(episode) ? <>认真办案，找出线索。</> : <>{seriesOf(episode).label}<br />慢慢读内容。</>}</h3><p>{isPilotStory(episode) ? '跟着角色、看看线索，再给出你的回应。' : '跟着内容读，再给出你的回应。'}</p><span className="subtle-badge">日常难度 · A1–A2</span></div><div className="rail-note"><span className="eyebrow">TODAY</span><div className="rail-today"><strong>{today}</strong><span>段内容，已读完</span></div><p>进度会自动保存在此设备。随时停下，下次再继续。</p></div><div className="rail-tip"><Icon name="book" size={18} /><p>需要时可以看提示。看过提示的作答只记为练习，不计入复习。</p></div></aside></div>
         </>}
       </main>
     </div>
-    <nav className="mobile-nav" aria-label="移动导航">{([['home', 'discover', '发现'], ['library', 'book', '管理'], ['edition', 'spark', 'Edition'], ['progress', 'progress', '足迹'], ['settings', 'settings', '设置']] as const).map(([destination, icon, label]) => <a key={destination} href={`#${destination}`} className={page === destination || (destination === 'home' && page === 'watch') ? 'active' : ''} aria-current={page === destination || (destination === 'home' && page === 'watch') ? 'page' : undefined}><Icon name={icon} size={21} /><span>{label}</span></a>)}</nav>
+    <nav className="mobile-nav" aria-label="移动导航">{(route.shell === 'cloud'
+      ? [['home', 'discover', '故事'], ['progress', 'progress', '足迹']] as const
+      : [['home', 'discover', '发现'], ['library', 'book', '管理'], ['edition', 'spark', 'Edition'], ['progress', 'progress', '足迹'], ['settings', 'settings', '设置']] as const)
+      .map(([destination, icon, label]) => <a key={destination} href={hrefFor(destination)} className={page === destination || (destination === 'home' && page === 'watch') ? 'active' : ''} aria-current={page === destination || (destination === 'home' && page === 'watch') ? 'page' : undefined}><Icon name={icon} size={21} /><span>{label}</span></a>)}</nav>
     {installOpen && <InstallDialog pwa={pwa} onClose={() => setInstallOpen(false)} />}
   </div>;
 }

@@ -659,3 +659,9 @@ button:disabled { opacity: .55; }
 .cloud-list li > span:first-child { font-weight: 600; }
 .cloud-list li > small { color: #7a8570; }
 .cloud-list li > .text-button { margin-left: auto; }
+
+/* ---------- 云端副本阅读 ---------- */
+.cloud-reader { margin-bottom: 22px; border-color: #d8e0cf; }
+.cloud-reader .section-heading { margin-bottom: 0; }
+.cloud-reader .button-row { margin-top: 16px; }
+.cloud-exit { text-decoration: none; }

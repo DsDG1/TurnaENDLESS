@@ -43,14 +43,14 @@ const preview: CloudImportPreview = {
 
 const state = (patch: Partial<CloudState> = {}): CloudState => ({
   status: 'signed-out', capabilities, me: null, devices: [], workspaces: [],
-  challenge: null, preview: null, receipt: null, installation: null, sync: null,
+  challenge: null, preview: null, receipt: null, installation: null, sync: null, installed: [],
   busy: false, phase: '', failure: null,
   ...patch,
 });
 
 const actions: CloudActions = {
   refresh: vi.fn(), login: vi.fn(), verify: vi.fn(), logout: vi.fn(),
-  preview: vi.fn(), confirm: vi.fn(), claim: vi.fn(),
+  preview: vi.fn(), confirm: vi.fn(), claim: vi.fn(), open: vi.fn(),
   openSync: vi.fn(), sync: vi.fn(), pauseSync: vi.fn(), discardConflict: vi.fn(),
 };
 
@@ -88,15 +88,21 @@ describe('云端页面状态', () => {
     expect(html).not.toContain('确认导入（激活云端副本）');
   });
 
-  it('领取后说明云库阅读入口尚未接线，并交代增量同步未实现', () => {
-    const html = render({ status: 'signed-in', me, workspaces: [{
-      id: workspaceId, sourceLocalId: 'local-1', contract: 'endless-workspace/1', cloudVersion: '1', status: 'active',
-      role: 'owner', createdAt: '2026-10-25T00:00:00.000Z',
-    }] });
-    expect(html).toContain('领取到这台设备');
-    expect(html).toContain('云库阅读入口尚未接线');
-    expect(html).toContain('云端生成、额度与付费都还没实现');
-    expect(html).not.toContain('可以在这里打开阅读');
+  it('未领取时只有「领取」；领取后出现阅读入口，并说明元数据还没同步', () => {
+    const workspaceList = [{
+      id: workspaceId, sourceLocalId: 'local-1', contract: 'endless-workspace/1' as const, cloudVersion: '1',
+      status: 'active' as const, role: 'owner' as const, createdAt: '2026-10-25T00:00:00.000Z',
+    }];
+    const unclaimed = render({ status: 'signed-in', me, workspaces: workspaceList });
+    expect(unclaimed).toContain('领取到这台设备');
+    // 本机没有安装记录时不能出现阅读入口的按钮，否则点进去只有一个空壳
+    // （脚注里说明「领取后可用」是文案，不算入口）
+    expect(unclaimed).not.toContain('>打开云端副本</button>');
+
+    const claimed = render({ status: 'signed-in', me, workspaces: workspaceList, installed: [workspaceId] });
+    expect(claimed).toContain('>打开云端副本</button>');
+    expect(claimed).toContain('标题、标签、回收站等元数据还没有同步通道');
+    expect(claimed).toContain('云端生成、额度与付费都还没实现');
   });
 
   it('故障显示稳定码与关联 ID，并给出可执行下一步', () => {

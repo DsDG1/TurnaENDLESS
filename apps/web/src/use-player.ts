@@ -12,8 +12,31 @@ import { content } from './content/catalog.js';
 import { WorkspaceRepository } from './storage.js';
 import { SessionCommitter } from './session-writer.js';
 import { apiStatus, generateEpisode } from './api.js';
+import { CloudApi } from './cloud/client.js';
+import { cloudDigest } from './cloud/local.js';
+import { WorkspaceSync } from './cloud/sync.js';
 
-export function usePlayer() {
+/**
+ * 打开云副本时的最小参数：命名空间已经由三个云端 ID 推出，这里只认「哪个库、哪个工作区」。
+ * 不传表示本机游客存档——行为与之前完全一致。
+ */
+export interface CloudPlayerOptions {
+  namespace: string;
+  workspaceId: string;
+}
+
+export interface CloudReadView {
+  pending: number;
+  paused: boolean;
+  lastSyncedAt: string | null;
+  cloudVersion: string | null;
+  conflicts: number;
+  needsRebase: number;
+  stopped: 'conflict' | 'cursor' | 'replay' | 'ticket' | 'prefix' | null;
+  note: string;
+}
+
+export function usePlayer(cloud?: CloudPlayerOptions) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState('');
@@ -31,14 +54,47 @@ export function usePlayer() {
   const pending = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const currentTicket = useRef<GenerationTicket | null>(null);
+  const [cloudView, setCloudView] = useState<CloudReadView | null>(null);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const syncEngine = useRef<WorkspaceSync | null>(null);
+  const syncBusy = useRef(false);
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let active = true;
-    const storage = new WorkspaceRepository();
+    const storage = new WorkspaceRepository(globalThis.indexedDB, cloud?.namespace);
     repository.current = storage;
     writer.current = new SessionCommitter(storage, -1);
     void storage.load().then(async (stored) => {
       if (!active) return;
+      if (cloud) {
+        // 云副本必须同时有存档和安装记录：只有其一都说明这个库不该被当作可读副本
+        const installation = await storage.cloudInstallation().catch(() => null);
+        if (!active) return;
+        if (!stored || !installation) {
+          setFailure('这台设备还没有这份云副本。请先在「云端副本」页领取，再打开阅读；游客存档不受影响。');
+          return;
+        }
+        if (installation.receipt.workspaceId !== cloud.workspaceId) {
+          setFailure('本机安装记录与要打开的工作区不一致，已停止打开；本机数据未被修改。');
+          return;
+        }
+        const deviceId = installation.acknowledgements[0]?.deviceId;
+        if (!deviceId) {
+          setFailure('云副本缺少本机设备记录，暂时无法同步；本机数据未被修改。');
+          return;
+        }
+        writer.current = new SessionCommitter(storage, stored.identity.repositoryRevision);
+        current.current = stored;
+        setWorkspace(stored);
+        syncEngine.current = new WorkspaceSync({
+          repo: storage, api: new CloudApi(), content, workspaceId: cloud.workspaceId, deviceId,
+          digest: (value) => cloudDigest(value),
+          newBatchId: () => globalThis.crypto.randomUUID(),
+        });
+        void syncNow();
+        return;
+      }
       writer.current = new SessionCommitter(storage, stored?.identity.repositoryRevision ?? -1);
       const workspace = stored ?? createWorkspace(content);
       if (!stored) {
@@ -70,6 +126,7 @@ export function usePlayer() {
     return () => {
       active = false;
       controller.current?.abort();
+      if (syncTimer.current) clearTimeout(syncTimer.current);
       void storage.close().catch(() => {});
     };
   }, []);
@@ -108,8 +165,64 @@ export function usePlayer() {
     }
   }
 
+  /**
+   * 云副本的同步往返：先推送本机事件，再拉取云端变更。
+   *
+   * 三条纪律：
+   * 1. 有事件正在提交（pending）或有进行中生成任务时不并发跑同步，
+   *    否则会用服务端刚读到的旧版本覆盖内存里的新状态；
+   * 2. 同步结束后**从仓库重新读取**，不把驱动层的内存副本当成界面状态；
+   * 3. 失败只更新可见状态，不隐藏本机存档，也不把失败写成「已同步」。
+   */
+  async function syncNow(): Promise<void> {
+    const engine = syncEngine.current;
+    const repo = repository.current;
+    if (!engine || !repo || syncBusy.current || pending.current || currentTicket.current) return;
+    syncBusy.current = true;
+    setCloudSyncing(true);
+    try {
+      const report = await engine.run();
+      const stored = await repo.load();
+      if (stored) {
+        current.current = stored;
+        setWorkspace(stored);
+        writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision);
+      }
+      const status = await engine.status();
+      setCloudView({
+        pending: status.pending, paused: status.state.paused, lastSyncedAt: status.state.lastSyncedAt,
+        cloudVersion: status.state.cloudVersion, conflicts: status.state.conflicts.length,
+        needsRebase: status.state.needsRebase.length, stopped: report.stopped, note: report.note,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '云端同步失败；本机进度已保留';
+      setCloudView((held) => held
+        ? { ...held, stopped: null, note: message }
+        : { pending: 0, paused: false, lastSyncedAt: null, cloudVersion: null, conflicts: 0, needsRebase: 0, stopped: null, note: message });
+    } finally {
+      syncBusy.current = false;
+      setCloudSyncing(false);
+    }
+  }
+
+  /** 每次本地提交后延迟同步：连续点「继续」只发一批，而不是每个片段一趟往返。 */
+  function scheduleSync() {
+    if (!syncEngine.current) return;
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
+      syncTimer.current = null;
+      void syncNow();
+    }, 700);
+  }
+
+  /** 同步正在写同一个仓库时先让它落地：两边都写会撞版本校验，等一会儿比重试更容易解释。 */
+  async function awaitSyncIdle(): Promise<void> {
+    for (let tick = 0; tick < 100 && syncBusy.current; tick++) await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+
   /** 统一提交：内存命令 → 递增版本 → 事务提交 → 更新状态；失败时保留原状态。 */
   async function commit(next: Workspace, options: { closingTicketId?: string } = {}): Promise<boolean> {
+    await awaitSyncIdle();
     const committer = writer.current;
     if (!committer) return false;
     const result = await committer.commit(next, options);
@@ -119,6 +232,7 @@ export function usePlayer() {
     }
     current.current = result.workspace;
     setWorkspace(result.workspace);
+    scheduleSync();
     return true;
   }
 
@@ -347,6 +461,7 @@ export function usePlayer() {
     editDisplay, trash, restore, waive, purge, purgeInfo, previewEdit, adoptEdit,
     archive, unarchive, suggestions, backup, previewImport, importBackup,
     busy: saving || generating || !!currentTicket.current,
+    cloudMode: !!cloud, cloudView, cloudSyncing, syncNow,
     raw,
   };
 }

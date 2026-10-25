@@ -245,7 +245,7 @@ describe('第二设备领取', () => {
     expect(acknowledged?.key).toBe(h.calls.install.mock.calls[0]![2]);
     expect(acknowledged?.receipt?.workspaceId).toBe(workspaceId);
     expect(h.controller.getState().installation?.deviceId).toBe(device);
-    expect(h.controller.getState().phase).toContain('还不能在这里打开');
+    expect(h.controller.getState().phase).toContain('打开云端副本');
     await Promise.all([guest.close(), cloud.close()]);
   });
 
@@ -293,5 +293,39 @@ describe('副本可回放性', () => {
     const parsed = parseBackup(buildBackup(copy));
     expect(parsed.backup.workspace.data.entries.map((entry) => entry.id)).toEqual(copy.entries.map((entry) => entry.id));
     expect(copy.identity.repositoryRevision).toBe(0);
+  });
+});
+
+describe('云副本阅读入口', () => {
+  const list = [{
+    id: workspaceId, sourceLocalId: source.identity.workspaceId, contract: 'endless-workspace/1',
+    cloudVersion: '0', status: 'active' as const, role: 'owner' as const, createdAt: cloudTestTime,
+  }];
+
+  it('未领取时列表存在但不可打开：只说「可以领取」，不凭空给阅读入口', async () => {
+    const h = harness({ signedIn: true });
+    (h.api.workspaces as ReturnType<typeof vi.fn>).mockResolvedValue(list);
+    await h.controller.refresh();
+    expect(h.controller.getState().workspaces).toHaveLength(1);
+    expect(h.controller.getState().installed).toEqual([]);
+    expect(h.controller.readingHash(workspaceId)).toBe(`cloud-read/${deployment}/${account}/${workspaceId}`);
+  });
+
+  it('领取后刷新能看到本机副本；深链带三个云端 ID，刷新后仍指向同一个库', async () => {
+    const h = harness({ signedIn: true });
+    (h.api.workspaces as ReturnType<typeof vi.fn>).mockResolvedValue(list);
+    await h.controller.refresh();
+    expect(await h.controller.claim(workspaceId)).toBe(true);
+    expect(h.controller.getState().installed).toContain(workspaceId);
+    await h.controller.refresh();
+    expect(h.controller.getState().installed).toContain(workspaceId);
+    expect(h.controller.readingHash(workspaceId)).toBe(`cloud-read/${deployment}/${account}/${workspaceId}`);
+  });
+
+  it('未登录不生成深链：没有可靠的部署与账号 ID 就不猜', async () => {
+    const h = harness();
+    await h.controller.refresh();
+    expect(h.controller.getState().me).toBeNull();
+    expect(h.controller.readingHash(workspaceId)).toBeNull();
   });
 });

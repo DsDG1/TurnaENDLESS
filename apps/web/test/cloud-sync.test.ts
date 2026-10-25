@@ -300,6 +300,9 @@ describe('同步驱动：双设备往返', () => {
     expect(pulledB.applied).toBe(1);
     expect(events((await deviceB.load())!)).toEqual(events(playedA));
     expect(await deviceB.pendingOutbox()).toEqual([]);
+    // 阅读器要能直接打开应用后的存档：不只是字节一致，还要能投影成界面状态
+    const reopened = bridge(content, (await deviceB.load())!);
+    expect(projectSession(reopened.session, reopened.library).episodes[reopened.session.current]!.cursor).toBeGreaterThan(0);
 
     const playedB = await play(deviceB, 1, 1, 100);
     api.pusher = 'device-b';

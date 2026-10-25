@@ -19,6 +19,7 @@ export interface CloudActions {
   preview(bytes: ArrayBuffer): void;
   confirm(): void;
   claim(workspaceId: string): void;
+  open(workspaceId: string): void;
   openSync(workspaceId: string): void;
   sync(): void;
   pauseSync(paused: boolean): void;
@@ -237,9 +238,11 @@ export function CloudPage({ state, actions, backup }: {
               onClick={() => actions.claim(workspace.id)}>领取到这台设备</button>}
             {workspace.status === 'active' && <button className="text-button" disabled={state.busy || !state.capabilities?.features.sync}
               onClick={() => actions.openSync(workspace.id)}>同步状态</button>}
+            {workspace.status === 'active' && state.installed.includes(workspace.id)
+              && <button className="text-button" disabled={state.busy} onClick={() => actions.open(workspace.id)}>打开云端副本</button>}
           </li>)}</ul>}
         {state.installation && <p className="generation-phase" role="status">安装回执已保存：{new Date(state.installation.installedAt).toLocaleString('zh-CN')} · 设备 {short(state.installation.deviceId)}</p>}
-        <p className="section-footnote">领取会把同一份副本写进这台设备的独立云库，不覆盖游客存档，也不覆盖本机后续进度。云库阅读入口尚未接线。</p>
+        <p className="section-footnote">领取会把同一份副本写进这台设备的独立云库，不覆盖游客存档，也不覆盖本机后续进度。领取后可用「打开云端副本」继续阅读，读到的进度会走增量同步；标题、标签、回收站等元数据还没有同步通道。</p>
       </section>
 
       {state.sync && <SyncCard sync={state.sync} enabled={!!state.capabilities?.features.sync} busy={state.busy} actions={actions} />}
@@ -258,6 +261,10 @@ export function CloudRoute({ backup }: { backup(): unknown | null }) {
     preview: (bytes) => void controller.previewImport(bytes),
     confirm: () => void controller.confirmImport(),
     claim: (workspaceId) => void controller.claim(workspaceId),
+    open: (workspaceId) => {
+      const hash = controller.readingHash(workspaceId);
+      if (hash) window.location.hash = hash;
+    },
     openSync: (workspaceId) => void controller.openSync(workspaceId),
     sync: () => void controller.runSync(),
     pauseSync: (paused) => void controller.setSyncPaused(paused),
