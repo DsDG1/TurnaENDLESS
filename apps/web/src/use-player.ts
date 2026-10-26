@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { episodeCompletion, getScenes, projectSession, type PlayerCommand, type PlayerView } from '@endless/player';
 import {
   adoptRevision, applyPlayerCommand, assertNoSecrets, attachVolume, bridge, buildBackup, buildGenerationContext,
+  openCloudCatalog,
   buildVolume, cancelTicket, commitTicketResult, createWorkspace, detachVolume, markTicketFailed,
   markTicketSubmitted, parseBackup, previewRevision, purgeContent, purgePreview, reserveTicket,
   restoreContent, suggestVolumes, switchBranch, trashContent, updateDisplay, waiveObligation,
@@ -147,7 +148,19 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     };
   }, []);
 
-  const runtime = useMemo(() => workspace ? bridge(content, workspace) : null, [workspace]);
+  const cloudCatalog = useMemo(
+    () => cloud && workspace ? openCloudCatalog(content, workspace) : null,
+    [cloud?.namespace, workspace],
+  );
+  const runtime = useMemo(() => {
+    if (!workspace) return null;
+    if (!cloudCatalog) return bridge(content, workspace);
+    const active = workspace.branches.find((branch) => branch.id === workspace.activeBranchId);
+    if (!active) return null;
+    // 只编译事件和当前集碰到的内容。更晚、尚未打开的生成集留在目录里。
+    cloudCatalog.prepare(active.session);
+    return cloudCatalog.runtime(workspace);
+  }, [workspace, cloudCatalog]);
   const session = runtime?.session ?? null;
   const library = runtime?.library ?? content.pilot;
   const view: PlayerView | null = useMemo(
@@ -242,7 +255,12 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     setSaving(true);
     setNotice('');
     try {
-      const next = applyPlayerCommand(content, current.current, command);
+      const active = current.current.branches.find((branch) => branch.id === current.current?.activeBranchId);
+      if (cloudCatalog && active) cloudCatalog.prepare(active.session, command);
+      const next = applyPlayerCommand(
+        content, current.current, command, new Date(),
+        cloudCatalog ? cloudCatalog.runtime(current.current) : undefined,
+      );
       if (next === current.current) return true;
       return await commit(next);
     } catch (error) {
@@ -437,8 +455,9 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
   };
 
   const obligations = workspace?.obligations.filter((o) => !o.waivedAt) ?? [];
-  const readyForGeneration = !!view && !obligations.length &&
-    library.episodes.every((episode) => episodeCompletion(view.episodes[episode.id], getScenes(episode).length).read);
+  const readyForGeneration = !!view && !obligations.length && (cloudCatalog
+    ? cloudCatalog.entries.every((entry) => episodeCompletion(view.episodes[entry.episodeId], entry.sceneCount).read)
+    : library.episodes.every((episode) => episodeCompletion(view.episodes[episode.id], getScenes(episode).length).read));
   const canUseModel = !!api && (api.configured || (api.acceptsUserKey && !!apiKey.trim()));
   const learningNotes = useMemo(() => session ? content.learningNotes(session, library) : [], [session, library]);
   const nextWords = useMemo(() => {
@@ -461,7 +480,7 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     editDisplay, trash, restore, waive, purge, purgeInfo, previewEdit, adoptEdit,
     archive, unarchive, suggestions, backup, previewImport, importBackup,
     busy: saving || generating || !!currentTicket.current,
-    cloudMode: !!cloud, cloudView, cloudSyncing, syncNow,
+    cloudMode: !!cloud, cloudCatalog: cloudCatalog?.entries ?? null, cloudView, cloudSyncing, syncNow,
     raw,
   };
 }

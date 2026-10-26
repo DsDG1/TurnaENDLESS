@@ -169,10 +169,12 @@ function basis(workspace: Workspace, branch: Branch, plannedAt: string): Generat
 // ---------- 玩法命令 ----------
 
 /** 答题/推进/揭示/切换/字号。给新事件补上内容与修订引用，避免正文变化后误读旧选项。 */
-export function applyPlayerCommand(content: Content, workspace: Workspace, command: PlayerCommand, at = new Date()): Workspace {
+export function applyPlayerCommand(
+  content: Content, workspace: Workspace, command: PlayerCommand, at = new Date(), runtime = bridge(content, workspace),
+): Workspace {
   if (openTicket(workspace)) throw new Error('生成任务进行中，请先完成或取消该任务');
   const branch = activeBranch(workspace);
-  const runtime = bridge(content, workspace, branch.id);
+  if (runtime.branch.id !== branch.id) throw new Error('运行时分支与当前分支不一致');
   const nextSession = transition(branch.session, command, runtime.library, at.toISOString());
   if (nextSession === branch.session) return workspace;
   const byEpisode = new Map(branch.adopted.map((adopted) => {

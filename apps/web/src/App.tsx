@@ -82,10 +82,10 @@ function GenerationPanel({ player, onGenerate }: { player: ReturnType<typeof use
 }
 
 function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
-  view: PlayerView; current: Episode; busy: boolean; onSelect(episode: Episode): void;
+  view: PlayerView; current: Episode; busy: boolean; onSelect(episode: { id: string }): void;
   library: Library; player: ReturnType<typeof usePlayer>; onGenerate(): void;
 }) {
-  const entryOf = (episode: Episode) => player.runtime?.owners.get(episode.id)?.entry;
+  const entryOf = (episodeId: string) => player.runtime?.owners.get(episodeId)?.entry;
   const cursor = view.episodes[current.id]?.cursor ?? 0;
   const started = cursor > 0 || !!view.episodes[current.id]?.scenes.s1;
   return <>
@@ -97,22 +97,37 @@ function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
     </section>
     <div className="home-note"><span className="note-symbol"><Icon name="leaf" size={20} /></span><p><strong>不用一次读完</strong>，进度会保留在这台设备上，下次接着看。</p><span className="quiet-label">随时可以停下</span></div>
     {!player.cloudMode && <GenerationPanel player={player} onGenerate={onGenerate} />}
-    <section className="episode-section"><div className="section-heading"><div><span className="eyebrow">EPISODES</span><h2>全部内容</h2></div><span className="section-count">01 — {String(library.episodes.length).padStart(2, '0')}</span></div>
-      <div className="episode-grid">{library.episodes.map((episode, index) => {
-        const progress = view.episodes[episode.id];
-        const total = getScenes(episode).length;
-        // 跳过也会推进 cursor：只有真正读完（无跳过）才算「已看完」
-        const completed = episodeCompletion(progress, total).read;
-        const underway = (progress?.cursor ?? 0) > 0;
-        const e = entryOf(episode);
-        return <div className={`episode-card episode-card-${index}`} key={episode.id}>
-          <button className="episode-open" onClick={() => onSelect(episode)} disabled={busy} aria-label={`${completed ? '查看' : '播放'}第 ${index + 1} 集：${episode.title}`}>
-            <div className="episode-art">{isPilotStory(episode) ? <StoryArt variant={index % 3} /> : <SeriesArt cast={seriesOf(episode).cast} backdrop={seriesOf(episode).backgrounds[0]} />}<span className="episode-number">{index < 3 ? 'EP.' : 'AI'} {String(index + 1).padStart(2, '0')}</span><span className="episode-play"><Icon name={completed ? 'check' : 'play'} size={16} /></span></div>
-            <div className="episode-copy"><span className="episode-subtitle" lang="en">{e?.display.subtitle || episode.subtitle}</span><h3>{e?.display.title || episode.title}</h3><p>{e?.display.description || episode.description}</p><div className="episode-meta"><span>{episode.presentation ? `${episode.presentation.label} · ` : ''}{completed ? '已看完 · 可以回看' : underway ? `继续 · ${progress?.cursor}/${total} 段` : `${total} 段${episode.presentation?.kind === 'story' || !episode.presentation ? '故事' : '内容'} · A1–A2`}</span><Icon name="arrow" size={17} />{e ? <span className="entry-menu-gap" aria-hidden="true" /> : null}</div></div>
-          </button>
-          {e ? <EntryMenu entry={e} player={player} /> : null}
-        </div>;
-      })}</div>
+    <section className="episode-section"><div className="section-heading"><div><span className="eyebrow">EPISODES</span><h2>全部内容</h2></div><span className="section-count">01 — {String((player.cloudCatalog ?? library.episodes).length).padStart(2, '0')}</span></div>
+      <div className="episode-grid">{player.cloudCatalog
+        ? player.cloudCatalog.map((card, index) => {
+          const progress = view.episodes[card.episodeId];
+          const total = card.sceneCount;
+          const completed = episodeCompletion(progress, total).read;
+          const underway = (progress?.cursor ?? 0) > 0;
+          const series = creativeSeries[card.series as CreativeSeriesId] ?? creativeSeries.duck_detective;
+          const e = entryOf(card.episodeId);
+          return <div className={`episode-card episode-card-${index}`} key={card.episodeId}>
+            <button className="episode-open" onClick={() => onSelect({ id: card.episodeId })} disabled={busy} aria-label={`${completed ? '查看' : '播放'}第 ${index + 1} 集：${card.title}`}>
+              <div className="episode-art">{card.bundled || card.series === 'duck_detective' ? <StoryArt variant={index % 3} /> : <SeriesArt cast={series.cast} backdrop={series.backgrounds[0]} />}<span className="episode-number">{card.bundled ? 'EP.' : 'AI'} {String(index + 1).padStart(2, '0')}</span><span className="episode-play"><Icon name={completed ? 'check' : 'play'} size={16} /></span></div>
+              <div className="episode-copy"><span className="episode-subtitle" lang="en">{e?.display.subtitle || card.subtitle}</span><h3>{e?.display.title || card.title}</h3><p>{e?.display.description || card.description}</p><div className="episode-meta"><span>{card.bundled ? '' : `${series.label} · `}{completed ? '已看完 · 可以回看' : underway ? `继续 · ${progress?.cursor}/${total} 段` : `${total} 段${card.bundled ? '故事' : '内容'} · A1–A2`}</span><Icon name="arrow" size={17} />{e ? <span className="entry-menu-gap" aria-hidden="true" /> : null}</div></div>
+            </button>
+            {e ? <EntryMenu entry={e} player={player} /> : null}
+          </div>;
+        })
+        : library.episodes.map((episode, index) => {
+          const progress = view.episodes[episode.id];
+          const total = getScenes(episode).length;
+          const completed = episodeCompletion(progress, total).read;
+          const underway = (progress?.cursor ?? 0) > 0;
+          const e = entryOf(episode.id);
+          return <div className={`episode-card episode-card-${index}`} key={episode.id}>
+            <button className="episode-open" onClick={() => onSelect(episode)} disabled={busy} aria-label={`${completed ? '查看' : '播放'}第 ${index + 1} 集：${episode.title}`}>
+              <div className="episode-art">{isPilotStory(episode) ? <StoryArt variant={index % 3} /> : <SeriesArt cast={seriesOf(episode).cast} backdrop={seriesOf(episode).backgrounds[0]} />}<span className="episode-number">{index < 3 ? 'EP.' : 'AI'} {String(index + 1).padStart(2, '0')}</span><span className="episode-play"><Icon name={completed ? 'check' : 'play'} size={16} /></span></div>
+              <div className="episode-copy"><span className="episode-subtitle" lang="en">{e?.display.subtitle || episode.subtitle}</span><h3>{e?.display.title || episode.title}</h3><p>{e?.display.description || episode.description}</p><div className="episode-meta"><span>{episode.presentation ? `${episode.presentation.label} · ` : ''}{completed ? '已看完 · 可以回看' : underway ? `继续 · ${progress?.cursor}/${total} 段` : `${total} 段${episode.presentation?.kind === 'story' || !episode.presentation ? '故事' : '内容'} · A1–A2`}</span><Icon name="arrow" size={17} />{e ? <span className="entry-menu-gap" aria-hidden="true" /> : null}</div></div>
+            </button>
+            {e ? <EntryMenu entry={e} player={player} /> : null}
+          </div>;
+        })}</div>
     </section>
     <footer className="page-footer"><span>{player.cloudMode ? '云端副本：阅读进度会同步到同账号的其他设备。' : '内容只保存在这台设备上。'}</span><span>ENDLESS / PILOT 001</span></footer>
   </>;
@@ -164,6 +179,9 @@ function StoryApp({ route }: { route: AppRoute }) {
   const view = player.view;
   const library = player.library;
   const episode = library.episodes.find((e) => e.id === session?.current) ?? library.episodes[0]!;
+  const episodeOrder = player.cloudCatalog?.map((entry) => entry.episodeId) ?? library.episodes.map((item) => item.id);
+  const episodeNumber = Math.max(0, episodeOrder.indexOf(episode.id));
+  const nextEpisodeId = episodeOrder[episodeNumber + 1];
   const scenes = getScenes(episode);
   const cursor = view?.episodes[episode.id]?.cursor ?? 0;
   const scene = scenes[reviewIndex ?? cursor];
@@ -205,7 +223,7 @@ function StoryApp({ route }: { route: AppRoute }) {
     return () => window.removeEventListener('keydown', keydown);
   }, [page, scene, state.answer, player.busy, reviewIndex, player.dispatch]);
 
-  async function select(selected: Episode) {
+  async function select(selected: { id: string }) {
     if (await player.dispatch({ type: 'select', episode: selected.id })) {
       setReviewIndex(null);
       go('watch');
@@ -270,7 +288,7 @@ function StoryApp({ route }: { route: AppRoute }) {
         </>}
         {page === 'watch' && <>
           <div className="watch-heading"><button className="text-button back-button" onClick={() => go('home')}><Icon name="back" size={17} />返回频道</button><span>{reviewIndex !== null ? '回看模式 · 不计入记录' : episode.presentation ? `${episode.presentation.series === 'duck_detective' ? 'DUCK DETECTIVE / ' : ''}${episode.presentation.label}` : 'DUCK DETECTIVE / 鸭侦探事务所'}</span><span className="save-status" role="status">{player.saving ? '正在保存…' : player.cloudMode ? (player.cloudSyncing ? '正在同步…' : player.cloudView?.pending ? `待同步 ${player.cloudView.pending} 条` : '已保存到云副本') : '本地自动保存'}<Icon name={player.saving || player.cloudSyncing ? 'clock' : 'check'} size={14} /></span></div>
-          <div className="watch-title"><span className="eyebrow">EPISODE {String(library.episodes.indexOf(episode) + 1).padStart(2, '0')}</span><h1>{episode.title}</h1><span lang="en">{episode.subtitle}</span></div>
+          <div className="watch-title"><span className="eyebrow">EPISODE {String(episodeNumber + 1).padStart(2, '0')}</span><h1>{episode.title}</h1><span lang="en">{episode.subtitle}</span></div>
           <div className="watch-grid"><div className="watch-main">
             {scene ? <section className="scene-card" key={`${episode.id}-${scene.id}-${reviewIndex !== null}`}>
               <div className="scene-card-header"><span><Icon name={scene.type === 'comic' ? 'comic' : scene.type === 'chat' ? 'chat' : 'target'} size={17} />{scene.type === 'comic' ? (episode.presentation && episode.presentation.kind !== 'story' ? '内容正在发生' : '故事正在发生') : scene.type === 'chat' ? '加入这段对话' : '发现一个小线索'}</span><span>{String((reviewIndex ?? cursor) + 1).padStart(2, '0')} / {String(scenes.length).padStart(2, '0')}</span></div>
@@ -282,8 +300,8 @@ function StoryApp({ route }: { route: AppRoute }) {
             </section> : <>
               <section className="surface completion-card"><span className="completion-symbol"><Icon name="check" size={36} /></span><span className="eyebrow">DONE</span><h2>这一段已读完。</h2><p>读完一段，进度就保存一次。下次可以接着看。</p>
                 <div className="completion-stats"><Stat icon="comic" value={Object.values(view.episodes[episode.id]?.scenes ?? {}).filter((s) => s.completed).length} label="读完的片段" /><Stat icon="chat" value={Object.values(view.episodes[episode.id]?.scenes ?? {}).filter((s) => s.answer).length} label="互动尝试" /></div>
-                <div className="completion-buttons">{library.episodes[library.episodes.indexOf(episode) + 1]
-                  ? <button className="button button-dark" disabled={player.busy} onClick={() => void select(library.episodes[library.episodes.indexOf(episode) + 1]!)}>去看下一集<Icon name="arrow" size={17} /></button>
+                <div className="completion-buttons">{nextEpisodeId
+                  ? <button className="button button-dark" disabled={player.busy} onClick={() => void select({ id: nextEpisodeId })}>去看下一集<Icon name="arrow" size={17} /></button>
                   : <button className="button button-dark" onClick={() => go('progress')}>查看阅读记录<Icon name="arrow" size={17} /></button>}
                   <button className="button button-outline" onClick={() => setReviewIndex(0)}><Icon name="repeat" size={16} />回看本集</button></div>
                 <span className="completion-note">已保存的内容可以随时回看；AI 新内容需要联网生成。</span>

@@ -3,7 +3,7 @@
 日期：2026-10-25（初始切片）；2026-10-26（C1 补齐、C2 第一/二/三轮）；2026-10-26（C3 第一轮：事件身份、事务内 Outbox、增量同步与冲突；第二轮：云副本阅读器接线；第三轮：分叉流注册；第四轮：冲突独立保留与恢复）；2026-10-26（C4 第一切片：共享重放与云历史契约，阶段出口未过）
 关联计划：桌面《ENDLESS-云端后端存储与付费实施计划-2026-10-25.md》
 初始代码基点（历史记录）：当时工作区（含 desktop 未提交改动）+ 首轮新增 `apps/api/src/cloud/` 与 `packages/cloud-contracts/`
-最新进度基点：C3 第四轮提交 `5c5c78e` 之后的 C4 第一切片。C3 与 C4 的阶段出口都未验收。
+最新进度基点：C4 第一切片提交 `e5a7cb2`。§10.5 是云阅读按需目录。C3 与 C4 的阶段出口都未验收。
 
 ## 1. C0 基线事实
 
@@ -49,7 +49,7 @@ C2 尚未整体完成：第一轮对象清单底座见 §7；第二轮服务端�
 
 C3 已推进到第四轮并提交为 `5c5c78e`，见 §9：第一轮是事件同步内核；第二轮把云副本接进阅读器；第三轮补上本机新建分支的云流注册；第四轮增加冲突「保留为独立分支」、原分支恢复和持久化请求恢复，并修复首次安装跳过既有云端进度的问题。**仍未完成**：元数据（标题/标签/回收站/归档/采用修订）的命令通道、游标过期后的安全重引导、真实云 API 的双设备浏览器完整旅程。`discard` 仍沿用原来的「停止该分支推送并标记 needsRebase」语义，不把它声称为已经恢复主线。因此 C3 的完整阶段出口仍未验收。
 
-C4 只有第一工程切片，见 §10：共享 reducer、云历史引用契约、有界 JSONL 扫描，以及无 HTTP 路由的服务端检查点。Web 阅读器仍一次装入 AST，C4 阶段出口未过。C5–C9 仍未实现：jobs/attempts/Worker/计量（C5）、额度账本/报价/交付（C6）、支付/订阅/退款/对账（C7）、完整客户端/管理后台/运维（C8）、灰度上线（C9）。`capabilities` 的 generation/credits/billing/payments/exports/edition 仍为 false；`contracts.workspace` 仍是 `endless-workspace/1`。默认组合根未启用对象/导入/同步时，这三项仍为 false。
+C4 已有两段工程，见 §10：第一段是共享 reducer、云历史引用契约、有界 JSONL 扫描，以及无 HTTP 路由的服务端检查点；第二段是云阅读按需目录（§10.5）。打开云阅读仍会编译当前集和事件碰到的集。C4 阶段出口未过。C5–C9 仍未实现：jobs/attempts/Worker/计量（C5）、额度账本/报价/交付（C6）、支付/订阅/退款/对账（C7）、完整客户端/管理后台/运维（C8）、灰度上线（C9）。`capabilities` 的 generation/credits/billing/payments/exports/edition 仍为 false；`contracts.workspace` 仍是 `endless-workspace/1`。默认组合根未启用对象/导入/同步时，这三项仍为 false。
 
 ## 5. 待决策（计划 §24，未默认放行）
 
@@ -293,7 +293,7 @@ S3 使用服务端 AWS SDK 3.1000.0（client-s3、s3-request-presigner，Apache-
 - `SessionSchema` 的事件上限仍是 10,000。同步冲突恢复读取在 `event_seq` 超过 10,000 时仍拒绝。检查点验证超过 100,000（`REPLAY_VERIFY_EVENT_LIMIT`）时返回 `UNSUPPORTED_CONTRACT`，不截断历史。
 - 迁移 `0008_replay_checkpoints.sql`：FORCE RLS，只授予 SELECT 与 INSERT，投影版本限定 `player-replay-1`。API 双角色水位升到 8；邮件 Worker 仍是水位 2。`HistoryService.verifyStream` 按 1000 条一页重放库内正文，客户端快照不可信。谎报或重放失败返回 `CONTENT_REJECTED` 且不写行；旧投影或未知版本返回 `UNSUPPORTED_CONTRACT` 且不写行；省略声明时仍写入服务端快照；同一摘要幂等；不同摘要返回 `SYNC_CONFLICT`（409）。快照正文超过 2 MiB 时该列为空，摘要仍保存。没有公开 HTTP 路由，组合根也不引用该服务。段链由 `assertSegmentChain` 保持；这一轮按整条已存流重放，不按段向对象存储取正文。
 - 本机 v4 生成在调用开始时记下的时刻上执行 `planAtFrozenTime(localVerifiedPrefix(...))`。旧信封的 `generatedAt` 仍表示用来重建学习计划的时间；创作时间是 `authoredAt`。`cloudVerifiedPrefix` 在 `completePrefix !== true` 时拒绝。旧的 `content.plan` 路径未改。云生成 Worker 仍属 C5，没有接线，因此没有排队任务在重启后的再编译。
-- reducer 的 `EpisodeLoader.load` 对未访问的集不在启动时编译。Web 阅读器仍一次装入 AST，所以 C4-05 和「数据库已分页、前端仍全载」这条出口都未满足。
+- reducer 的 `EpisodeLoader.load` 对未访问的集不在启动时编译。云阅读目录见 §10.5：列表和来源查找不编译，但打开时仍会编译当前集和事件碰到的集。C4-05 和「数据库已分页、前端仍全载」这条出口都未满足。
 
 ### 10.2 明确不做
 
@@ -324,10 +324,16 @@ S3 使用服务端 AWS SDK 3.1000.0（client-s3、s3-request-presigner，Apache-
 | C4-02 同一 reducer | 初始化、应用事件、完整状态导出/导入与前缀续接共用一套；播放器既有测试与新 reducer 测试已通过 | 续接权威仍只是 `player-replay-1`，旧有损导出不能当检查点 |
 | C4-03 seen、连续状态、世界顺序、答题去重 | `player-replay-1` 往返 | 旧 `player-projection-1` 导出仍有损 |
 | C4-04 段验证、服务端检查点、版本分派 | 库存正文重放后写检查点；谎报、旧投影、未知版本不写行；同摘要幂等，异摘要 409 | 无 HTTP 路由；不按段向对象存储取正文 |
-| C4-05 按需加载与历史来源 | reducer 对未访问集懒加载已测 | Web 仍一次装入 AST。本项不勾 |
+| C4-05 按需加载与历史来源 | reducer 对未访问集懒加载已测；云目录的列表和来源查找不编译 | 当前集、事件碰到的集，以及校验所需的更早生成集仍会编译。IndexedDB 仍读出全部修订正文。本项不勾 |
 | C4-06 本机/云已验证上下文 | 本机 v4 冻结计划时间；云适配器拒绝不完整前缀。创作政策未改 | 云 Worker 未接。本项不勾 |
 | C4-07 有界 JSONL | 扫描、编码、解码、读取已测 | 不是导出产品，`exports` 仍为 false。本项不勾 |
 | C4-08 越过 10,000 事件与 500 采用清单 | 合成夹具读过 11,000 事件与 501 条采用；10,001 时模式仍拒绝而 reducer 完成；超过 100,000 拒绝且不截断 | 冲突恢复路径仍是 10,000；PostgreSQL 未装入 10 万行 |
 | C4-09 plannedAt 与旧 generatedAt | 适配器与本机 v4 冻结计划时间；到期边界上的复习 brief 已证明 | 没有云队列 Worker，未做重启后再编译 |
 
-出口未过：完整历史的服务端检查点没有产品入口；Web 仍一次装入全部 AST；首屏、恢复和生成上下文准备耗时没有目标设备实测，也没有时间门槛。
+出口未过：完整历史的服务端检查点没有产品入口；播放过的集在打开云阅读时仍会编译；首屏、恢复和生成上下文准备耗时没有目标设备实测，也没有时间门槛。
+
+### 10.5 云阅读目录不再编译未打开的后续集
+
+`openCloudCatalog`（`packages/content/src/cloud-catalog.ts`）给出场景数和 `episodeId.sceneId` 叙述查找，这两步不调用 `createEpisode`。云阅读的玩法命令改走这份目录，不再为每次操作调用 `bridge()`。比当前集更晚、且没有事件的生成集保持未编译。当前集以及事件落到的集仍会编译，校验当前集时也会编译更早的生成集。IndexedDB 仍一次性读出全部修订正文。生成和归档里继续调用 `bridge()` 的路径仍会编译整库。因此 C4-05 仍不勾，阶段出口仍未过。
+
+这项的测试是内容包 `cloud-catalog.test.ts` 2 项，加上内容包 111 项和 Web 108 项。没有重跑全仓 `pnpm test`、`pnpm build` 或 `pnpm test:e2e`。没有在浏览器里走通云阅读。
