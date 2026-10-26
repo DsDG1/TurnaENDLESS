@@ -3,7 +3,7 @@ import {
   ChallengeRequestSchema, CreateWorkspaceRequestSchema, IdempotencyKeySchema,
   LEGACY_PROVIDER_KEY_HEADER, VerifyRequestSchema, type CloudCapabilities,
   CLOUD_API_PREFIX, PrepareObjectRequestSchema, ActivateImportRequestSchema, InstallWorkspaceRequestSchema, type Device,
-  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema,
+  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema, RegisterStreamRequestSchema,
 } from '@endless/cloud-contracts';
 import type { CloudPool } from './db/client.js';
 import type { Mailer } from './mail.js';
@@ -231,6 +231,12 @@ export function createCloudServer(options: CloudServerOptions) {
     routes.push(
       { method: 'GET', access: 'session', pattern: /^\/sync\/bootstrap$/,
         handle: async ({ url, auth }) => ({ status: 200, body: await sync.bootstrap(auth, workspaceOf(url)) }) },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/streams$/,
+        handle: async ({ request, auth }) => {
+          const body = RegisterStreamRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('流注册请求格式无效；只接受父流与分叉点');
+          return { status: 200, body: await sync.registerStream(auth, body.data) };
+        } },
       { method: 'POST', access: 'session', pattern: /^\/sync\/push$/,
         handle: async ({ request, auth }) => {
           const body = SyncPushRequestSchema.safeParse(await readJsonBody(request));

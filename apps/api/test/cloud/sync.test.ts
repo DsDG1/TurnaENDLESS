@@ -473,3 +473,95 @@ describe('游标编码', () => {
     expect(Buffer.from(cursor, 'base64url').toString('utf8')).toContain(id);
   });
 });
+
+describe('分叉流注册：本机新建分支接进云端', () => {
+  const register = (workspaceId: string, streamId: StreamId, parentStreamId: StreamId, forkAtSeq: number) =>
+    sync.registerStream(a, { workspaceId, streamId, parentStreamId, forkAtSeq });
+
+  it('注册复制父流前缀成员关系，不复制事件正文；之后的事件只能接在分叉点之后', async () => {
+    const local = cloudTestWorkspace();
+    const { workspaceId, bootstrap } = await imported(local);
+    const root = streamOf(local);
+    const prefix = entries(play(local, { limit: 2 }));
+    await sync.push(a, {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: root, baseSeq: 0, baseEventId: null, events: prefix }],
+    });
+
+    const child = `brn_${randomUUID()}` as StreamId;
+    const registered = await register(workspaceId, child, root, 1);
+    expect(registered.stream).toMatchObject({ streamId: child, branchId: child, eventSeq: 1, lastEventId: prefix[0]!.eventId });
+
+    const counts = await withClient(fixture.cluster.adminDsn, (q) => q.query<{ members: number; bodies: number }>(
+      `SELECT (SELECT count(*)::int FROM stream_events WHERE workspace_id = $1 AND stream_id = $2) AS members,
+              (SELECT count(*)::int FROM event_objects WHERE workspace_id = $1) AS bodies`,
+      [workspaceId, child],
+    ));
+    // 前缀成员关系被复制，事件正文仍只有父流那两份
+    expect(counts.rows[0]).toEqual({ members: 1, bodies: 2 });
+
+    const tail = { ...prefix[1]!, eventId: randomUUID(), seq: 2 };
+    const pushed = await sync.push(a, {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: child, baseSeq: 1, baseEventId: prefix[0]!.eventId, events: [tail] }],
+    });
+    expect(pushed.receipt.streams[0]).toMatchObject({ eventSeq: 2, lastEventId: tail.eventId });
+    // 用同账号的第二台设备拉取：跨账号看不到别人的工作区
+    const changes = await sync.pull(second, workspaceId, cursorOf(workspaceId), 20);
+    expect(changes.changes.at(-1)!.streamId).toBe(child);
+    expect(changes.changes.at(-1)!.events[0]!.eventId).toBe(tail.eventId);
+  });
+
+  it('同参数重复注册幂等；参数不同拒绝改绑，不静默换父流', async () => {
+    const { workspaceId } = await imported(play(cloudTestWorkspace(), { limit: 2 }));
+    const root = streamOf(cloudTestWorkspace());
+    // 父流来自另一个工作区时不存在，这里用引导拿到的流
+    const boot = await sync.bootstrap(a, workspaceId);
+    const parent = boot.streams[0]!;
+    const child = `brn_${randomUUID()}` as StreamId;
+    const first = await register(workspaceId, child, parent.streamId, 1);
+    const again = await register(workspaceId, child, parent.streamId, 1);
+    expect(again.stream).toEqual(first.stream);
+    await expect(register(workspaceId, child, parent.streamId, 2)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(register(workspaceId, child, `brn_${randomUUID()}` as StreamId, 1)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    void root;
+  });
+
+  it('分叉点不能超出父流已推送的历史；父流不存在时拒绝而不创建', async () => {
+    const local = play(cloudTestWorkspace(), { limit: 1 });
+    const { workspaceId } = await imported(local);
+    const boot = await sync.bootstrap(a, workspaceId);
+    const parent = boot.streams[0]!;
+    const child = `brn_${randomUUID()}` as StreamId;
+    await expect(register(workspaceId, child, parent.streamId, parent.eventSeq + 1)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(register(workspaceId, `brn_${randomUUID()}` as StreamId, `brn_${randomUUID()}` as StreamId, 0))
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await sync.bootstrap(a, workspaceId)).streams.map((stream) => stream.streamId)).toEqual([parent.streamId]);
+  });
+
+  it('分叉点 0 注册成一条独立根流，可从第一条事件开始推送', async () => {
+    const local = cloudTestWorkspace();
+    const { workspaceId, bootstrap } = await imported(local);
+    const root = streamOf(local);
+    const child = `brn_${randomUUID()}` as StreamId;
+    const registered = await register(workspaceId, child, root, 0);
+    expect(registered.stream).toMatchObject({ eventSeq: 0, lastEventId: null });
+
+    const first = { ...entries(play(local, { limit: 1 }))[0]!, seq: 1 };
+    const pushed = await sync.push(a, {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: child, baseSeq: 0, baseEventId: null, events: [first] }],
+    });
+    expect(pushed.receipt.applied).toBe(1);
+  });
+
+  it('跨账号不能往别人的工作区注册流', async () => {
+    const local = play(cloudTestWorkspace(), { limit: 1 });
+    const { workspaceId } = await imported(local);
+    const boot = await sync.bootstrap(a, workspaceId);
+    await expect(sync.registerStream(b, {
+      workspaceId, streamId: `brn_${randomUUID()}` as StreamId,
+      parentStreamId: boot.streams[0]!.streamId, forkAtSeq: 0,
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});

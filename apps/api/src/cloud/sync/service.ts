@@ -6,6 +6,7 @@ import {
   type DeviceStreamState, type PutDeviceStreamStateRequest, type ResolveConflictRequest,
   type SyncBootstrap, type SyncChange, type SyncCommand, type SyncConflict, type SyncEventEntry,
   type SyncPullResponse, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding,
+  type RegisterStreamRequest, type RegisterStreamResponse,
 } from '@endless/cloud-contracts';
 import type { AuthContext } from '../auth/service.js';
 import type { CloudPool, Querier } from '../db/client.js';
@@ -160,6 +161,75 @@ export class SyncService {
     });
   }
 
+  /**
+   * 注册本机新建分支的事件流。
+   *
+   * 只接受「父流 + 分叉点」：前缀成员关系由服务端从父流复制，事件正文不复制。
+   * 这样新分支的第一条事件必须接在 `forkAtSeq` 之后，客户端不能凭空宣称
+   * 一段自己没推过的历史；分叉点也不能超过父流已有的云端历史。
+   * 同一 streamId 重复注册是幂等的（网络重试），参数不同则拒绝，不静默改绑。
+   */
+  async registerStream(ctx: AuthContext, input: RegisterStreamRequest): Promise<RegisterStreamResponse> {
+    if (input.streamId === input.parentStreamId) throw badRequest('分叉流不能以自己为父流');
+    return this.app.withTenant(ctx.accountId, async (q) => {
+      await lockAccount(q, ctx.accountId);
+      await workspaceRow(q, ctx, input.workspaceId, true);
+
+      const existing = (await q.query<StreamRow & { parent_stream_id: string | null; fork_at_seq: string | null }>(
+        `SELECT stream_id, branch_id, event_seq, last_event_id, parent_stream_id, fork_at_seq
+         FROM sync_streams WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 FOR UPDATE`,
+        [ctx.accountId, input.workspaceId, input.streamId],
+      )).rows[0];
+      if (existing) {
+        const sameFork = existing.parent_stream_id === input.parentStreamId
+          && Number(existing.fork_at_seq) === input.forkAtSeq;
+        if (!sameFork) throw badRequest('该事件流已绑定到另一个分叉点，不能改绑');
+        return { stream: binding(existing) };
+      }
+
+      const parent = (await q.query<StreamRow>(
+        `SELECT stream_id, branch_id, event_seq, last_event_id FROM sync_streams
+         WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 FOR UPDATE`,
+        [ctx.accountId, input.workspaceId, input.parentStreamId],
+      )).rows[0];
+      if (!parent) throw notFound('父事件流不存在；不能声明一段云端没有的历史作为前缀');
+      if (input.forkAtSeq > Number(parent.event_seq)) {
+        throw badRequest('分叉点超出父流的云端历史；请先推送父流前缀再注册');
+      }
+
+      // 先建流头（空的），再复制前缀成员关系：stream_events 有指向 sync_streams 的外键
+      await q.query(
+        `INSERT INTO sync_streams
+           (account_id, workspace_id, stream_id, branch_id, event_seq, last_event_id, parent_stream_id, fork_at_seq)
+         VALUES ($1, $2, $3, $3, 0, NULL, $4, $5)`,
+        [ctx.accountId, input.workspaceId, input.streamId, input.parentStreamId, input.forkAtSeq],
+      );
+      await q.query(
+        `INSERT INTO stream_events (account_id, workspace_id, stream_id, event_seq, event_id)
+         SELECT account_id, workspace_id, $4, event_seq, event_id FROM stream_events
+         WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 AND event_seq <= $5`,
+        [ctx.accountId, input.workspaceId, input.parentStreamId, input.streamId, input.forkAtSeq],
+      );
+      const last = (await q.query<{ event_id: string }>(
+        `SELECT event_id FROM stream_events
+         WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 AND event_seq = $4`,
+        [ctx.accountId, input.workspaceId, input.streamId, input.forkAtSeq],
+      )).rows[0];
+      if (input.forkAtSeq > 0) {
+        await q.query(
+          'UPDATE sync_streams SET event_seq = $4, last_event_id = $5, updated_at = now() WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3',
+          [ctx.accountId, input.workspaceId, input.streamId, input.forkAtSeq, last!.event_id],
+        );
+      }
+      return {
+        stream: {
+          streamId: input.streamId, branchId: input.streamId,
+          eventSeq: input.forkAtSeq, lastEventId: last?.event_id ?? null,
+        },
+      };
+    });
+  }
+
   async push(ctx: AuthContext, input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }> {
     // 路由已做严格解析；服务层再守一道，防止直接调用方绕过批次边界。
     if (!input.streams.length || input.streams.some((stream) => !stream.events.length)) {
@@ -216,7 +286,7 @@ export class SyncService {
       )).rows[0];
       if (!row) {
         throw new CloudError(409, 'UNSUPPORTED_CONTRACT', 'sync',
-          '云端还没有这条事件流（本机新建分支的同步尚未实现）；本机事件保留，不会被裁剪', 'contact_support');
+          '云端还没有这条事件流；请先注册（父流 + 分叉点）。本机事件保留，不会被裁剪', 'contact_support');
       }
       const head = Number(row.event_seq);
       if (stream.baseSeq !== head || (stream.baseEventId ?? null) !== row.last_event_id) {

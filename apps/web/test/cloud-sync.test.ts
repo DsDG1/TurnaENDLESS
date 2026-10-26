@@ -46,6 +46,11 @@ interface Recorded {
 /** 内存云端：只实现协议，不做学习重放。 */
 class CloudSim {
   streams = new Map<string, { seq: number; lastEventId: string | null }>();
+  /** 每条流的事件 ID 序列：注册分叉流时要从父流前缀里取最后一个事件 ID。 */
+  eventIds = new Map<string, string[]>();
+  forks = new Map<string, { parentStreamId: string; forkAtSeq: number }>();
+  /** 注册请求的审计：测试要区分「没尝试注册」和「尝试后被拒」。 */
+  registerAttempts: string[] = [];
   changes: Recorded[] = [];
   conflictRecords = new Map<string, SyncConflict>();
   version = 1;
@@ -92,6 +97,9 @@ class CloudSim {
         events: stream.events, createdAt: new Date().toISOString(),
       });
       this.streams.set(stream.streamId, { seq: last.seq, lastEventId: last.eventId });
+      const ids = this.eventIds.get(stream.streamId) ?? [];
+      ids.push(...stream.events.map((entry) => entry.eventId as string));
+      this.eventIds.set(stream.streamId, ids);
     }
     this.version++;
     const receipt: SyncPushReceipt = {
@@ -100,6 +108,31 @@ class CloudSim {
       duplicate: 0, streams: this.bindings().filter((entry) => input.streams.some((stream) => stream.streamId === entry.streamId)),
     };
     return { receipt };
+  }
+
+  /** 只实现协议：父流前缀由服务端复制，分叉点不能超过父流已有历史。 */
+  async registerStream(input: { workspaceId: string; streamId: string; parentStreamId: string; forkAtSeq: number }) {
+    this.registerAttempts.push(input.streamId);
+    const held = this.streams.get(input.streamId);
+    if (held) {
+      const fork = this.forks.get(input.streamId);
+      if (!fork || fork.parentStreamId !== input.parentStreamId || fork.forkAtSeq !== input.forkAtSeq) {
+        throw new CloudFailure('BAD_REQUEST', 400, '该事件流已绑定到另一个分叉点，不能改绑');
+      }
+      return { streamId: input.streamId, branchId: input.streamId, eventSeq: held.seq, lastEventId: held.lastEventId } as SyncStreamBinding;
+    }
+    const parent = this.streams.get(input.parentStreamId);
+    if (!parent) throw new CloudFailure('NOT_FOUND', 404, '父事件流不存在');
+    if (input.forkAtSeq > parent.seq) throw new CloudFailure('BAD_REQUEST', 400, '分叉点超出父流历史');
+    const ids = this.eventIds.get(input.parentStreamId);
+    const lastEventId = input.forkAtSeq === 0 ? null
+      : input.forkAtSeq === parent.seq ? parent.lastEventId
+      : ids?.[input.forkAtSeq - 1] ?? null;
+    this.streams.set(input.streamId, { seq: input.forkAtSeq, lastEventId });
+    this.forks.set(input.streamId, { parentStreamId: input.parentStreamId, forkAtSeq: input.forkAtSeq });
+    if (ids) this.eventIds.set(input.streamId, ids.slice(0, input.forkAtSeq));
+    this.version++;
+    return { streamId: input.streamId, branchId: input.streamId, eventSeq: input.forkAtSeq, lastEventId } as SyncStreamBinding;
   }
 
   async pull(_workspaceId: string, cursor: string | null, limit = 50) {
@@ -410,5 +443,108 @@ describe('同步状态可见性', () => {
 
   it('安装的云副本仍可被本地存档解析（没有把副本写成另一种格式）', () => {
     expect(() => parseWorkspace(copy)).not.toThrow();
+  });
+});
+
+/** 在本机造一条分叉分支：前缀逐字节复制父分支，分叉点之后才是它自己的事件。 */
+async function forkAt(repository: WorkspaceRepository, at: number) {
+  const stored = (await repository.load())!;
+  const parent = stored.branches.find((branch) => branch.id === stored.activeBranchId)!;
+  const id = `brn_${crypto.randomUUID()}`;
+  const branch = {
+    ...parent, id, label: '分叉线', parentBranchId: parent.id, forkAtEventCount: at,
+    session: { ...parent.session, events: parent.session.events.slice(0, at) },
+  };
+  const committer = new SessionCommitter(repository, stored.identity.repositoryRevision);
+  const result = await committer.commit({ ...stored, branches: [...stored.branches, branch], activeBranchId: id });
+  if (!result.ok) throw new Error(result.error);
+  return { branchId: id, parentId: parent.id };
+}
+
+describe('分叉流注册：本机新建分支', () => {
+  it('先注册分叉流再推送：事件接在分叉点之后，父流前缀不重复上传', async () => {
+    const workspaceId = crypto.randomUUID();
+    const repository = await device(new IDBFactory(), workspaceId);
+    const api = new CloudSim();
+    api.seed(seed());
+    const driver = engine(repository, workspaceId, 'device-a', api);
+
+    await driver.sync.run();
+    const root = await play(repository, 2, 0);
+    const count = root.branches[0]!.session.events.length;
+    await driver.sync.run();
+    expect(await repository.pendingOutbox()).toEqual([]);
+
+    const { branchId, parentId } = await forkAt(repository, count);
+    await play(repository, 1, 0, 100);
+    const pending = await repository.pendingOutbox();
+    expect(pending.every((entry) => entry.streamId === branchId)).toBe(true);
+    expect(pending[0]!.seq).toBe(count + 1);
+    const added = pending.length;
+
+    const report = await driver.sync.run();
+    expect(report.stopped).toBeNull();
+    expect(await repository.pendingOutbox()).toEqual([]);
+    expect(api.forks.get(branchId)).toEqual({ parentStreamId: parentId, forkAtSeq: count });
+    expect(api.streams.get(branchId)).toMatchObject({ seq: count + added });
+    // 云端头部仍是父流那条，分叉流是独立的一条
+    expect(api.streams.get(streamId)!.seq).toBe(count);
+  });
+
+  it('父流前缀还没推完时不注册分叉流，说清原因；下一轮补上', async () => {
+    const workspaceId = crypto.randomUUID();
+    const repository = await device(new IDBFactory(), workspaceId);
+    const api = new CloudSim();
+    api.seed(seed());
+    const driver = engine(repository, workspaceId, 'device-a', api);
+
+    await driver.sync.run();
+    const root = await play(repository, 2, 0);
+    const count = root.branches[0]!.session.events.length;
+    const { branchId } = await forkAt(repository, count);
+    await play(repository, 1, 0, 100);
+
+    const first = await driver.sync.run();
+    // 父流这一轮被推上去，但分叉流不能在这一轮注册（分叉点超出父流当时的历史）
+    expect(api.streams.get(streamId)!.seq).toBe(count);
+    expect(api.forks.has(branchId)).toBe(false);
+    // 父流前缀没推完时**根本不发注册请求**，而不是发了被服务端拒掉
+    expect(api.registerAttempts).not.toContain(branchId);
+    expect(first.pending).toBeGreaterThan(0);
+    expect(first.note).toContain('还没有云端事件流');
+
+    const second = await driver.sync.run();
+    expect(second.stopped).toBeNull();
+    expect(api.registerAttempts).toContain(branchId);
+    expect(api.forks.get(branchId)).toMatchObject({ forkAtSeq: count });
+    expect(await repository.pendingOutbox()).toEqual([]);
+  });
+
+  it('没有父流记录的分支不注册，也不编造前缀', async () => {
+    const workspaceId = crypto.randomUUID();
+    const repository = await device(new IDBFactory(), workspaceId);
+    const api = new CloudSim();
+    api.seed(seed());
+    const driver = engine(repository, workspaceId, 'device-a', api);
+
+    await driver.sync.run();
+    await play(repository, 1, 0);
+    await driver.sync.run();
+    expect(await repository.pendingOutbox()).toEqual([]);
+
+    const stored = (await repository.load())!;
+    const parent = stored.branches.find((branch) => branch.id === stored.activeBranchId)!;
+    const id = `brn_${crypto.randomUUID()}`;
+    const branch = { ...parent, id, label: '无父线', parentBranchId: null, forkAtEventCount: null };
+    const committer = new SessionCommitter(repository, stored.identity.repositoryRevision);
+    const committed = await committer.commit({ ...stored, branches: [...stored.branches, branch], activeBranchId: id });
+    expect(committed.ok).toBe(true);
+    await play(repository, 1, 0, 30);
+
+    const report = await driver.sync.run();
+    expect(api.streams.has(id)).toBe(false);
+    expect(report.note).toContain('没有父流记录');
+    // 事件仍在队列里，不会被悄悄丢弃
+    expect((await repository.pendingOutbox()).some((entry) => entry.streamId === id)).toBe(true);
   });
 });

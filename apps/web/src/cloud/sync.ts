@@ -1,6 +1,6 @@
 import { stableStringify } from '@endless/esl';
 import { applyPlayerCommand, type Content, type Workspace } from '@endless/content';
-import { CLOUD_LIMITS, type SyncBootstrap, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest } from '@endless/cloud-contracts';
+import { CLOUD_LIMITS, type SyncBootstrap, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
 import { SessionCommitter, type CommitOutcome } from '../session-writer.js';
 import { CloudFailure } from './client.js';
 import { emptySyncState, outgoing, type CloudSyncState, type OutboxEntry } from './outbox.js';
@@ -27,6 +27,7 @@ export interface SyncRepository {
 
 export interface SyncApiPort {
   bootstrap(workspaceId: string): Promise<SyncBootstrap>;
+  registerStream(input: { workspaceId: string; streamId: string; parentStreamId: string; forkAtSeq: number }): Promise<SyncStreamBinding>;
   push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
   pull(workspaceId: string, cursor: string | null, limit?: number): Promise<{
     changes: SyncChange[]; nextCursor: string; hasMore: boolean; cloudVersion: string;
@@ -131,19 +132,23 @@ export class WorkspaceSync {
       if (!boot) return { pushed: 0, applied: 0, pending: pending.length, stopped: 'prefix', note: stopText.prefix };
       current = boot;
     }
+    // 本机新建分支：先补注册云端事件流（只声明父流与分叉点，前缀由服务端复制）
+    const registered = await this.registerOrphanStreams(pending, current);
+    current = registered.state;
     const groups = outgoing(pending, current.streams)
       .filter((group) => !current.needsRebase.includes(group.streamId));
     if (!groups.length) {
       if (current.needsRebase.length) {
         return { pushed: 0, applied: 0, pending: pending.length, stopped: 'prefix', note: rebaseText };
       }
-      // 有待推送事件却一条都排不上：通常是本机新建分支还没有云端事件流。
-      // 不能默默返回「无事可做」，否则界面会永远显示「待推送 N 条」却没有任何解释。
+      // 有待推送事件却一条都排不上：不是「无事可做」，必须说清是哪种情况。
       const orphaned = pending.filter((entry) => !current.streams[entry.streamId]);
       return {
-        pushed: 0, applied: 0, pending: pending.length, stopped: orphaned.length ? 'prefix' : null,
+        pushed: 0, applied: 0, pending: pending.length,
+        stopped: orphaned.length ? 'prefix' : null,
         note: orphaned.length
-          ? '这些分支在云端还没有对应事件流（本机新建分支的注册尚未实现）；事件已保留，不会被丢弃'
+          ? [registered.note, '这些分支在云端还没有事件流：父流前缀还没推完，或本机分支缺少父流记录；事件已保留']
+            .filter(Boolean).join('；')
           : '',
       };
     }
@@ -173,7 +178,11 @@ export class WorkspaceSync {
       });
       await this.deps.repo.acknowledgePush(receipt, keys);
       const left = (await this.deps.repo.pendingOutbox()).length;
-      return { pushed: receipt.applied, applied: 0, pending: left, stopped: null, note: `已推送 ${receipt.applied} 条事件` };
+      const note = [`已推送 ${receipt.applied} 条事件`];
+      // 还有事件排不上：说清是「分支没有云端事件流」，不要只留下一个待推送数字
+      if (registered.blocked) note.push('另有分支还没有云端事件流（父流前缀未推完或缺少父流记录），事件已保留');
+      if (registered.note) note.push(registered.note);
+      return { pushed: receipt.applied, applied: 0, pending: left, stopped: null, note: note.join('；') };
     } catch (error) {
       if (error instanceof CloudFailure && error.code === 'SYNC_CONFLICT') {
         const state0 = await this.deps.repo.syncState();
@@ -190,6 +199,51 @@ export class WorkspaceSync {
       await this.fail(error instanceof Error ? error.message : '推送失败');
       throw error;
     }
+  }
+
+  /**
+   * 为待推送但云端还没有绑定的事件流补注册。
+   *
+   * 只认本机分支记录里的 `parentBranchId` + `forkAtEventCount`：根分支没有父流，
+   * 说明这棵历史不是从云端导入的（或分支数据被改过），那就**不注册**，
+   * 也绝不编造一段前缀去凑数。父流前缀还没推完时同样等下一轮。
+   */
+  private async registerOrphanStreams(pending: readonly OutboxEntry[], state: CloudSyncState):
+    Promise<{ state: CloudSyncState; blocked: number; note: string }> {
+    const unbound = [...new Set(pending.map((entry) => entry.streamId))]
+      .filter((streamId) => !state.streams[streamId] && !state.needsRebase.includes(streamId));
+    if (!unbound.length) return { state, blocked: 0, note: '' };
+    const workspace = await this.deps.repo.load();
+    if (!workspace) return { state, blocked: unbound.length, note: '读不到本机工作区，暂时不能注册新分支' };
+    const byId = new Map(workspace.branches.map((branch) => [branch.id, branch]));
+    let next = state;
+    let blocked = 0;
+    const notes: string[] = [];
+    for (const streamId of unbound.sort()) {
+      const branch = byId.get(streamId);
+      if (!branch || !branch.parentBranchId || branch.forkAtEventCount === null) {
+        blocked++;
+        notes.push(`分支 ${streamId.slice(0, 8)} 没有父流记录，无法注册`);
+        continue;
+      }
+      const parent = next.streams[branch.parentBranchId];
+      if (!parent || parent.seq < branch.forkAtEventCount) { blocked++; continue; }
+      try {
+        const stream = await this.deps.api.registerStream({
+          workspaceId: this.deps.workspaceId, streamId,
+          parentStreamId: branch.parentBranchId, forkAtSeq: branch.forkAtEventCount,
+        });
+        next = {
+          ...next,
+          streams: { ...next.streams, [stream.streamId]: { seq: stream.eventSeq, eventId: stream.lastEventId } },
+        };
+        await this.deps.repo.saveSyncState(next);
+      } catch (error) {
+        blocked++;
+        notes.push(error instanceof Error ? error.message : '注册新分支失败');
+      }
+    }
+    return { state: next, blocked, note: notes.join('；') };
   }
 
   private async bootstrap(state: CloudSyncState): Promise<CloudSyncState | null> {

@@ -91,6 +91,24 @@ export const SyncStreamBindingSchema = z.object({
 }).strict();
 export type SyncStreamBinding = z.infer<typeof SyncStreamBindingSchema>;
 
+/**
+ * 注册一条新事件流（本机新建的分支）。
+ *
+ * 流身份与分支 ID 相同；分叉点之前的成员关系由服务端从父流**复制**，
+ * 客户端只能声明「从哪条父流、第几条之后分叉」，不能自带前缀——
+ * 否则就等于让客户端凭空宣称一段它没推过的历史。
+ * 同一个 streamId 重复注册返回同一条绑定；参数不同则拒绝，不静默改绑。
+ */
+export const RegisterStreamRequestSchema = z.object({
+  workspaceId: UuidSchema,
+  streamId: SyncStreamIdSchema,
+  parentStreamId: SyncStreamIdSchema,
+  forkAtSeq: z.number().int().nonnegative().max(1_000_000),
+}).strict();
+export type RegisterStreamRequest = z.infer<typeof RegisterStreamRequestSchema>;
+export const RegisterStreamResponseSchema = z.object({ stream: SyncStreamBindingSchema }).strict();
+export type RegisterStreamResponse = z.infer<typeof RegisterStreamResponseSchema>;
+
 export const SyncPushReceiptSchema = z.object({
   batchId: UuidSchema,
   workspaceId: UuidSchema,
