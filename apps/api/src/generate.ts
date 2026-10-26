@@ -2,7 +2,7 @@ import {
   DirectorService, TropeLedger, type LlmClient, type LlmRequest, type LlmResponse,
 } from '@endless/director';
 import { autoFixBatch, batchTextUnits, contentHash, locateForm, parseBatch, stripThinking, type Batch, type ValidationIssue } from '@endless/esl';
-import { creativeHistoryPolicy, creativeKindLabels, creativeSeries, SavedPlayerSchema, type Content, type GeneratedEpisode } from '@endless/content';
+import { creativeHistoryPolicy, creativeKindLabels, creativeSeries, localVerifiedPrefix, planAtFrozenTime, SavedPlayerSchema, type Content, type GeneratedEpisode } from '@endless/content';
 import { getOptions, getScenes } from '@endless/player';
 import { ApiError } from './jobs.js';
 import { templates } from './prompts.js';
@@ -50,8 +50,10 @@ export function createGenerator(content: Content, llm: LlmClient) {
     const { session, library } = content.restore(save);
     const archivedByEpisode = new Map<string, import('@endless/content').ArchiveContextEntryWire>();
     for (const archive of archives ?? []) for (const episodeId of archive.episodeIds) archivedByEpisode.set(episodeId, archive);
+    // 这一刻就是本机这次生成的计划时间，并写入旧信封的 generatedAt。
+    // 云端 Worker 不能在排队之后另取 new Date()；它必须走 planAtFrozenTime 的 plannedAt。
     const generatedAt = new Date().toISOString();
-    const task = content.planCreative(session, library, new Date(generatedAt));
+    const task = planAtFrozenTime(content, localVerifiedPrefix(session, library, generatedAt));
     const batchId = `ai-${requestId}`;
     const view = task.view;
     const { episodesPerSeries, maxCharsPerScene, maxCharsPerEpisode } = creativeHistoryPolicy;

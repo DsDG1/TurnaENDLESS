@@ -2,7 +2,9 @@
  * 可验证投影检查点：把「完整重放」产生的全部影响后续重放的状态
  * 显式导出/导入，不复制私有字段、不序列化类实例。
  * 检查点覆盖 FSRS、BKT、证据处理器连续状态、曝光集合、剧情世界状态与
- * 每节进度/游标；同一 reducer 负责完整重放与检查点后重放。
+ * 每节进度/游标。这是 player-projection-1：seen 与 streaks 仍按历史格式留空，
+ * 只能和整段重放的同一份有损导出比较，不能从它中间续放。
+ * 可续放的连续状态在 player-replay-1（`reducer.ts`）。
  */
 import { z } from 'zod';
 import { AbilityEstimator, EvidenceProcessor, SrsStore } from '@endless/learning';

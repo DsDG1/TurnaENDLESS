@@ -13,8 +13,9 @@ import {
   type RuntimeAst,
   type ValidationContext,
 } from '@endless/esl';
-import { AbilityEstimator, EvidenceProcessor, SrsStore, type Grade3 } from '@endless/learning';
-import { applyEffects, InMemoryWorldStore, type EntityRow, type PredicateSpec } from '@endless/world';
+import { type AbilityEstimator, type Grade3, type SrsStore } from '@endless/learning';
+import { type EntityRow, type InMemoryWorldStore, type PredicateSpec } from '@endless/world';
+import { libraryLoader, replayEvents } from './reducer.js';
 
 export type PlayableScene = ComicSceneT | ChatSceneT | PickSceneT | QuizSceneT | CardSceneT;
 
@@ -153,93 +154,7 @@ export function createSession(library: Library): PlayerSession {
 }
 
 export function projectSession(session: PlayerSession, library: Library): PlayerView {
-  const view: PlayerView = {
-    episodes: Object.fromEntries(library.episodes.map((e) => [e.id, { cursor: 0, scenes: {} }])),
-    srs: new SrsStore(),
-    ability: new AbilityEstimator(),
-    world: new InMemoryWorldStore(),
-    answers: [],
-    completed: 0,
-    skipped: 0,
-    exposed: new Set(),
-  };
-  for (const entity of library.entities) view.world.upsertEntity(entity);
-  const processor = new EvidenceProcessor('S-B');
-  const seen = new Map<string, Set<string>>();
-  const scenes = new Map(library.episodes.map((episode) => [episode.id, getScenes(episode)]));
-  for (const event of session.events) {
-    const episode = library.episodes.find((e) => e.id === event.episode);
-    const progress = view.episodes[event.episode];
-    const scene = scenes.get(event.episode)?.[progress?.cursor ?? -1];
-    if (!episode || !progress || !scene || scene.id !== event.scene) throw new Error('存档场景顺序无效');
-    const state = progress.scenes[scene.id] ??= {};
-    const options = getOptions(scene);
-    if (event.type === 'reveal') {
-      if (state.revealed || state.answer || !scene.evidence) throw new Error('无效的提示记录');
-      state.revealed = true;
-    } else if (event.type === 'answer') {
-      const option = options[event.choice];
-      if (!option || state.answer) throw new Error('无效的答题记录');
-      const evidence = episode.ast.evidence.find((e) => e.sceneId === scene.id);
-      const item = evidence?.item;
-      const notDue = item && view.srs.hasCard(item, 'meaning') &&
-        view.srs.getCard(item, 'meaning', new Date(event.at)).due.getTime() > new Date(event.at).getTime();
-      const narrativePrime = item && episode.ast.targets.some((t) =>
-        t.sceneId === scene.id && t.itemId === item && /^(messages|panels)\[/.test(t.path));
-      const primed = state.revealed || (item && seen.get(event.episode)?.has(item)) || narrativePrime || notDue;
-      const type = evidence ? primed ? 'practice' : evidence.type : null;
-      const outcome = item && type ? processor.process({
-        item, facet: 'meaning', type, correct: option.correct === true,
-      }) : null;
-      if (item && outcome?.fsrsGrade) view.srs.grade(item, 'meaning', outcome.fsrsGrade, new Date(event.at));
-      if (item && outcome?.bkt) view.ability.update(item, outcome.bkt.correct, outcome.bkt.guess);
-      else if (item && outcome?.weak) view.ability.weakUpdate(item);
-      const result: AnswerResult = {
-        choice: event.choice,
-        correct: option.correct === true,
-        item,
-        evidence: type,
-        qualified: outcome?.fsrsGrade != null,
-        grade: outcome?.fsrsGrade ?? null,
-        at: event.at,
-      };
-      state.answer = result;
-      view.answers.push(result);
-      if (option.effect) {
-        const effect = episode.ast.effects.find((e) => e.sceneId === scene.id && e.name === option.effect);
-        if (!effect) throw new Error('选项引用了不存在的剧情效果');
-        const reduced = applyEffects(view.world, effect.ops, {
-          card: view.completed + view.skipped + 1,
-          batch: episode.id,
-          scene: scene.id,
-          channel: episode.ast.channel,
-          predicates: new Map(library.predicates),
-          canonLocked: [],
-          userChoice: option.label,
-        });
-        if (reduced.violations.length) throw new Error(reduced.violations.map((v) => v.reason).join('；'));
-      }
-    } else {
-      if (options.length && !state.answer && !event.skip) throw new Error('请先作答或明确跳过');
-      state.completed = !event.skip;
-      state.skipped = event.skip;
-      state.at = event.at;
-      if (event.skip) view.skipped++;
-      else {
-        view.completed++;
-        const targets = new Set(episode.ast.targets.filter((t) => t.sceneId === scene.id).map((t) => t.itemId));
-        const episodeSeen = seen.get(event.episode) ?? new Set<string>();
-        for (const item of targets) {
-          episodeSeen.add(item);
-          view.exposed.add(item);
-          if (state.answer?.item !== item) view.ability.weakUpdate(item);
-        }
-        seen.set(event.episode, episodeSeen);
-      }
-      progress.cursor++;
-    }
-  }
-  return view;
+  return replayEvents(libraryLoader(library), session.events).view;
 }
 
 export function restoreSession(raw: unknown, library: Library): PlayerSession {
@@ -290,3 +205,9 @@ export function transition(
 }
 
 export * from './checkpoint.js';
+export {
+  REPLAY_PROJECTOR_VERSION, LEGACY_PROJECTOR_VERSION, classifyProjector, libraryLoader,
+  createReplay, applyReplayEvent, replayEvents, exportReplay, importReplay, resumeReplay,
+  sameReplay, verifyReplayPrefix, replayPrefixHash,
+  type EpisodeLoader, type ProjectorClass, type ReplaySnapshot, type ReplayState,
+} from './reducer.js';

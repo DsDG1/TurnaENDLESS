@@ -1,9 +1,9 @@
-# ENDLESS 云化基线记录（C0/C1、C2 与 C3 分轮切片）
+# ENDLESS 云化基线记录（C0/C1、C2、C3 分轮与 C4 第一切片）
 
-日期：2026-10-25（初始切片）；2026-10-26（C1 补齐、C2 第一/二/三轮）；2026-10-26（C3 第一轮：事件身份、事务内 Outbox、增量同步与冲突；第二轮：云副本阅读器接线；第三轮：分叉流注册；第四轮：冲突独立保留与恢复）
+日期：2026-10-25（初始切片）；2026-10-26（C1 补齐、C2 第一/二/三轮）；2026-10-26（C3 第一轮：事件身份、事务内 Outbox、增量同步与冲突；第二轮：云副本阅读器接线；第三轮：分叉流注册；第四轮：冲突独立保留与恢复）；2026-10-26（C4 第一切片：共享重放与云历史契约，阶段出口未过）
 关联计划：桌面《ENDLESS-云端后端存储与付费实施计划-2026-10-25.md》
 初始代码基点（历史记录）：当时工作区（含 desktop 未提交改动）+ 首轮新增 `apps/api/src/cloud/` 与 `packages/cloud-contracts/`
-最新进度基点：C3 第三轮提交 `3c0dce7` + 本轮 C3 第四轮工作区；不把各轮工程通过等同于 C3 阶段出口通过。
+最新进度基点：C3 第四轮提交 `5c5c78e` 之后的 C4 第一切片。C3 与 C4 的阶段出口都未验收。
 
 ## 1. C0 基线事实
 
@@ -47,9 +47,9 @@
 
 C2 尚未整体完成：第一轮对象清单底座见 §7；第二轮服务端导入闭环与本地安装存储、第三轮浏览器最小入口与能力上报修正见 §8。仍未完成的是：浏览器对真实云 API 的完整旅程验收（cookie 往返、导入与领取）；云副本阅读器已经在 C3 第二轮接线。
 
-C3 已推进到第四轮，见 §9：第一轮是事件同步内核；第二轮把云副本接进阅读器；第三轮补上本机新建分支的云流注册；第四轮增加冲突「保留为独立分支」、原分支恢复和持久化请求恢复，并修复首次安装跳过既有云端进度的问题。**仍未完成**：元数据（标题/标签/回收站/归档/采用修订）的命令通道、真实云 API 的双设备浏览器完整旅程；服务端学习重放仍属 C4。`discard` 仍沿用原来的「停止该分支推送并标记 needsRebase」语义，不把它声称为已经恢复主线。因此 C3 的完整阶段出口仍未验收。
+C3 已推进到第四轮并提交为 `5c5c78e`，见 §9：第一轮是事件同步内核；第二轮把云副本接进阅读器；第三轮补上本机新建分支的云流注册；第四轮增加冲突「保留为独立分支」、原分支恢复和持久化请求恢复，并修复首次安装跳过既有云端进度的问题。**仍未完成**：元数据（标题/标签/回收站/归档/采用修订）的命令通道、游标过期后的安全重引导、真实云 API 的双设备浏览器完整旅程。`discard` 仍沿用原来的「停止该分支推送并标记 needsRebase」语义，不把它声称为已经恢复主线。因此 C3 的完整阶段出口仍未验收。
 
-C4–C9 全部未实现：长历史流式契约（C4）、jobs/attempts/Worker/计量（C5）、额度账本/报价/交付（C6）、支付/订阅/退款/对账（C7）、完整客户端/管理后台/运维（C8）、灰度上线（C9）。默认组合根未启用对象/导入/同步时，capabilities 的 objects/import/sync 仍为 false。
+C4 只有第一工程切片，见 §10：共享 reducer、云历史引用契约、有界 JSONL 扫描，以及无 HTTP 路由的服务端检查点。Web 阅读器仍一次装入 AST，C4 阶段出口未过。C5–C9 仍未实现：jobs/attempts/Worker/计量（C5）、额度账本/报价/交付（C6）、支付/订阅/退款/对账（C7）、完整客户端/管理后台/运维（C8）、灰度上线（C9）。`capabilities` 的 generation/credits/billing/payments/exports/edition 仍为 false；`contracts.workspace` 仍是 `endless-workspace/1`。默认组合根未启用对象/导入/同步时，这三项仍为 false。
 
 ## 5. 待决策（计划 §24，未默认放行）
 
@@ -60,7 +60,7 @@ C1 本轮通过的是代码与本地隔离验收，不是生产上线验收。�
 ## 6. 运行方式（开发）
 
 - 云脚本只接受显式注入的 `ENDLESS_CLOUD_*`，不自动读取本机 API `.env`。
-- `bootstrap:cloud`：管理员 DSN + AUTH/APP_PASSWORD；`migrate:cloud`：MIGRATION_DSN + 必填 `ENV=development|test|staging|production`。已有环境绑定不允许被改写；当前 API 要求水位 6，须通过受控迁移追加 `0002_c1.sql`、`0003_objects.sql`、`0004_imports.sql`、`0005_sync.sql`、`0006_sync_forks.sql`，不原地修改旧迁移。邮件 Worker 仍只依赖 C1 水位。
+- `bootstrap:cloud`：管理员 DSN + AUTH/APP_PASSWORD；`migrate:cloud`：MIGRATION_DSN + 必填 `ENV=development|test|staging|production`。已有环境绑定不允许被改写；当前 API 双角色要求水位 8，须通过受控迁移追加 `0002_c1.sql`、`0003_objects.sql`、`0004_imports.sql`、`0005_sync.sql`、`0006_sync_forks.sql`、`0007_sync_conflict_preservation.sql`、`0008_replay_checkpoints.sql`，不原地修改旧迁移。邮件 Worker 仍只要求水位 2（C1）。
 - `dev:cloud` / `start:cloud`：ENV、AUTH_DSN、APP_DSN、SESSION_PEPPER（至少 32 字符）、MAIL_KEY（独立随机 32 字节的 64 位 hex）、ORIGINS、HOSTS；HOST 默认回环，PORT 默认 4178。预发布/生产要求显式 HTTPS 来源、禁止验证码日志；可在回环后接 TLS 网关。存档导入另需显式 `ENDLESS_CLOUD_IMPORTS_ENABLED=1` 且对象存储已启用，并提供 `ENDLESS_CLOUD_LEXICON_FILE`（服务端完整校验必须用与应用一致的词库/目录）。
 - `worker:cloud`：ENV、AUTH_DSN、同一 MAIL_KEY，以及 `SMTP_ENV/HOST/PORT/MODE/FROM/USER/PASSWORD`；MODE 为 `tls`（默认端口 465）或 `starttls`。可选 SMTP_CA_FILE 追加受信 CA，不能禁用证书验证。`--once` 只处理至多一封邮件，便于隔离验收。
 - Web 端接入云 API：`pnpm dev` 或 `pnpm preview` 的 `/api/cloud` 默认代理到 `http://127.0.0.1:4178`，可用 `ENDLESS_CLOUD_WEB_TARGET` 指向别的开发实例。云 API 的 `ENDLESS_CLOUD_ORIGINS`/`ENDLESS_CLOUD_HOSTS` 必须包含该 Web 来源与代理后的 Host，否则状态变更会被 Origin/Host 检查拒绝。页面入口是 `#cloud`（桌面侧栏「云端副本」，移动端在偏好设置里）。对象/导入路由仍需显式启用，未启用时页面只说明未启用。
@@ -175,7 +175,7 @@ S3 使用服务端 AWS SDK 3.1000.0（client-s3、s3-request-presigner，Apache-
 - **只有事件同步**：标题、标签、备注、回收站、归档卷、采用修订这些管理操作没有命令通道。
 - **没有「保留为独立分支」**：冲突只能显式放弃本机候选；本机这批事件不删除，但该分支从此不再推送。
 - **本机新建分支（forkForRevision）的云流注册已补上（见 §9.5）**：客户端先按父流 + 分叉点注册，再推送分叉点之后的事件；父流前缀没推完时等待下一轮。
-- **服务端不做学习重放**：只校验事件契约、盖章与流前缀；掌握度/证据连续状态的重放等价性属 C4。
+- **服务端学习重放在第一轮未做**：当时只校验事件契约、盖章与流前缀。后来的 C4 第一切片增加了无 HTTP 路由的检查点服务，见 §10。
 - **界面没有「应用云端变更」入口**：驱动层已实现并在测试里跑通双设备往返，但云副本阅读器（C2 遗留）还没接线。
 - 没有任何真实云 API 的浏览器旅程；对象存储/CDN 未参与事件正文（正文存 PG jsonb）。
 - 未验证 10k 事件级别的推送/拉取与分页压力。
@@ -251,7 +251,7 @@ S3 使用服务端 AWS SDK 3.1000.0（client-s3、s3-request-presigner，Apache-
 
 容量与兼容边界：
 
-- 本轮仍是有界 `endless-workspace/1`：恢复历史最多 10,000 事件，单份服务端历史恢复包最多 2 MiB，分支总数最多 64；不以截断事件或删除旧分支通过。不可变生成依据仍引用本机分叉后的前缀时拒绝自动手术，保留完整冲突包，不能改写旧生成依据。长历史与新云外层契约仍属 C4。
+- 本轮仍是有界 `endless-workspace/1`：恢复历史最多 10,000 事件，单份服务端历史恢复包最多 2 MiB，分支总数最多 64；不以截断事件或删除旧分支通过。不可变生成依据仍引用本机分叉后的前缀时拒绝自动手术，保留完整冲突包，不能改写旧生成依据。长历史与新云外层契约的第一切片见 §10，C4 阶段出口未过。同步冲突恢复读取仍拒绝 10,000 以上的事件序号。
 - 旧导入流缺少清单时，组合根可从原始导入对象重新验证并取回原清单，外部对象读取发生在数据库事务之外。旧的本机新建流如果既没有清单、也不在原始导入包内，返回 `UNSUPPORTED_CONTRACT`，不猜采用关系。没有执行生产库迁移或真实云对象操作。
 - 共享网络契约新增清单、导入基线和恢复字段；旧严格客户端会拒绝未知响应，测试部署应先受控迁移并更新客户端，不能把旧客户端的拒绝当作可自动重置存档的理由。原 episode、选项、学习事件及既有历史含义不变。
 
@@ -279,4 +279,55 @@ S3 使用服务端 AWS SDK 3.1000.0（client-s3、s3-request-presigner，Apache-
 | C3-06 设备界面状态隔离 | current、字号和阅读分支选择不广播为学习事件 | 新功能不得把管理/UI 操作伪造成学习事件 |
 | C3-07 恢复与可见状态 | 暂停、持久请求续接和状态入口已有实现 | 身份失效及双设备完整产品旅程仍需连接真实云 API 验收 |
 
-下一轮先实现标题/标签/备注/回收站/归档/采用修订等元数据命令的稳定身份、前置版本、原子 Outbox、幂等回执与显式冲突处理，再补齐安全重引导与真实云 API 双设备浏览器旅程。不重做 C0/C1，不提前接支付，也不把本轮的 44 项浏览器回归替代 C3 阶段出口。
+下一轮先实现标题/标签/备注/回收站/归档/采用修订等元数据命令的稳定身份、前置版本、原子 Outbox、幂等回执与显式冲突处理，再补齐安全重引导与真实云 API 双设备浏览器旅程。不重做 C0/C1，不提前接支付，也不把本轮的 44 项浏览器回归替代 C3 阶段出口。C4 第一切片已另行记在 §10：它不补上这三项缺口，C3 与 C4 的阶段出口仍未通过。
+
+## 10. C4 第一切片：共享重放与云历史契约（阶段出口未过）
+
+用户在 C3 出口仍开放时授权先做这一切片。它不实现 §9.7 的元数据命令、游标过期安全重引导或真实双设备浏览器旅程，也不开始 C5 或支付。本切片基于 `5c5c78e`。
+
+### 10.1 已落到代码
+
+- 引用契约在 `packages/cloud-contracts`：`endless-cloud-workspace/1`、`cloud-generation-basis/1`、`cloud-event-segment/1`（每段最多 1000 个事件）、`cloud-adoption-manifest/1`（每页最多 500 条）、`cloud-content-revision/1`。段字段 `segmentHash` 是该段正文哈希；整段前缀哈希是 `history.eventHash`。未知版本拒绝写入。旧 `endless-workspace/1` 仍按原契约读取，不原地改写，也不经 `parseWorkspace` 当成云信封。
+- 有界 JSONL 扫描、编码、解码和读取在 `history-jsonl.ts`。第一行必须是唯一的工作区信封；修订的 `plannedAt` 必须与其依据一致，`authoredAt` 可以不同。这不是 C8 导出产品：`capabilities.exports` 仍为 false，没有历史 HTTP 路由，也不新增能力标志。`contracts.workspace` 仍报告 `endless-workspace/1`。
+- `packages/player` 用同一 reducer（`player-replay-1`，策略 S-B）。`projectSession` 委托 `replayEvents`；全量重放与前缀续接共用 `applyReplayEvent`。seen、证据连续状态、世界内部序号与顺序、答题去重可以往返。未知投影版本和旧的 `player-projection-1` 都拒绝续接。旧导出仍把 `seen` 与 streaks 留空，保持有损，以免既有云导入的字节比较失败。播放器包不依赖 `ts-fsrs`：桌面类型检查会沿导入跟踪播放器源码，卡片的 `due` 与 `last_review` 用结构冻结/解冻。
+- `SessionSchema` 的事件上限仍是 10,000。同步冲突恢复读取在 `event_seq` 超过 10,000 时仍拒绝。检查点验证超过 100,000（`REPLAY_VERIFY_EVENT_LIMIT`）时返回 `UNSUPPORTED_CONTRACT`，不截断历史。
+- 迁移 `0008_replay_checkpoints.sql`：FORCE RLS，只授予 SELECT 与 INSERT，投影版本限定 `player-replay-1`。API 双角色水位升到 8；邮件 Worker 仍是水位 2。`HistoryService.verifyStream` 按 1000 条一页重放库内正文，客户端快照不可信。谎报或重放失败返回 `CONTENT_REJECTED` 且不写行；旧投影或未知版本返回 `UNSUPPORTED_CONTRACT` 且不写行；省略声明时仍写入服务端快照；同一摘要幂等；不同摘要返回 `SYNC_CONFLICT`（409）。快照正文超过 2 MiB 时该列为空，摘要仍保存。没有公开 HTTP 路由，组合根也不引用该服务。段链由 `assertSegmentChain` 保持；这一轮按整条已存流重放，不按段向对象存储取正文。
+- 本机 v4 生成在调用开始时记下的时刻上执行 `planAtFrozenTime(localVerifiedPrefix(...))`。旧信封的 `generatedAt` 仍表示用来重建学习计划的时间；创作时间是 `authoredAt`。`cloudVerifiedPrefix` 在 `completePrefix !== true` 时拒绝。旧的 `content.plan` 路径未改。云生成 Worker 仍属 C5，没有接线，因此没有排队任务在重启后的再编译。
+- reducer 的 `EpisodeLoader.load` 对未访问的集不在启动时编译。Web 阅读器仍一次装入 AST，所以 C4-05 和「数据库已分页、前端仍全载」这条出口都未满足。
+
+### 10.2 明确不做
+
+- 不抬高 `SessionSchema` 的 10,000 上限，也不抬高同步冲突恢复的 10,000 上限。
+- 不改写既有 `endless-workspace/1`，也不把有损投影的 seen/streaks 填上。
+- 不开放历史 HTTP、导出、云生成、额度、计费、支付或 Edition 云同步。
+- 不把 C3 或 C4 标为阶段出口通过。
+- 不记录首屏、恢复或生成上下文准备耗时，也不自定时间门槛。C4 的测试清单要求这些数来自目标设备实测；本切片只有下面这一次合成重放。验收矩阵 H01（任意分段与全量逐字段一致）不因这次计时而通过。
+
+### 10.3 验证（2026-10-26）
+
+- `pnpm test`：全仓 **723** 项通过。API 209（云专项由上一轮的 101 增至 104，其中历史检查点 3 项，同步仍为 25）；Web 108；其余 406（desktop 3、cloud-contracts 5、esl 99、world 12、learning 18、director 45、player 16、lab 99、content 109）。
+- `pnpm typecheck`：全仓通过。
+- `pnpm build`：通过，包括 API 类型检查、Web 生产构建、PWA 清单与服务工作线程。主包 `dist/assets/index-D-nWY8ti.js` 为 1,170.85 kB，大于 500 kB 的警告仍在。
+- 本切片没有新页面，未重跑 `pnpm test:e2e`。§9.6 记录的 44 项是上一轮结果，不能算作本切片的浏览器验收。
+- 10,001 个逻辑事件：`SessionSchema.safeParse` 失败，reducer 仍完成。这是合成夹具，不是 10,001 行的 PostgreSQL 插入。
+- 100,000 个逻辑事件的合成 reducer 夹具（多集共享一份 AST，每集只推进一个场景）在这次全仓测试中打印 `{"replay100k":{"elapsedMs":1088,"heapDelta":183234640,"completed":100000}}`。183,234,640 字节约为 175 MiB 堆增量。这不是首屏、恢复或上下文准备测量，也不设通过时限。更早的孤立运行和失败那次全仓运行的数字不记入。
+- PostgreSQL 只把已有流的 `event_seq` 改成 100,001，验证返回 `UNSUPPORTED_CONTRACT`，`stream_events` 仍为 3 行。没有插入 100,000 行。
+- JSONL 读过 11 段 × 1,000 = 11,000 个事件，以及两页合计 501 条采用清单。
+- 学习计划：第一次 Good 仍是 Learning；到期后再一次 Good 进入 Review。`planAtFrozenTime` 在到期前 1 秒的 brief 不含该项；到期后且曝光不少于 2 次时包含该项。伪造计时器设到 2030-01-01 时，冻结计划仍与到期前的 `planCreative` 一致。`completePrefix: false` 被拒绝。云信封交给 `parseWorkspace` 会因不是 `endless-workspace` 而拒绝。
+- 迁移只在临时 PostgreSQL 测试集群运行。没有操作实际云库、真实对象存储、邮件供应商、模型或支付。
+
+### 10.4 任务对照
+
+| 计划任务 | 工程进度 | 仍缺 |
+| --- | --- | --- |
+| C4-01 云历史引用契约 | 五种契约与未知版本拒绝已有单测；旧工作区格式不改写 | 能力发现仍只通告 `endless-workspace/1` |
+| C4-02 同一 reducer | 初始化、应用事件、完整状态导出/导入与前缀续接共用一套；播放器既有测试与新 reducer 测试已通过 | 续接权威仍只是 `player-replay-1`，旧有损导出不能当检查点 |
+| C4-03 seen、连续状态、世界顺序、答题去重 | `player-replay-1` 往返 | 旧 `player-projection-1` 导出仍有损 |
+| C4-04 段验证、服务端检查点、版本分派 | 库存正文重放后写检查点；谎报、旧投影、未知版本不写行；同摘要幂等，异摘要 409 | 无 HTTP 路由；不按段向对象存储取正文 |
+| C4-05 按需加载与历史来源 | reducer 对未访问集懒加载已测 | Web 仍一次装入 AST。本项不勾 |
+| C4-06 本机/云已验证上下文 | 本机 v4 冻结计划时间；云适配器拒绝不完整前缀。创作政策未改 | 云 Worker 未接。本项不勾 |
+| C4-07 有界 JSONL | 扫描、编码、解码、读取已测 | 不是导出产品，`exports` 仍为 false。本项不勾 |
+| C4-08 越过 10,000 事件与 500 采用清单 | 合成夹具读过 11,000 事件与 501 条采用；10,001 时模式仍拒绝而 reducer 完成；超过 100,000 拒绝且不截断 | 冲突恢复路径仍是 10,000；PostgreSQL 未装入 10 万行 |
+| C4-09 plannedAt 与旧 generatedAt | 适配器与本机 v4 冻结计划时间；到期边界上的复习 brief 已证明 | 没有云队列 Worker，未做重启后再编译 |
+
+出口未过：完整历史的服务端检查点没有产品入口；Web 仍一次装入全部 AST；首屏、恢复和生成上下文准备耗时没有目标设备实测，也没有时间门槛。

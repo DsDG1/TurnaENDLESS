@@ -6,3 +6,5 @@ export * from './workspaces.js';
 export * from './objects.js';
 export * from './imports.js';
 export * from './sync.js';
+export * from './history.js';
+export * from './history-jsonl.js';

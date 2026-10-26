@@ -28,6 +28,7 @@ export * from './application-contract.js';
 export * from './archive.js';
 export * from './backup.js';
 export * from './cloud-import.js';
+export * from './cloud-context.js';
 export * from './context.js';
 export * from './lifecycle.js';
 export * from './revision.js';
