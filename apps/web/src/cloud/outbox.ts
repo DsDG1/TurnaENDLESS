@@ -1,5 +1,5 @@
 import { stableStringify } from '@endless/esl';
-import type { SyncCommand, SyncPlayerEvent } from '@endless/cloud-contracts';
+import { SyncPushRequestSchema, type SyncCommand, type SyncPlayerEvent, type SyncPushRequest } from '@endless/cloud-contracts';
 
 /**
  * 事务内 Outbox 的纯逻辑（计划 §8.3）。
@@ -46,6 +46,7 @@ export interface CloudSyncState {
   needsRebase: string[];
   lastError: string | null;
   lastSyncedAt: string | null;
+  pendingPush?: SyncPushRequest;
 }
 
 export const emptySyncState = (): CloudSyncState => ({
@@ -72,6 +73,7 @@ export function parseSyncState(raw: unknown): CloudSyncState {
     needsRebase: Array.isArray(value.needsRebase) ? value.needsRebase.filter((entry): entry is string => typeof entry === 'string') : [],
     lastError: typeof value.lastError === 'string' ? value.lastError : null,
     lastSyncedAt: typeof value.lastSyncedAt === 'string' ? value.lastSyncedAt : null,
+    ...(value.pendingPush === undefined ? {} : { pendingPush: SyncPushRequestSchema.parse(value.pendingPush) }),
   };
 }
 
@@ -98,7 +100,7 @@ export function planOutbox(input: {
   next: readonly BranchSlice[];
   sidecar: ReadonlyMap<string, SidecarEntry>;
   /** 远端已确认的事件身份：重放云端变更时不产生 Outbox 回环。 */
-  remote?: { streamId: string; startSeq: number; eventIds: readonly string[] };
+  remote?: { streamId: string; startSeq: number; eventIds: readonly string[]; prefixStreamId?: string };
   newId: () => string;
 }): SyncPlan {
   const plan: SyncPlan = { enqueue: [], sidecar: [], replaced: [] };
@@ -106,14 +108,15 @@ export function planOutbox(input: {
 
   for (const branch of input.next) {
     const held = stored.get(branch.id);
-    const parent = branch.parentBranchId ? stored.get(branch.parentBranchId) : undefined;
+    const prefixStreamId = input.remote?.streamId === branch.id ? input.remote.prefixStreamId : undefined;
+    const parent = branch.parentBranchId ? stored.get(branch.parentBranchId) : prefixStreamId ? stored.get(prefixStreamId) : undefined;
     let base: readonly unknown[];
     let replaysPrefix = true;
     if (held) {
       base = held.events;
     } else if (parent) {
       // 新分支复制父分支前缀：前缀沿用父流自己的事件身份，不重新分配
-      const forkAt = branch.forkAtEventCount ?? parent.events.length;
+      const forkAt = prefixStreamId ? input.remote!.startSeq - 1 : branch.forkAtEventCount ?? parent.events.length;
       base = parent.events.slice(0, forkAt);
       for (let index = 0; index < base.length; index++) {
         if (!same(branch.events[index], base[index])) { replaysPrefix = false; break; }

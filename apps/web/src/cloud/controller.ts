@@ -67,6 +67,7 @@ export interface CloudRepository extends SyncRepository {
   cloudInstallation(): Promise<CloudLocalInstallation | null>;
   installCloudCopy(workspace: Workspace, receipt: CloudImportReceipt, deviceId: string): Promise<{ existing: boolean; installation: CloudLocalInstallation }>;
   acknowledgeCloudInstallation(receipt: WorkspaceInstallation): Promise<void>;
+  rawSnapshot(): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -390,6 +391,35 @@ export class CloudController {
     });
   }
 
+  async keepConflict(conflictId: string): Promise<boolean> {
+    const workspaceId = this.state.sync?.workspaceId;
+    if (!workspaceId) return false;
+    return this.run('正在保留独立分支并恢复云端主线…', async () => {
+      const engine = await this.engineFor(workspaceId);
+      await engine.keep(conflictId);
+      await engine.refreshConflicts();
+      this.patch({ sync: await this.view(engine, '本机完整历史已保留为独立分支；原分支已恢复到云端历史，后续事件继续排队同步') });
+      return '';
+    });
+  }
+
+  async conflictPackage(): Promise<unknown | null> {
+    const workspaceId = this.state.sync?.workspaceId;
+    const me = this.state.me;
+    if (!workspaceId || !me) return null;
+    let snapshot: unknown = null;
+    const ok = await this.run('正在读取本机完整冲突包…', async () => {
+      await this.engineFor(workspaceId);
+      snapshot = {
+        format: 'endless-cloud-conflict-package/1',
+        namespace: cloudNamespace(me.context.deploymentId, me.account.id, workspaceId),
+        data: await this.engineRepository!.rawSnapshot(),
+      };
+      return '已读取本机完整冲突包（含历史、事件身份与恢复请求）；这不是云端导出，也不会自动覆盖任何存档';
+    });
+    return ok ? snapshot : null;
+  }
+
   private async engineFor(workspaceId: string): Promise<WorkspaceSync> {
     const me = this.state.me!;
     if (this.engine && this.engineWorkspace === workspaceId) return this.engine;
@@ -401,7 +431,7 @@ export class CloudController {
       repo: repository, api: this.deps.api, content: this.deps.content,
       workspaceId, deviceId: me.device.id,
       digest: (value) => cloudDigest(value),
-      newBatchId: () => this.deps.key(),
+      newBatchId: () => globalThis.crypto.randomUUID(),
     });
     return this.engine;
   }

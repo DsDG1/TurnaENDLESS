@@ -125,11 +125,38 @@ export const SyncBootstrapSchema = z.object({
   workspaceId: UuidSchema,
   cloudVersion: z.string().regex(/^\d+$/),
   changeSeq: z.number().int().nonnegative(),
-  /** 当前头部的拉取游标：新设备从「现在」开始，不需要重放别人的历史。 */
+  /** 当前头部的拉取游标；首次安装的原始副本从 origin 导入基线开始补拉。 */
   cursor: z.string().min(1).max(512),
   streams: z.array(SyncStreamBindingSchema),
+  origin: z.object({
+    cursor: z.string().min(1).max(512),
+    streams: z.array(SyncStreamBindingSchema),
+  }).strict().optional(),
 }).strict();
 export type SyncBootstrap = z.infer<typeof SyncBootstrapSchema>;
+
+export const SyncBranchManifestSchema = z.object({
+  streamId: SyncStreamIdSchema,
+  label: z.string().min(1).max(60),
+  parentBranchId: SyncStreamIdSchema.nullable(),
+  forkAtEventCount: z.number().int().nonnegative().nullable(),
+  adopted: z.array(z.object({
+    contentId: z.string().regex(/^ent_[0-9a-f-]{36}$/),
+    revisionId: z.string().regex(/^rev_[0-9a-f-]{36}$/),
+  }).strict()).min(1).max(500),
+  catalog: z.string().min(1).max(128),
+  createdAt: z.string().datetime(),
+  commonStreamId: SyncStreamIdSchema.nullable(),
+  commonPrefixSeq: z.number().int().nonnegative().max(10_000),
+}).strict();
+export type SyncBranchManifest = z.infer<typeof SyncBranchManifestSchema>;
+
+export const SyncStreamHistorySchema = z.object({
+  stream: SyncStreamBindingSchema,
+  branch: SyncBranchManifestSchema,
+  events: z.array(SyncEventEntrySchema).max(10_000),
+}).strict();
+export type SyncStreamHistory = z.infer<typeof SyncStreamHistorySchema>;
 
 export const SyncChangeSchema = z.object({
   seq: z.number().int().positive(),
@@ -140,6 +167,7 @@ export const SyncChangeSchema = z.object({
   toSeq: z.number().int().positive(),
   createdAt: z.string().datetime(),
   events: z.array(SyncEventEntrySchema).max(CLOUD_LIMITS.eventsPerBatch),
+  branch: SyncBranchManifestSchema.optional(),
 }).strict();
 export type SyncChange = z.infer<typeof SyncChangeSchema>;
 
@@ -158,7 +186,7 @@ export const SyncConflictSchema = z.object({
   streamId: SyncStreamIdSchema,
   deviceId: UuidSchema,
   reason: z.enum(['stream-head-changed', 'event-body-mismatch', 'event-digest-mismatch']),
-  status: z.enum(['open', 'discarded']),
+  status: z.enum(['open', 'discarded', 'preserved']),
   baseSeq: z.number().int().nonnegative(),
   cloudSeq: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
@@ -170,18 +198,24 @@ export type SyncConflict = z.infer<typeof SyncConflictSchema>;
 export const SyncConflictListSchema = z.object({ conflicts: z.array(SyncConflictSchema) });
 
 /**
- * 首版只支持 `discard`：明确放弃本机这批事件的推送，云端保留另一台设备的版本。
- * 「保留为独立分支」需要本地分支手术，尚未实现，不接受该决策也不假装支持。
+ * `discard` 明确放弃本机候选的推送；`keep-branch` 以稳定的新流 ID 保留候选。
+ * 独立分支与恢复回执在同一服务端事务提交，本机先保存完整历史与同一恢复请求。
  */
-export const ResolveConflictRequestSchema = z.object({
-  workspaceId: UuidSchema,
-  decision: z.literal('discard'),
-}).strict();
+export const ResolveConflictRequestSchema = z.discriminatedUnion('decision', [
+  z.object({ workspaceId: UuidSchema, decision: z.literal('discard') }).strict(),
+  z.object({
+    workspaceId: UuidSchema, decision: z.literal('keep-branch'),
+    streamId: SyncStreamIdSchema, baseEventId: UuidSchema.nullable(),
+  }).strict(),
+]);
 export type ResolveConflictRequest = z.infer<typeof ResolveConflictRequestSchema>;
 export const ResolveConflictResponseSchema = z.object({
   conflict: SyncConflictSchema,
   stream: SyncStreamBindingSchema,
+  preserved: SyncStreamBindingSchema.optional(),
+  history: SyncStreamHistorySchema.optional(),
 }).strict();
+export type ResolveConflictResponse = z.infer<typeof ResolveConflictResponseSchema>;
 
 /** 设备级界面状态：只属于该设备，不参与冲突判定，也不进入变更流。 */
 export const DeviceStreamStateSchema = z.object({

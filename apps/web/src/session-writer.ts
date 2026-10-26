@@ -1,4 +1,6 @@
 import type { Workspace } from '@endless/content';
+import type { ResolveConflictResponse } from '@endless/cloud-contracts';
+import type { PendingPreservation } from './cloud/conflict.js';
 
 /**
  * 写入协调层：只负责「内存工作区 → 递增 repositoryRevision → 原子提交 → 推进基线」。
@@ -19,7 +21,8 @@ export interface CommitOutcome {
 export interface CommitOptions {
   closingTicketId?: string;
   /** 远端已确认的事件身份：重放云端变更时不再产生 Outbox 回环。 */
-  remote?: { streamId: string; startSeq: number; eventIds: readonly string[] };
+  remote?: { streamId: string; startSeq: number; eventIds: readonly string[]; prefixStreamId?: string };
+  preservation?: { plan: PendingPreservation; result: ResolveConflictResponse };
 }
 
 export interface WorkspaceCommitter {

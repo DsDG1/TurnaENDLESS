@@ -51,7 +51,7 @@ const state = (patch: Partial<CloudState> = {}): CloudState => ({
 const actions: CloudActions = {
   refresh: vi.fn(), login: vi.fn(), verify: vi.fn(), logout: vi.fn(),
   preview: vi.fn(), confirm: vi.fn(), claim: vi.fn(), open: vi.fn(),
-  openSync: vi.fn(), sync: vi.fn(), pauseSync: vi.fn(), discardConflict: vi.fn(),
+  openSync: vi.fn(), sync: vi.fn(), pauseSync: vi.fn(), discardConflict: vi.fn(), keepConflict: vi.fn(), exportConflict: vi.fn(),
 };
 
 const render = (patch: Partial<CloudState> = {}, backup: () => unknown = () => ({ format: 'endless-backup' })) =>
@@ -137,6 +137,8 @@ describe('云端页面状态', () => {
     expect(html).toContain('3 条事件');
     expect(html).toContain('还没有成功同步过');
     expect(html).toContain('放弃本机候选');
+    expect(html).toContain('保留为独立分支');
+    expect(html).toContain('下载本机完整冲突包');
     expect(html).toContain('冲突不会自动合并');
     expect(html).not.toContain('已同步全部内容');
   });

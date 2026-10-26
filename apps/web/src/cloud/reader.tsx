@@ -17,17 +17,25 @@ const STOP_TEXT: Record<NonNullable<CloudReadView['stopped']>, string> = {
   prefix: '有分支的本机历史被整体替换过，已停止推送；不会把替换后的历史当成「追加」。',
 };
 
-export function CloudReadBanner({ view, syncing, onSync, exitHref }: {
+export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = [], activeBranchId, onBranch }: {
   view: CloudReadView | null;
   syncing: boolean;
   onSync(): void;
   exitHref: string;
+  branches?: readonly { id: string; label: string }[];
+  activeBranchId?: string;
+  onBranch?(id: string): void;
 }) {
   return <section className="surface cloud-reader" aria-label="云端副本同步状态">
     <div className="section-heading">
       <div><span className="eyebrow">CLOUD COPY</span><h2>正在读云端副本</h2></div>
       <Icon name="cloud" />
     </div>
+    {branches.length > 1 && <label>当前阅读分支（仅这台设备）
+      <select aria-label="当前阅读分支" value={activeBranchId} disabled={syncing} onChange={(event) => onBranch?.(event.target.value)}>
+        {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
+      </select>
+    </label>}
     {!view ? <p className="muted-copy">正在读取本机同步状态…</p> : <>
       <div className="cloud-facts">
         <div><span>本机待推送</span><strong>{view.pending ? `${view.pending} 条事件` : '没有待推送事件'}</strong></div>

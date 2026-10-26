@@ -249,7 +249,8 @@ function StoryApp({ route }: { route: AppRoute }) {
     <div className="workspace"><header className="topbar"><a href={hrefFor('home')} className="mobile-brand" aria-label="ENDLESS 首页"><Brand small /></a><span className="topbar-greeting">{route.shell === 'cloud' ? '正在读云端副本：只同步阅读事件。' : '内容都在本地，不需要登录。'}</span><div className="topbar-right"><span className="connection-state"><Icon name={pwa.offline ? 'cloud' : 'leaf'} size={15} />{pwa.offline ? '正在离线体验' : '已连接'}</span><span className="topbar-divider" /><span className="user-avatar" aria-label="本地用户">你</span></div></header>
       <main id="main-content" className="main-content" ref={heading} tabIndex={-1}>
         {player.notice && <div className="notice notice-error" role="alert"><Icon name="info" size={18} /><span>{player.notice}</span></div>}
-        {route.shell === 'cloud' && <CloudReadBanner view={player.cloudView} syncing={player.cloudSyncing} onSync={() => void player.syncNow()} exitHref="#cloud" />}
+        {route.shell === 'cloud' && <CloudReadBanner view={player.cloudView} syncing={player.cloudSyncing} onSync={() => void player.syncNow()} exitHref="#cloud"
+          branches={player.branches} activeBranchId={player.workspace?.activeBranchId} onBranch={(id) => { setReviewIndex(null); void player.switchBranchTo(id); }} />}
         {pwa.updateAvailable && <div className="notice"><Icon name="spark" size={18} /><span>有新版本可用。当前进度已保存后再更新。</span><button className="text-button" disabled={player.saving} onClick={() => void pwa.update()?.catch(() => {})}>更新应用<Icon name="arrow" size={15} /></button></div>}
         {page === 'home' && <Home view={view} current={episode} busy={player.busy} onSelect={(selected) => void select(selected)} library={library} player={player} onGenerate={() => void generate()} />}
         {page === 'library' && <LibraryPage player={player} />}

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { stableStringify } from '@endless/esl';
@@ -18,6 +18,7 @@ import { cloudFixture, closeServer, listenLoopback, TEST_MAIL_KEY, TEST_PEPPER }
 import { withClient } from './embedded-pg.js';
 import { fakeObjectStorage, S3_CREDENTIALS } from './object-storage-fixture.js';
 import { cloudTestContent as content, cloudTestWorkspace } from '../../../../packages/content/test/cloud-fixture.js';
+import type { Querier } from '../../src/cloud/db/client.js';
 
 type StreamId = z.infer<typeof SyncStreamIdSchema>;
 
@@ -34,6 +35,7 @@ let b: AuthContext;
 let second: AuthContext;
 let cookie: string;
 let cookieB: string;
+let secondCookie: string;
 const ORIGIN = 'https://endless.example.test';
 const sha = (value: unknown) => createHash('sha256').update(stableStringify(value)).digest('hex');
 const bytes = (workspace: Workspace) => Buffer.from(JSON.stringify(buildBackup(workspace)));
@@ -112,7 +114,7 @@ beforeAll(async () => {
   // 同一账号的第二台设备：跨设备同步不能靠「另一个账号」冒充
   await withClient(fixture.cluster.adminDsn, (q) => q.query("UPDATE auth_challenges SET created_at = now() - interval '2 minutes'"));
   const another = await login(first.email);
-  a = first.ctx; cookie = first.cookie; b = other.ctx; cookieB = other.cookie; second = another.ctx;
+  a = first.ctx; cookie = first.cookie; b = other.ctx; cookieB = other.cookie; second = another.ctx; secondCookie = another.cookie;
   expect(second.accountId).toBe(a.accountId);
   expect(second.deviceId).not.toBe(a.deviceId);
   server = createCloudServer({
@@ -201,6 +203,10 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     });
     expect(second.receipt).toMatchObject({ applied: 1, changeSeq: 2 });
     expect(second.receipt.streams[0]).toMatchObject({ eventSeq: 2, lastEventId: all[1]!.eventId });
+    const installedLater = await sync.bootstrap(a, workspaceId);
+    expect(installedLater.origin?.streams[0]).toMatchObject({ eventSeq: 0, lastEventId: null });
+    expect(installedLater.origin?.cursor).toBe(cursorOf(workspaceId));
+    expect(installedLater.streams[0]).toMatchObject({ eventSeq: 2, lastEventId: all[1]!.eventId });
 
     const firstPage = await sync.pull(a, workspaceId, cursorOf(workspaceId), 1);
     expect(firstPage.changes.map((change) => change.seq)).toEqual([1]);
@@ -265,6 +271,9 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     })).rejects.toMatchObject({ code: 'SYNC_CONFLICT' });
     const conflicts = await sync.conflicts(a, workspaceId);
     expect(conflicts.conflicts[0]).toMatchObject({ reason: 'event-body-mismatch', status: 'open' });
+    await expect(sync.resolve(a, workspaceId, conflicts.conflicts[0]!.id, {
+      workspaceId, decision: 'keep-branch', streamId: `brn_${randomUUID()}`, baseEventId: one.eventId,
+    })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     const changes = await sync.pull(a, workspaceId, cursorOf(workspaceId), 10);
     expect(changes.changes.flatMap((change) => change.events).map((event) => event.digest)).toEqual([one.digest]);
   });
@@ -362,6 +371,71 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     }
   });
 
+  it('保留冲突创建独立根流，共同前缀只复制成员关系，重试不重复创建', async () => {
+    const local = cloudTestWorkspace();
+    const { workspaceId, bootstrap } = await imported(local);
+    const { left, right, split } = diverge(local);
+    if (split) await sync.push(a, {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: streamOf(local), baseSeq: 0, baseEventId: null, events: left.slice(0, split) }],
+    });
+    const baseEventId = split ? left[split - 1]!.eventId : null;
+    await sync.push(a, {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: streamOf(local), baseSeq: split, baseEventId, events: left.slice(split) }],
+    });
+    const rejected = {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: streamOf(local), baseSeq: split, baseEventId, events: right.slice(split) }],
+    };
+    await expect(sync.push(second, rejected)).rejects.toMatchObject({ code: 'SYNC_CONFLICT' });
+    const attempts = await Promise.allSettled(Array.from({ length: 5 }, () => sync.push(second, rejected)));
+    expect(attempts.every((attempt) => attempt.status === 'rejected' && attempt.reason.code === 'SYNC_CONFLICT')).toBe(true);
+    expect((await sync.conflicts(second, workspaceId)).conflicts).toHaveLength(1);
+    await expect(sync.push(second, { ...rejected, baseVersion: '999' })).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+    const conflict = (await sync.conflicts(second, workspaceId)).conflicts[0]!;
+    const input = { workspaceId, decision: 'keep-branch' as const, streamId: `brn_${randomUUID()}`, baseEventId };
+    const first = await request(`/sync/conflicts/${conflict.id}/resolve`, 'POST', input,
+      `__Host-endless_session=unused`);
+    expect(first.status).toBe(401);
+    await expect(sync.resolve(second, workspaceId, conflict.id, { ...input, baseEventId: randomUUID() }))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const tx = fixture.app.withTenant.bind(fixture.app);
+    const failure = vi.spyOn(fixture.app, 'withTenant').mockImplementation((account, fn) => tx(account, (q) => fn({
+      query: ((text, params) => {
+        if (text.includes("SET status = 'preserved'")) throw new Error('synthetic resolution commit failure');
+        return q.query(text, params);
+      }) as Querier['query'],
+    })));
+    try {
+      await expect(sync.resolve(second, workspaceId, conflict.id, input)).rejects.toThrow('synthetic resolution commit failure');
+    } finally {
+      failure.mockRestore();
+    }
+    expect((await sync.bootstrap(a, workspaceId)).streams.map((entry) => entry.streamId)).toEqual([streamOf(local)]);
+    expect((await sync.conflicts(second, workspaceId)).conflicts[0]!.status).toBe('open');
+    const results = await Promise.all(Array.from({ length: 5 }, () => sync.resolve(second, workspaceId, conflict.id, input)));
+    expect(results.every((result) => stableStringify(result) === stableStringify(results[0]))).toBe(true);
+    const kept = results[0] as any;
+    expect(kept.conflict.status).toBe('preserved');
+    expect(kept.preserved.streamId).toBe(input.streamId);
+    const repeated = await request(`/sync/conflicts/${conflict.id}/resolve`, 'POST', input, secondCookie);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body).toEqual(kept);
+    expect(await sync.resolve(a, workspaceId, conflict.id, input)).toEqual(kept);
+    expect(kept.history.events.map((entry: SyncEventEntry) => entry.eventId)).toEqual(left.map((entry) => entry.eventId));
+    const changes = await sync.pull(a, workspaceId, cursorOf(workspaceId), 100);
+    const fork = changes.changes.find((change) => change.streamId === input.streamId)!;
+    expect((fork as any).branch).toMatchObject({ parentBranchId: null, forkAtEventCount: null, commonStreamId: streamOf(local), commonPrefixSeq: split });
+    expect(fork.events.map((entry) => entry.eventId)).toEqual(right.slice(split).map((entry) => entry.eventId));
+    await fixture.app.withTenant(a.accountId, async (q) => {
+      expect((await q.query('SELECT * FROM event_objects WHERE workspace_id = $1', [workspaceId])).rows).toHaveLength(left.length + right.length - split);
+    });
+    await expect(sync.resolve(second, workspaceId, conflict.id, { ...input, streamId: `brn_${randomUUID()}` }))
+      .rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+    await expect(sync.resolve(b, workspaceId, conflict.id, input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('游标超前、换代或损坏时明确要求重新引导', async () => {
     const local = cloudTestWorkspace();
     const { workspaceId } = await imported(local);
@@ -369,6 +443,28 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     await expect(sync.pull(a, workspaceId, encodeSyncCursor(workspaceId, 0, 7))).rejects.toMatchObject({ code: 'CURSOR_EXPIRED' });
     await expect(sync.pull(a, workspaceId, 'not-a-cursor')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     await expect(sync.pull(a, workspaceId, encodeSyncCursor(randomUUID(), 0, 1))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('前缀冲突掩盖的坏摘要不能通过保留分支入库，整笔创建回滚', async () => {
+    const local = cloudTestWorkspace();
+    const { workspaceId, bootstrap } = await imported(local);
+    const first = entries(play(local, { limit: 1 }));
+    await sync.push(a, {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: streamOf(local), baseSeq: 0, baseEventId: null, events: first }],
+    });
+    const candidate = entries(play(local, { limit: 1 })).map((entry) => ({ ...entry, digest: '0'.repeat(64) }));
+    await expect(sync.push(second, {
+      workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: streamOf(local), baseSeq: 0, baseEventId: null, events: candidate }],
+    })).rejects.toMatchObject({ code: 'SYNC_CONFLICT' });
+    const conflict = (await sync.conflicts(second, workspaceId)).conflicts[0]!;
+    const before = await sync.bootstrap(second, workspaceId);
+    await expect(sync.resolve(second, workspaceId, conflict.id, {
+      workspaceId, decision: 'keep-branch', streamId: `brn_${randomUUID()}`, baseEventId: null,
+    })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await sync.bootstrap(second, workspaceId)).toEqual(before);
+    expect((await sync.conflicts(second, workspaceId)).conflicts[0]!.status).toBe('open');
   });
 
   it('跨账号读写工作区一律拒绝，不泄露事件与冲突', async () => {

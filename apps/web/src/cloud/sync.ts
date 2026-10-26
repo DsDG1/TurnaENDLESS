@@ -1,9 +1,10 @@
 import { stableStringify } from '@endless/esl';
-import { applyPlayerCommand, type Content, type Workspace } from '@endless/content';
-import { CLOUD_LIMITS, type SyncBootstrap, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
-import { SessionCommitter, type CommitOutcome } from '../session-writer.js';
+import { applyPlayerCommand, parseWorkspace, switchBranch, type Content, type Workspace } from '@endless/content';
+import { CLOUD_LIMITS, type ResolveConflictResponse, type SyncBootstrap, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
+import { SessionCommitter, type CommitOptions, type CommitOutcome } from '../session-writer.js';
+import { preservedWorkspace, type PendingPreservation } from './conflict.js';
 import { CloudFailure } from './client.js';
-import { emptySyncState, outgoing, type CloudSyncState, type OutboxEntry } from './outbox.js';
+import { commandOfEvent, emptySyncState, outgoing, type CloudSyncState, type OutboxEntry } from './outbox.js';
 
 /**
  * 增量同步驱动（计划 §8.3–8.7）。不依赖 React，全部副作用可注入。
@@ -21,8 +22,11 @@ export interface SyncRepository {
   saveSyncState(state: CloudSyncState): Promise<void>;
   acknowledgePush(receipt: SyncPushReceipt, keys: readonly string[]): Promise<void>;
   discardConflict(streamId: string, binding: { seq: number; eventId: string | null }): Promise<void>;
+  pendingPreservation(): Promise<PendingPreservation | null>;
+  preparePreservation(conflict: SyncConflict, streamId: string): Promise<PendingPreservation>;
+  releasePreservation(plan: PendingPreservation): Promise<void>;
   load(): Promise<Workspace | null>;
-  commit(next: Workspace, options?: { remote?: { streamId: string; startSeq: number; eventIds: readonly string[] } }): Promise<void | CommitOutcome>;
+  commit(next: Workspace, options?: CommitOptions): Promise<void | CommitOutcome>;
 }
 
 export interface SyncApiPort {
@@ -33,7 +37,7 @@ export interface SyncApiPort {
     changes: SyncChange[]; nextCursor: string; hasMore: boolean; cloudVersion: string;
   }>;
   conflicts(workspaceId: string): Promise<{ conflicts: SyncConflict[] }>;
-  resolveConflict(workspaceId: string, conflictId: string, decision: 'discard'): Promise<{ conflict: SyncConflict; stream: { eventSeq: number; lastEventId: string | null } }>;
+  resolveConflict(workspaceId: string, conflictId: string, decision: 'discard' | 'keep-branch', preservation?: { streamId: string; baseEventId: string | null }): Promise<ResolveConflictResponse>;
 }
 
 export interface SyncDeps {
@@ -97,6 +101,13 @@ export class WorkspaceSync {
         const pending = (await this.deps.repo.pendingOutbox()).length;
         return { pushed: 0, applied: 0, pending, stopped: null, note: '同步已暂停；本机事件继续排队，不会被丢弃' };
       }
+      const preservation = await this.deps.repo.pendingPreservation();
+      if (preservation) await this.keep(preservation.conflict.id);
+      const fresh = await this.deps.repo.syncState();
+      if (fresh.conflicts.length) return {
+        pushed: 0, applied: 0, pending: (await this.deps.repo.pendingOutbox()).length,
+        stopped: 'conflict', note: stopText.conflict,
+      };
       const pushed = await this.pushOnce();
       if (pushed.stopped) return pushed;
       const pulled = await this.pullOnce();
@@ -119,6 +130,7 @@ export class WorkspaceSync {
 
   async pushOnce(): Promise<SyncReport> {
     const state = await this.deps.repo.syncState();
+    if (state.pendingPush) return this.submitPush(state.pendingPush);
     const pending = await this.deps.repo.pendingOutbox();
     if (!pending.length) {
       return state.needsRebase.length
@@ -155,9 +167,8 @@ export class WorkspaceSync {
 
     let budget = CLOUD_LIMITS.eventsPerBatch;
     const streams: SyncPushRequest['streams'] = [];
-    const keys: string[] = [];
     for (const group of groups) {
-      if (budget <= 0) break;
+      if (budget <= 0 || streams.length === 8) break;
       const events = group.events.slice(0, budget);
       if (!events.length) continue;
       budget -= events.length;
@@ -168,33 +179,46 @@ export class WorkspaceSync {
           event: entry.event, command: entry.command, digest: await this.deps.digest(entry.event),
         }))),
       });
-      for (const entry of events) keys.push(`${entry.streamId}:${entry.seq}`);
     }
 
+    const input: SyncPushRequest = {
+      workspaceId: this.deps.workspaceId, batchId: this.deps.newBatchId(),
+      baseVersion: current.cloudVersion ?? '0', streams,
+    };
+    await this.deps.repo.saveSyncState({ ...current, pendingPush: input });
+    return this.submitPush(input, registered);
+  }
+
+  private async submitPush(input: SyncPushRequest, registered?: { blocked: number; note: string }): Promise<SyncReport> {
+    const keys = input.streams.flatMap((stream) => stream.events.map((entry) => `${stream.streamId}:${entry.seq}`));
     try {
-      const { receipt } = await this.deps.api.push({
-        workspaceId: this.deps.workspaceId, batchId: this.deps.newBatchId(),
-        baseVersion: current.cloudVersion ?? '0', streams,
-      });
+      const { receipt } = await this.deps.api.push(input);
+      if (receipt.batchId !== input.batchId || receipt.workspaceId !== input.workspaceId
+        || input.streams.some((stream) => {
+          const held = receipt.streams.find((entry) => entry.streamId === stream.streamId);
+          const last = stream.events.at(-1)!;
+          return !held || held.eventSeq !== last.seq || held.lastEventId !== last.eventId;
+        })) throw new CloudFailure('INVALID_RESPONSE', 200, '推送回执与已保存批次不一致；本机事件保留，可恢复原请求');
       await this.deps.repo.acknowledgePush(receipt, keys);
       const left = (await this.deps.repo.pendingOutbox()).length;
       const note = [`已推送 ${receipt.applied} 条事件`];
       // 还有事件排不上：说清是「分支没有云端事件流」，不要只留下一个待推送数字
-      if (registered.blocked) note.push('另有分支还没有云端事件流（父流前缀未推完或缺少父流记录），事件已保留');
-      if (registered.note) note.push(registered.note);
+      if (registered?.blocked) note.push('另有分支还没有云端事件流（父流前缀未推完或缺少父流记录），事件已保留');
+      if (registered?.note) note.push(registered.note);
       return { pushed: receipt.applied, applied: 0, pending: left, stopped: null, note: note.join('；') };
     } catch (error) {
       if (error instanceof CloudFailure && error.code === 'SYNC_CONFLICT') {
         const state0 = await this.deps.repo.syncState();
         await this.deps.repo.saveSyncState({
           ...state0,
+          pendingPush: undefined,
           lastError: error.message,
           conflicts: [...state0.conflicts, {
-            id: error.conflictId ?? 'unknown', streamId: groups[0]!.streamId,
-            baseSeq: groups[0]!.baseSeq, cloudSeq: -1, createdAt: this.now().toISOString(),
+            id: error.conflictId ?? 'unknown', streamId: input.streams[0]!.streamId,
+            baseSeq: input.streams[0]!.baseSeq, cloudSeq: -1, createdAt: this.now().toISOString(),
           }],
         });
-        return { pushed: 0, applied: 0, pending: pending.length, stopped: 'conflict', note: stopText.conflict };
+        return { pushed: 0, applied: 0, pending: (await this.deps.repo.pendingOutbox()).length, stopped: 'conflict', note: stopText.conflict };
       }
       await this.fail(error instanceof Error ? error.message : '推送失败');
       throw error;
@@ -249,10 +273,10 @@ export class WorkspaceSync {
   private async bootstrap(state: CloudSyncState): Promise<CloudSyncState | null> {
     const boot = await this.deps.api.bootstrap(this.deps.workspaceId);
     const streams: CloudSyncState['streams'] = {};
-    for (const stream of boot.streams) streams[stream.streamId] = { seq: stream.eventSeq, eventId: stream.lastEventId };
+    for (const stream of boot.origin?.streams ?? boot.streams) streams[stream.streamId] = { seq: stream.eventSeq, eventId: stream.lastEventId };
     const next: CloudSyncState = {
       ...state, streams,
-      cloudVersion: boot.cloudVersion, cursor: boot.cursor,
+      cloudVersion: boot.cloudVersion, cursor: boot.origin?.cursor ?? boot.cursor,
       lastError: null,
     };
     await this.deps.repo.saveSyncState(next);
@@ -301,7 +325,7 @@ export class WorkspaceSync {
         if (!known || change.toSeq > known.seq) {
           streams[change.streamId] = { seq: change.toSeq, eventId: last?.eventId ?? null };
         }
-        if (change.deviceId === this.deps.deviceId) continue; // 本机自己写的事件，已经在本机
+        if (change.deviceId === this.deps.deviceId && !change.branch?.commonStreamId) continue; // 本机自己写的事件，已经在本机
         const outcome = await this.applyChange(change);
         if (outcome !== 'applied' && outcome !== 'empty') {
           await this.deps.repo.saveSyncState({ ...(await this.deps.repo.syncState()), streams });
@@ -327,13 +351,42 @@ export class WorkspaceSync {
     if (!stored) return 'prefix';
     let workspace = stored;
     let applied = 0;
+    if (!workspace.branches.some((branch) => branch.id === change.streamId)) {
+      const manifest = change.branch;
+      const prefix = manifest?.commonStreamId ? workspace.branches.find((branch) => branch.id === manifest.commonStreamId) : null;
+      if (!manifest || !prefix || prefix.session.events.length < manifest.commonPrefixSeq
+        || manifest.commonPrefixSeq !== change.fromSeq) return 'prefix';
+      try {
+        const first = workspace.revisions.find((revision) => revision.id === manifest.adopted[0]?.revisionId);
+        if (!first) return 'replay';
+        workspace = parseWorkspace({
+          ...workspace,
+          branches: [...workspace.branches, {
+            id: manifest.streamId, label: manifest.label, parentBranchId: manifest.parentBranchId,
+            forkAtEventCount: manifest.forkAtEventCount, adopted: manifest.adopted, createdAt: manifest.createdAt,
+            session: {
+              version: 1, catalog: manifest.catalog, current: first.episodeId, largeText: false, revision: 0,
+              events: prefix.session.events.slice(0, manifest.commonPrefixSeq),
+            },
+          }],
+        });
+      } catch { return 'replay'; }
+    }
     for (const entry of change.events) {
       const branch = workspace.branches.find((candidate) => candidate.id === change.streamId);
       if (!branch) return applied ? 'replay' : 'prefix';
+      if (await this.deps.digest(entry.event) !== entry.digest || entry.at !== entry.event.at
+        || stableStringify(entry.command) !== stableStringify(commandOfEvent(entry.event))) return 'replay';
+      if (branch.session.events.length >= entry.seq) {
+        if (stableStringify(branch.session.events[entry.seq - 1]) !== stableStringify(entry.event)) return 'prefix';
+        continue;
+      }
       if (branch.session.events.length !== entry.seq - 1) return applied ? 'replay' : 'prefix';
       let next: Workspace;
       try {
-        next = applyPlayerCommand(this.deps.content, workspace, entry.command, new Date(entry.at));
+        const selected = applyPlayerCommand(this.deps.content, switchBranch(workspace, branch.id),
+          { type: 'select', episode: entry.event.episode }, new Date(entry.at));
+        next = applyPlayerCommand(this.deps.content, selected, entry.command, new Date(entry.at));
       } catch (error) {
         const message = error instanceof Error ? error.message : '';
         return message.includes('生成任务进行中') ? 'ticket' : 'replay';
@@ -345,9 +398,19 @@ export class WorkspaceSync {
       applied++;
     }
     if (!applied) return 'empty';
+    workspace = {
+      ...workspace, activeBranchId: stored.activeBranchId,
+      branches: workspace.branches.map((branch) => {
+        const held = stored.branches.find((before) => before.id === branch.id);
+        return held ? { ...branch, session: { ...branch.session, current: held.session.current, largeText: held.session.largeText } } : branch;
+      }),
+    };
     const writer = new SessionCommitter(this.deps.repo, stored.identity.repositoryRevision);
     const result = await writer.commit(workspace, {
-      remote: { streamId: change.streamId, startSeq: change.fromSeq + 1, eventIds: change.events.map((entry) => entry.eventId) },
+      remote: {
+        streamId: change.streamId, startSeq: change.fromSeq + 1, eventIds: change.events.map((entry) => entry.eventId),
+        ...(change.branch?.commonStreamId ? { prefixStreamId: change.branch.commonStreamId } : {}),
+      },
     });
     if (!result.ok) return 'replay';
     return 'applied';
@@ -358,7 +421,8 @@ export class WorkspaceSync {
     const state = await this.deps.repo.syncState();
     await this.deps.repo.saveSyncState({
       ...state,
-      conflicts: listed.conflicts.map((conflict) => ({
+      conflicts: listed.conflicts.filter((conflict) => conflict.status === 'open'
+        && (conflict.deviceId === this.deps.deviceId || state.conflicts.some((held) => held.id === conflict.id))).map((conflict) => ({
         id: conflict.id, streamId: conflict.streamId,
         baseSeq: conflict.baseSeq, cloudSeq: conflict.cloudSeq, createdAt: conflict.createdAt,
       })),
@@ -366,8 +430,42 @@ export class WorkspaceSync {
     return listed.conflicts;
   }
 
+  async keep(conflictId: string): Promise<void> {
+    let plan = await this.deps.repo.pendingPreservation();
+    if (plan && plan.conflict.id !== conflictId) throw new Error('请先恢复已经提交的同一份冲突保留请求');
+    if (!plan) {
+      const listed = await this.deps.api.conflicts(this.deps.workspaceId);
+      const conflict = listed.conflicts.find((entry) => entry.id === conflictId);
+      if (!conflict) throw new Error('这台设备没有该冲突候选');
+      plan = await this.deps.repo.preparePreservation(conflict, `brn_${this.deps.newBatchId()}`);
+    }
+    let result: ResolveConflictResponse;
+    try {
+      result = await this.deps.api.resolveConflict(this.deps.workspaceId, conflictId, 'keep-branch', {
+        streamId: plan.request.streamId, baseEventId: plan.request.baseEventId,
+      });
+    } catch (error) {
+      if (error instanceof CloudFailure && (error.code === 'BAD_REQUEST' || error.code === 'STORAGE_QUOTA')) {
+        await this.deps.repo.releasePreservation(plan);
+      }
+      throw error;
+    }
+    for (const [index, entry] of (result.history?.events ?? []).entries()) {
+      if (entry.seq !== index + 1 || entry.at !== entry.event.at
+        || await this.deps.digest(entry.event) !== entry.digest
+        || stableStringify(entry.command) !== stableStringify(commandOfEvent(entry.event))) {
+        throw new Error('云端恢复历史摘要、命令或顺序不一致，完整本机历史保留');
+      }
+    }
+    const next = preservedWorkspace(plan, result, this.deps.content);
+    const writer = new SessionCommitter(this.deps.repo, plan.workspace.identity.repositoryRevision);
+    const outcome = await writer.commit(next, { preservation: { plan, result } });
+    if (!outcome.ok) throw new Error(outcome.error);
+  }
+
   /** 明确放弃本机这批候选：云端保留另一台设备的版本，本机不再推送该分支。 */
   async discard(conflictId: string): Promise<void> {
+    if (await this.deps.repo.pendingPreservation()) throw new Error('已有保留请求尚未完成，请用「立即同步」恢复同一请求，不能切换为放弃');
     const resolved = await this.deps.api.resolveConflict(this.deps.workspaceId, conflictId, 'discard');
     await this.deps.repo.discardConflict(resolved.conflict.streamId, {
       seq: resolved.stream.eventSeq, eventId: resolved.stream.lastEventId,

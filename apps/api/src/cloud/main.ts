@@ -34,7 +34,7 @@ try {
   }) : undefined;
   const imports = objects && content ? new ImportService(app, objects, content, deployment) : undefined;
   const syncConfig = loadCloudSyncConfig(process.env, !!imports);
-  const sync = syncConfig ? new SyncService(app) : undefined;
+  const sync = syncConfig ? new SyncService(app, async (ctx, id) => (await imports!.package(ctx, id)).workspace) : undefined;
   const server = createCloudServer({
     auth,
     app,

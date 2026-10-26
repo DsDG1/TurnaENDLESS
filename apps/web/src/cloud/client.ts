@@ -10,7 +10,7 @@ import {
   type InstallWorkspaceRequest, type MeResponse, type VerifyRequest, type VerifyResponse,
   type WorkspaceInstallation, type SyncBootstrap, type SyncPushRequest, type SyncPushReceipt,
   type SyncPullResponse, type SyncConflict, type SyncStreamBinding, type DeviceStreamState,
-  type PutDeviceStreamStateRequest, type RegisterStreamRequest,
+  type PutDeviceStreamStateRequest, type RegisterStreamRequest, type ResolveConflictResponse,
 } from '@endless/cloud-contracts';
 
 /**
@@ -110,7 +110,7 @@ export interface CloudApiPort {
   push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
   pull(workspaceId: string, cursor: string | null, limit?: number): Promise<SyncPullResponse>;
   conflicts(workspaceId: string): Promise<{ conflicts: SyncConflict[] }>;
-  resolveConflict(workspaceId: string, conflictId: string, decision: 'discard'): Promise<{ conflict: SyncConflict; stream: SyncStreamBinding }>;
+  resolveConflict(workspaceId: string, conflictId: string, decision: 'discard' | 'keep-branch', preservation?: { streamId: string; baseEventId: string | null }): Promise<ResolveConflictResponse>;
   deviceStates(workspaceId: string): Promise<DeviceStreamState[]>;
   putDeviceStates(input: PutDeviceStreamStateRequest): Promise<DeviceStreamState[]>;
 }
@@ -207,9 +207,9 @@ export class CloudApi implements CloudApiPort {
     return parse(SyncConflictListSchema, await request(this.fetcher, `/sync/conflicts?workspaceId=${encodeURIComponent(workspaceId)}`));
   }
 
-  async resolveConflict(workspaceId: string, conflictId: string, decision: 'discard') {
+  async resolveConflict(workspaceId: string, conflictId: string, decision: 'discard' | 'keep-branch', preservation?: { streamId: string; baseEventId: string | null }) {
     return parse(ResolveConflictResponseSchema, await request(this.fetcher, `/sync/conflicts/${conflictId}/resolve`, {
-      method: 'POST', contentType: 'application/json', body: JSON.stringify({ workspaceId, decision }),
+      method: 'POST', contentType: 'application/json', body: JSON.stringify({ workspaceId, decision, ...preservation }),
     }));
   }
 

@@ -16,6 +16,16 @@ const render = (view: CloudReadView | null, syncing = false) => renderToStaticMa
 }));
 
 describe('云副本阅读状态条', () => {
+  it('独立分支可在阅读器里选择，并明确选择仅属于本机', () => {
+    const html = renderToStaticMarkup(createElement(CloudReadBanner, {
+      view: base, syncing: false, onSync: vi.fn(), exitHref: '#cloud',
+      branches: [{ id: 'main', label: '主线' }, { id: 'kept', label: '主线 · 离线保留' }],
+      activeBranchId: 'kept', onBranch: vi.fn(),
+    }));
+    expect(html).toContain('当前阅读分支（仅这台设备）');
+    expect(html).toContain('value="kept" selected=""');
+    expect(html).toContain('主线 · 离线保留');
+  });
   it('还没有同步过就不写「已同步」；待推送条数如实显示', () => {
     const html = render({ ...base, pending: 3 });
     expect(html).toContain('3 条事件');

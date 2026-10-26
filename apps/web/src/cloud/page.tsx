@@ -3,6 +3,7 @@ import { CLOUD_LIMITS, type CloudImportPreview } from '@endless/cloud-contracts'
 import type { CloudState } from './controller.js';
 import { useCloud } from './use-cloud.js';
 import { Icon } from '../components/icons.js';
+import { downloadSession } from '../storage.js';
 
 /**
  * 云端页面（计划 §15.1 的最小入口，不是 C8 的完整客户端）。
@@ -24,6 +25,8 @@ export interface CloudActions {
   sync(): void;
   pauseSync(paused: boolean): void;
   discardConflict(conflictId: string): void;
+  keepConflict(conflictId: string): void;
+  exportConflict(): void;
 }
 
 const RETRY_HINT: Record<string, string> = {
@@ -112,13 +115,15 @@ function SyncCard({ sync, enabled, busy, actions }: {
       {sync.conflicts.map((conflict) => <li key={conflict.id}>
         <span>冲突 · 分支 {short(conflict.streamId)}</span>
         <small>本机前缀 {conflict.baseSeq}{conflict.cloudSeq >= 0 ? ` / 云端 ${conflict.cloudSeq}` : ''}</small>
+        <button className="text-button" disabled={busy || !enabled} onClick={() => actions.keepConflict(conflict.id)}>保留为独立分支</button>
         <button className="text-button" disabled={busy} onClick={() => actions.discardConflict(conflict.id)}>放弃本机候选</button>
       </li>)}
     </ul>}
+    {!!sync.conflicts.length && <button className="button button-outline" disabled={busy} onClick={() => actions.exportConflict()}>下载本机完整冲突包</button>}
     <p className="section-footnote">
       同步只搬运真实阅读事件：同一批次只会生效一次，事件身份在本地提交时分配，重试沿用同一个。
-      跨设备「把云端事件应用到本机阅读器」还缺云库阅读入口；标题、标签、回收站等元数据同步和
-      「保留为独立分支」也尚未实现——这里不会显示成已完成。
+      可把离线冲突保留为独立分支并恢复云端主线；标题、标签、回收站等元数据仍没有同步通道。
+      保留中断后可点「立即同步」恢复同一请求，不会重新创建分支。
     </p>
   </section>;
 }
@@ -269,5 +274,9 @@ export function CloudRoute({ backup }: { backup(): unknown | null }) {
     sync: () => void controller.runSync(),
     pauseSync: (paused) => void controller.setSyncPaused(paused),
     discardConflict: (conflictId) => void controller.discardConflict(conflictId),
+    keepConflict: (conflictId) => void controller.keepConflict(conflictId),
+    exportConflict: () => void controller.conflictPackage().then((value) => {
+      if (value) downloadSession(value, 'endless-cloud-conflict.json');
+    }),
   }} />;
 }
