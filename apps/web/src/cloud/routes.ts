@@ -13,8 +13,8 @@ import { cloudNamespace } from './local.js';
 export const PAGES = ['home', 'watch', 'progress', 'library', 'edition', 'settings', 'cloud'] as const;
 export type Page = typeof PAGES[number];
 
-/** 云副本里只开放阅读相关页面；内容管理与偏好设置属于本机存档。 */
-export const CLOUD_PAGES = ['home', 'watch', 'progress'] as const;
+/** Cloud library exposes only the implemented display and recycle commands. */
+export const CLOUD_PAGES = ['home', 'watch', 'progress', 'library'] as const;
 
 export interface CloudTarget {
   deploymentId: string;

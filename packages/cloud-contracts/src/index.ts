@@ -8,3 +8,7 @@ export * from './imports.js';
 export * from './sync.js';
 export * from './history.js';
 export * from './history-jsonl.js';
+export * from './metadata.js';
+export * from './management.js';
+export * from './archives.js';
+export * from './revisions.js';

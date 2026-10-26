@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { episodeCompletion, getScenes, projectSession, type PlayerCommand, type PlayerView } from '@endless/player';
 import {
   adoptRevision, applyPlayerCommand, assertNoSecrets, attachVolume, bridge, buildBackup, buildGenerationContext,
-  openCloudCatalog,
+  memoryCatalogCache, openCloudCatalog,
+  type CloudCatalogCache,
   buildVolume, cancelTicket, commitTicketResult, createWorkspace, detachVolume, markTicketFailed,
   markTicketSubmitted, parseBackup, previewRevision, purgeContent, purgePreview, reserveTicket,
   restoreContent, suggestVolumes, switchBranch, trashContent, updateDisplay, waiveObligation,
@@ -15,7 +16,12 @@ import { SessionCommitter } from './session-writer.js';
 import { apiStatus, generateEpisode } from './api.js';
 import { CloudApi } from './cloud/client.js';
 import { cloudDigest } from './cloud/local.js';
-import { WorkspaceSync } from './cloud/sync.js';
+import { WorkspaceSync, type SyncReport } from './cloud/sync.js';
+import { ManagementSync } from './cloud/management-sync.js';
+import type { LifecycleState } from './cloud/lifecycle.js';
+import type { ArchiveView } from './cloud/archives.js';
+import type { MetadataState } from './cloud/metadata.js';
+import { editableMetadata, sameMetadata } from './cloud/metadata.js';
 
 /**
  * 打开云副本时的最小参数：命名空间已经由三个云端 ID 推出，这里只认「哪个库、哪个工作区」。
@@ -27,6 +33,11 @@ export interface CloudPlayerOptions {
 }
 
 export interface CloudReadView {
+  metadataPending?: number;
+  metadataConflicts?: number;
+  lifecyclePending?: number;
+  lifecycleConflicts?: number;
+  archivePending?: boolean;
   pending: number;
   paused: boolean;
   lastSyncedAt: string | null;
@@ -57,6 +68,9 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
   const currentTicket = useRef<GenerationTicket | null>(null);
   const [cloudView, setCloudView] = useState<CloudReadView | null>(null);
   const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudMetadata, setCloudMetadata] = useState<MetadataState | null>(null);
+  const [cloudLifecycle, setCloudLifecycle] = useState<LifecycleState | null>(null);
+  const [cloudArchives, setCloudArchives] = useState<ArchiveView | null>(null);
   const syncEngine = useRef<WorkspaceSync | null>(null);
   const syncBusy = useRef(false);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,10 +162,17 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     };
   }, []);
 
-  const cloudCatalog = useMemo(
-    () => cloud && workspace ? openCloudCatalog(content, workspace) : null,
-    [cloud?.namespace, workspace],
-  );
+  // 调用方每次渲染都会新建 cloud 参数对象。只认命名空间，避免目录跟着渲染重建。
+  // 编译结果按修订哈希留在这次页面里；换一个云副本才换缓存。
+  const cloudNamespace = cloud?.namespace;
+  const catalogCache = useRef<{ namespace: string; cache: CloudCatalogCache } | null>(null);
+  const cloudCatalog = useMemo(() => {
+    if (!cloudNamespace || !workspace) return null;
+    if (!catalogCache.current || catalogCache.current.namespace !== cloudNamespace) {
+      catalogCache.current = { namespace: cloudNamespace, cache: memoryCatalogCache() };
+    }
+    return openCloudCatalog(content, workspace, catalogCache.current.cache);
+  }, [cloudNamespace, workspace]);
   const runtime = useMemo(() => {
     if (!workspace) return null;
     if (!cloudCatalog) return bridge(content, workspace);
@@ -193,26 +214,36 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     if (!engine || !repo || syncBusy.current || pending.current || currentTicket.current) return;
     syncBusy.current = true;
     setCloudSyncing(true);
+    let report: SyncReport | undefined;
+    let message = '';
     try {
-      const report = await engine.run();
-      const stored = await repo.load();
-      if (stored) {
-        current.current = stored;
-        setWorkspace(stored);
-        writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision);
-      }
-      const status = await engine.status();
-      setCloudView({
-        pending: status.pending, paused: status.state.paused, lastSyncedAt: status.state.lastSyncedAt,
-        cloudVersion: status.state.cloudVersion, conflicts: status.state.conflicts.length,
-        needsRebase: status.state.needsRebase.length, stopped: report.stopped, note: report.note,
-      });
+      report = await engine.run();
+      if (cloud && !(await repo.syncState()).paused) await new ManagementSync(repo, new CloudApi(), cloud.workspaceId, content).run();
     } catch (error) {
-      const message = error instanceof Error ? error.message : '云端同步失败；本机进度已保留';
-      setCloudView((held) => held
-        ? { ...held, stopped: null, note: message }
-        : { pending: 0, paused: false, lastSyncedAt: null, cloudVersion: null, conflicts: 0, needsRebase: 0, stopped: null, note: message });
+      message = error instanceof Error ? error.message : '云端同步失败；本机进度已保留';
     } finally {
+      // A request may have committed before a later request failed. Always reload the durable baseline.
+      try {
+        const [stored, status, metadata, lifecycle, archives] = await Promise.all([repo.load(), engine.status(), repo.metadataState(), repo.lifecycleState(), repo.archiveState()]);
+        if (stored) {
+          current.current = stored;
+          setWorkspace(stored);
+          writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision);
+        }
+        setCloudMetadata(metadata);
+        setCloudLifecycle(lifecycle);
+        setCloudArchives(archives);
+        setCloudView({
+          metadataPending: Object.keys(metadata.pending).length,
+          metadataConflicts: Object.values(metadata.pending).filter((entry) => entry.conflict).length,
+          lifecyclePending: Object.keys(lifecycle.pending).length,
+          archivePending: !!archives.pending,
+          lifecycleConflicts: Object.values(lifecycle.pending).filter((entry) => entry.conflict).length,
+          pending: status.pending, paused: status.state.paused, lastSyncedAt: status.state.lastSyncedAt,
+          cloudVersion: status.state.cloudVersion, conflicts: status.state.conflicts.length,
+          needsRebase: status.state.needsRebase.length, stopped: report?.stopped ?? null, note: message || report?.note || '',
+        });
+      } catch (error) { setNotice(error instanceof Error ? error.message : '读取同步结果失败，原件保留'); }
       syncBusy.current = false;
       setCloudSyncing(false);
     }
@@ -231,6 +262,7 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
   /** 同步正在写同一个仓库时先让它落地：两边都写会撞版本校验，等一会儿比重试更容易解释。 */
   async function awaitSyncIdle(): Promise<void> {
     for (let tick = 0; tick < 100 && syncBusy.current; tick++) await new Promise((resolve) => setTimeout(resolve, 30));
+    if (syncBusy.current) throw new Error('同步尚未完成，请稍后重试本次操作');
   }
 
   /** 统一提交：内存命令 → 递增版本 → 事务提交 → 更新状态；失败时保留原状态。 */
@@ -245,6 +277,18 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     }
     current.current = result.workspace;
     setWorkspace(result.workspace);
+    if (cloud && repository.current) {
+      try {
+        const [display, lifecycle] = await Promise.all([repository.current.metadataState(), repository.current.lifecycleState()]);
+        setCloudMetadata(display); setCloudLifecycle(lifecycle);
+        setCloudView((held) => held && ({ ...held,
+          metadataPending: Object.keys(display.pending).length,
+          metadataConflicts: Object.values(display.pending).filter((entry) => entry.conflict).length,
+          lifecyclePending: Object.keys(lifecycle.pending).length,
+          lifecycleConflicts: Object.values(lifecycle.pending).filter((entry) => entry.conflict).length,
+        }));
+      } catch { setNotice('操作已保存，但同步状态尚未读取，请重试同步'); }
+    }
     scheduleSync();
     return true;
   }
@@ -255,6 +299,7 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     setSaving(true);
     setNotice('');
     try {
+      await awaitSyncIdle();
       const active = current.current.branches.find((branch) => branch.id === current.current?.activeBranchId);
       if (cloudCatalog && active) cloudCatalog.prepare(active.session, command);
       const next = applyPlayerCommand(
@@ -273,12 +318,14 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
   }
 
   /** 管理命令（不影响学习事件）。 */
-  async function manage(fn: (workspace: Workspace) => Workspace): Promise<boolean> {
+  async function manage(fn: (workspace: Workspace) => Workspace, cloudAllowed = false): Promise<boolean> {
     if (!current.current || pending.current || currentTicket.current) return false;
+    if (cloud && !cloudAllowed) { setNotice('云端暂未接入这类内容管理命令'); return false; }
     pending.current = true;
     setSaving(true);
     setNotice('');
     try {
+      await awaitSyncIdle();
       // 管理命令只执行一次；在任何持久化前先过临时 Key 护栏，再提交
       const next = fn(current.current);
       assertNoSecrets(next, [apiKey]);
@@ -393,11 +440,54 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
   // ---------- 内容管理 ----------
 
   const editDisplay = (entry: ContentEntry, patch: Partial<ContentEntry['display']>) =>
-    manage((ws) => updateDisplay(ws, entry.id, patch));
+    manage((ws) => {
+      const held = ws.entries.find((candidate) => candidate.id === entry.id);
+      if (cloud && (!held || held.updatedAt !== entry.updatedAt || !sameMetadata(editableMetadata(held.display), editableMetadata(entry.display)))) {
+        throw new Error('展示信息在编辑期间已变化，请重新打开编辑器；本次输入尚未保存');
+      }
+      return updateDisplay(ws, entry.id, patch);
+    }, true);
+
+  async function resolveMetadata(contentId: string, decision: 'local' | 'cloud', commandId: string, version: number): Promise<void> {
+    if (!cloud || !repository.current || pending.current || syncBusy.current) return;
+    pending.current = true;
+    setSaving(true);
+    try {
+      const repo = repository.current;
+      await repo.updateMetadata({ contentId, decision, commandId, version });
+      const stored = await repo.load();
+      if (stored) {
+        current.current = stored; setWorkspace(stored);
+        writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision);
+      }
+      setCloudMetadata(await repo.metadataState());
+      scheduleSync();
+    } catch (error) { setNotice(error instanceof Error ? error.message : '冲突处理未保存'); }
+    finally { pending.current = false; setSaving(false); }
+  }
   const trash = (entry: ContentEntry, waive = false) =>
-    manage((ws) => trashContent(ws, entry.id, new Date(), waive));
+    manage((ws) => {
+      if (cloud && waive) throw new Error('云端回收暂不支持撤销阅读义务，原义务保留');
+      return trashContent(ws, entry.id, new Date(), waive);
+    }, true);
   const restore = (entry: ContentEntry, reobligate = false) =>
-    manage((ws) => restoreContent(ws, entry.id, new Date(), reobligate));
+    manage((ws) => {
+      if (cloud && reobligate) throw new Error('云端恢复暂不支持新增阅读义务');
+      return restoreContent(ws, entry.id, new Date(), reobligate);
+    }, true);
+
+  async function resolveLifecycle(contentId: string, decision: 'local' | 'cloud', commandId: string, version: number): Promise<void> {
+    if (!cloud || !repository.current || pending.current || syncBusy.current) return;
+    pending.current = true; setSaving(true);
+    try {
+      const repo = repository.current;
+      await repo.updateManagement({ contentId, decision, commandId, version });
+      const stored = await repo.load();
+      if (stored) { current.current = stored; setWorkspace(stored); writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision); }
+      setCloudLifecycle(await repo.lifecycleState()); scheduleSync();
+    } catch (error) { setNotice(error instanceof Error ? error.message : '回收站冲突未处理'); }
+    finally { pending.current = false; setSaving(false); }
+  }
   const waive = (entry: ContentEntry) => manage((ws) => waiveObligation(ws, entry.id));
   const purge = (entry: ContentEntry) => manage((ws) => purgeContent(ws, entry.id));
   const purgeInfo = (entry: ContentEntry) => current.current ? purgePreview(current.current, entry.id) : null;
@@ -405,14 +495,32 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     current.current ? previewRevision(content, current.current, entry, draft) : null;
   const adoptEdit = (entry: ContentEntry, revision: ContentRevision) =>
     manage((ws) => adoptRevision(content, ws, entry, revision).workspace);
-  const archive = (memberContentIds: string[], title?: string) =>
-    manage((ws) => attachVolume(ws, buildVolume(ws, bridge(content, ws), memberContentIds, title)));
-  const unarchive = (volume: ArchiveVolume) =>
-    manage((ws) => detachVolume(ws, volume.id));
+  async function cloudArchiveAction(action: { type: 'archive'; memberContentIds: string[]; title?: string } | { type: 'unarchive'; volumeId: string }
+    | { decision: 'retry' | 'cloud'; commandId: string; version: number }): Promise<boolean> {
+    if (!cloud || !repository.current || pending.current || currentTicket.current) return false;
+    pending.current = true; setSaving(true); setNotice('');
+    try {
+      await awaitSyncIdle();
+      const repo = repository.current;
+      if ('decision' in action) await repo.updateManagement({ archiveDecision: action.decision, commandId: action.commandId, version: action.version }, content);
+      else { assertNoSecrets(action, [apiKey]); await repo.queueArchive(content, action); }
+      const stored = await repo.load();
+      if (stored) { current.current = stored; setWorkspace(stored); writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision); }
+      setCloudArchives(await repo.archiveState());
+      setNotice('decision' in action && action.decision === 'cloud' ? '已采用云端归档状态，原请求留存在本机恢复记录中' : '');
+      scheduleSync(); return true;
+    } catch (error) { setNotice(error instanceof Error ? error.message : '归档请求未保存'); return false; }
+    finally { pending.current = false; setSaving(false); }
+  }
+  const archive = (memberContentIds: string[], title?: string) => cloud
+    ? cloudArchiveAction({ type: 'archive', memberContentIds, title })
+    : manage((ws) => attachVolume(ws, buildVolume(ws, bridge(content, ws), memberContentIds, title)));
+  const unarchive = (volume: ArchiveVolume) => cloud ? cloudArchiveAction({ type: 'unarchive', volumeId: volume.id }) : manage((ws) => detachVolume(ws, volume.id));
+  const resolveArchive = (decision: 'retry' | 'cloud', commandId: string, version: number) => cloudArchiveAction({ decision, commandId, version });
 
   const suggestions = useMemo(
-    () => (workspace && runtime ? suggestVolumes(workspace, runtime) : []),
-    [workspace, runtime],
+    () => (workspace && runtime && !cloudNamespace ? suggestVolumes(workspace, runtime) : []),
+    [workspace, runtime, cloudNamespace],
   );
   const backup = () => {
     if (!current.current) return null;
@@ -476,10 +584,10 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     entries: workspace?.entries ?? [],
     branches: workspace?.branches ?? [],
     volumes: workspace?.volumes ?? [],
-    switchBranchTo: (id: string) => manage((ws) => switchBranch(ws, id)),
-    editDisplay, trash, restore, waive, purge, purgeInfo, previewEdit, adoptEdit,
+    switchBranchTo: (id: string) => manage((ws) => switchBranch(ws, id), true),
+    editDisplay, resolveMetadata, cloudMetadata, resolveLifecycle, cloudLifecycle, cloudArchives, resolveArchive, trash, restore, waive, purge, purgeInfo, previewEdit, adoptEdit,
     archive, unarchive, suggestions, backup, previewImport, importBackup,
-    busy: saving || generating || !!currentTicket.current,
+    busy: saving || generating || cloudSyncing || !!currentTicket.current,
     cloudMode: !!cloud, cloudCatalog: cloudCatalog?.entries ?? null, cloudView, cloudSyncing, syncNow,
     raw,
   };

@@ -665,3 +665,11 @@ button:disabled { opacity: .55; }
 .cloud-reader .section-heading { margin-bottom: 0; }
 .cloud-reader .button-row { margin-top: 16px; }
 .cloud-exit { text-decoration: none; }
+.cloud-archive-form { display: grid; gap: 14px; margin-bottom: 20px; min-width: 0; }
+.cloud-archive-form > label { display: grid; gap: 7px; font-size: 14px; }
+.cloud-archive-form > label input { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #cdd4c5; border-radius: 9px; background: #fffef9; }
+.cloud-archive-form fieldset { display: grid; gap: 12px; min-width: 0; border: 1px solid #d8e0cf; border-radius: 10px; padding: 16px; }
+.cloud-archive-form fieldset label { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; overflow-wrap: anywhere; }
+.cloud-archive-form input[type="checkbox"] { flex: 0 0 18px; width: 18px; height: 18px; accent-color: #536e3d; }
+.cloud-reader p { overflow-wrap: anywhere; }
+.volume-row { min-width: 0; overflow-wrap: anywhere; }

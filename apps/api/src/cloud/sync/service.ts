@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { stableStringify } from '@endless/esl';
-import type { Workspace } from '@endless/content';
+import type { Workspace, Content } from '@endless/content';
 import {
   CLOUD_LIMITS, UuidSchema, ResolveConflictRequestSchema, SyncBranchManifestSchema,
   type DeviceStreamState, type PutDeviceStreamStateRequest, type ResolveConflictRequest,
@@ -13,6 +13,9 @@ import type { AuthContext } from '../auth/service.js';
 import type { CloudPool, Querier } from '../db/client.js';
 import { lockAccount } from '../db/locks.js';
 import { CloudError, badRequest, idempotencyMismatch, notFound } from '../errors.js';
+import { MetadataService, seedMetadata } from './metadata.js';
+import { ManagementService, seedLifecycle } from './management.js';
+import { seedArchives } from './archives.js';
 
 /**
  * 增量同步（计划 §8）。
@@ -111,6 +114,9 @@ async function workspaceRow(q: Querier, ctx: AuthContext, workspaceId: string, l
  * 全部行在调用方的事务里提交，与副本激活同生共死。
  */
 export async function seedSyncStreams(q: Querier, account: string, workspace: string, copy: Workspace): Promise<void> {
+  await seedMetadata(q, account, workspace, copy);
+  await seedLifecycle(q, account, workspace, copy);
+  await seedArchives(q, account, workspace, copy);
   for (const branch of copy.branches) {
     const events = branch.session.events as unknown as { type: string; scene: string; at: string; choice?: number; skip?: boolean }[];
     const rows = events.map((event, index) => ({
@@ -143,10 +149,16 @@ export async function seedSyncStreams(q: Querier, account: string, workspace: st
 }
 
 export class SyncService {
+  readonly metadata: MetadataService;
+  readonly management: ManagementService;
   constructor(
     private readonly app: CloudPool,
     private readonly source?: (ctx: AuthContext, workspaceId: string) => Promise<Workspace>,
-  ) {}
+    content?: Content,
+  ) {
+    this.metadata = new MetadataService(app, source);
+    this.management = new ManagementService(app, this.metadata, source, content);
+  }
 
   private async fallbackManifest(ctx: AuthContext, workspaceId: string, streamId: string) {
     const row = await this.app.withTenant(ctx.accountId, async (q) => {

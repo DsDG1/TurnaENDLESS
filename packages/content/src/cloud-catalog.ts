@@ -4,6 +4,10 @@
  * 打开目录、读取场景数、按引用查找已保存的叙述，都不编译未访问的生成集。
  * 重放只会在事件真正落到某一集时编译它，以及校验所必需的更早生成集。
  * 比它更晚、且没有事件的集保持未编译。
+ *
+ * 目录对象本身跟着工作区重建。已编译的生成集可以放进调用方持有的缓存，
+ * 按修订 id 和正文哈希复用，避免同一次页面里每次点击都重新校验。
+ * 这个缓存只活在页面内存里，刷新后失效，也不是服务端检查点。
  */
 import { contentHash } from '@endless/esl';
 import {
@@ -38,9 +42,37 @@ interface Adopted {
   revision: Workspace['revisions'][number];
 }
 
+/** 页面内存里的编译结果。键是修订 id 加正文哈希；哈希对不上就当作没有。 */
+export interface CloudCatalogCache {
+  take(revisionId: string, hash: string): Episode | undefined;
+  keep(
+    revisionId: string,
+    hash: string,
+    episode: Episode,
+    tail: Pick<Library, 'entities' | 'predicates'>,
+  ): void;
+  tail(): Pick<Library, 'entities' | 'predicates'> | undefined;
+}
+
+export function memoryCatalogCache(): CloudCatalogCache {
+  const episodes = new Map<string, { hash: string; episode: Episode }>();
+  let stored: Pick<Library, 'entities' | 'predicates'> | undefined;
+  return {
+    take(revisionId, hash) {
+      const row = episodes.get(revisionId);
+      return row && row.hash === hash ? row.episode : undefined;
+    },
+    keep(revisionId, hash, episode, tail) {
+      episodes.set(revisionId, { hash, episode });
+      stored = tail;
+    },
+    tail: () => stored,
+  };
+}
+
 export interface CloudCatalog {
   entries: CloudCatalogEntry[];
-  /** 本次目录里实际编译过的生成集，按采用顺序。试播集不计入。 */
+  /** 本次目录里实际编译过的生成集，按采用顺序。从缓存取回的不计入。 */
   compiledGenerated(): string[];
   sceneCount(episodeId: string): number;
   /** 按 `episodeId.sceneId` 取该集已保存的叙述行，不因此编译。 */
@@ -53,7 +85,7 @@ export interface CloudCatalog {
   runtime(workspace: Workspace): WorkspaceRuntime;
 }
 
-export function openCloudCatalog(content: Content, workspace: Workspace): CloudCatalog {
+export function openCloudCatalog(content: Content, workspace: Workspace, cache?: CloudCatalogCache): CloudCatalog {
   const branch = workspace.branches.find((item) => item.id === workspace.activeBranchId);
   if (!branch) throw new Error('分支不存在');
   const revisions = new Map(workspace.revisions.map((revision) => [revision.id, revision]));
@@ -66,6 +98,7 @@ export function openCloudCatalog(content: Content, workspace: Workspace): CloudC
   });
   const byEpisode = new Map(adopted.map((item) => [item.revision.episodeId, item]));
   const generatedCache = new Map<string, Episode>();
+  const compiled = new Set<string>();
   let entities = content.pilot.entities;
   let predicates = content.pilot.predicates;
 
@@ -119,8 +152,31 @@ export function openCloudCatalog(content: Content, workspace: Workspace): CloudC
     entities = restored.library.entities;
     predicates = restored.library.predicates;
     for (const episode of restored.library.episodes) {
-      if (!pilotById.has(episode.id)) generatedCache.set(episode.id, episode);
+      if (pilotById.has(episode.id)) continue;
+      generatedCache.set(episode.id, episode);
+      compiled.add(episode.id);
     }
+    if (cache) {
+      const tail = { entities, predicates };
+      for (const item of generated) {
+        const episode = generatedCache.get(item.revision.episodeId);
+        if (episode) cache.keep(item.revision.id, item.revision.hash, episode, tail);
+      }
+    }
+  }
+
+  function hydrate(episodeId: string): Episode | undefined {
+    const item = byEpisode.get(episodeId);
+    if (!cache || !item || !isGenerated(item)) return undefined;
+    const episode = cache.take(item.revision.id, item.revision.hash);
+    if (!episode || episode.id !== episodeId) return undefined;
+    const stored = cache.tail();
+    if (stored) {
+      entities = stored.entities;
+      predicates = stored.predicates;
+    }
+    generatedCache.set(episodeId, episode);
+    return episode;
   }
 
   function loadEpisode(episodeId: string): Episode {
@@ -129,7 +185,7 @@ export function openCloudCatalog(content: Content, workspace: Workspace): CloudC
       if (!byEpisode.has(episodeId)) throw new Error(`内容不存在：${episodeId}`);
       return pilot;
     }
-    const cached = generatedCache.get(episodeId);
+    const cached = generatedCache.get(episodeId) ?? hydrate(episodeId);
     if (cached) return cached;
     compileThrough(episodeId);
     const episode = generatedCache.get(episodeId);
@@ -162,7 +218,7 @@ export function openCloudCatalog(content: Content, workspace: Workspace): CloudC
     entries,
     compiledGenerated: () => adopted
       .map((item) => item.revision.episodeId)
-      .filter((id) => generatedCache.has(id)),
+      .filter((id) => compiled.has(id)),
     sceneCount(episodeId: string) {
       const entry = entries.find((item) => item.episodeId === episodeId);
       if (!entry) throw new Error(`内容不存在：${episodeId}`);

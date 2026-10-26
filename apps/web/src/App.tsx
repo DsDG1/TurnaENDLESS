@@ -99,7 +99,7 @@ function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
     {!player.cloudMode && <GenerationPanel player={player} onGenerate={onGenerate} />}
     <section className="episode-section"><div className="section-heading"><div><span className="eyebrow">EPISODES</span><h2>全部内容</h2></div><span className="section-count">01 — {String((player.cloudCatalog ?? library.episodes).length).padStart(2, '0')}</span></div>
       <div className="episode-grid">{player.cloudCatalog
-        ? player.cloudCatalog.map((card, index) => {
+        ? player.cloudCatalog.filter((card) => player.entries.find((entry) => entry.id === card.contentId)?.lifecycle !== 'trashed').map((card, index) => {
           const progress = view.episodes[card.episodeId];
           const total = card.sceneCount;
           const completed = episodeCompletion(progress, total).read;
@@ -252,7 +252,7 @@ function StoryApp({ route }: { route: AppRoute }) {
   // 云副本里只保留阅读相关导航：内容管理、Edition 与偏好设置写的是本机存档的字段，
   // 这一轮还没有元数据命令通道，放进来只会让人以为改动会同步。
   const navItems = route.shell === 'cloud'
-    ? [['home', 'discover', '故事'], ['progress', 'progress', '阅读记录']] as const
+    ? [['home', 'discover', '故事'], ['library', 'book', '回收站'], ['progress', 'progress', '阅读记录']] as const
     : [['home', 'discover', '发现故事'], ['library', 'book', '内容管理'], ['edition', 'spark', 'Edition 专题'], ['cloud', 'cloud', '云端副本'], ['progress', 'progress', '阅读记录'], ['settings', 'settings', '偏好设置']] as const;
 
   return <div className={`app-shell${session.largeText ? ' large-text' : ''}`}>
@@ -264,10 +264,13 @@ function StoryApp({ route }: { route: AppRoute }) {
           : <div className="local-status"><span className="status-dot" />单设备 · 本地存档</div>}
       </div>
     </aside>
-    <div className="workspace"><header className="topbar"><a href={hrefFor('home')} className="mobile-brand" aria-label="ENDLESS 首页"><Brand small /></a><span className="topbar-greeting">{route.shell === 'cloud' ? '正在读云端副本：只同步阅读事件。' : '内容都在本地，不需要登录。'}</span><div className="topbar-right"><span className="connection-state"><Icon name={pwa.offline ? 'cloud' : 'leaf'} size={15} />{pwa.offline ? '正在离线体验' : '已连接'}</span><span className="topbar-divider" /><span className="user-avatar" aria-label="本地用户">你</span></div></header>
+    <div className="workspace"><header className="topbar"><a href={hrefFor('home')} className="mobile-brand" aria-label="ENDLESS 首页"><Brand small /></a><span className="topbar-greeting">{route.shell === 'cloud' ? '正在读云端副本：同步阅读进度与展示信息。' : '内容都在本地，不需要登录。'}</span><div className="topbar-right"><span className="connection-state"><Icon name={pwa.offline ? 'cloud' : 'leaf'} size={15} />{pwa.offline ? '正在离线体验' : '已连接'}</span><span className="topbar-divider" /><span className="user-avatar" aria-label="本地用户">你</span></div></header>
       <main id="main-content" className="main-content" ref={heading} tabIndex={-1}>
         {player.notice && <div className="notice notice-error" role="alert"><Icon name="info" size={18} /><span>{player.notice}</span></div>}
         {route.shell === 'cloud' && <CloudReadBanner view={player.cloudView} syncing={player.cloudSyncing} onSync={() => void player.syncNow()} exitHref="#cloud"
+          metadata={player.cloudMetadata} onResolveMetadata={(id, decision, commandId, version) => void player.resolveMetadata(id, decision, commandId, version)}
+          lifecycle={player.cloudLifecycle} onResolveLifecycle={(id, decision, commandId, version) => void player.resolveLifecycle(id, decision, commandId, version)}
+          archives={player.cloudArchives} onResolveArchive={(decision, commandId, version) => void player.resolveArchive(decision, commandId, version)}
           branches={player.branches} activeBranchId={player.workspace?.activeBranchId} onBranch={(id) => { setReviewIndex(null); void player.switchBranchTo(id); }} />}
         {pwa.updateAvailable && <div className="notice"><Icon name="spark" size={18} /><span>有新版本可用。当前进度已保存后再更新。</span><button className="text-button" disabled={player.saving} onClick={() => void pwa.update()?.catch(() => {})}>更新应用<Icon name="arrow" size={15} /></button></div>}
         {page === 'home' && <Home view={view} current={episode} busy={player.busy} onSelect={(selected) => void select(selected)} library={library} player={player} onGenerate={() => void generate()} />}

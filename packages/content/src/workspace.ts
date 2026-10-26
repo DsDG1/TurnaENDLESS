@@ -246,7 +246,11 @@ export function restoreContent(workspace: Workspace, contentId: string, at = new
   const entry = workspace.entries.find((e) => e.id === contentId);
   if (!entry || entry.lifecycle !== 'trashed') throw new Error('内容不在回收站');
   const time = at.toISOString();
-  let next = touchEntry(workspace, contentId, { lifecycle: 'active', trashedAt: null }, time);
+  // 回收保留卷成员引用；恢复时还原该位置，不能让活跃条目与原卷成员失配。
+  const memberships = workspace.volumes.filter((volume) => volume.members.some((member) => member.contentId === contentId));
+  if (memberships.length > 1) throw new Error('回收内容仍属于多个归档卷，请先处理归档引用；不会自动删除原卷');
+  const archiveVolumeId = memberships[0]?.id ?? null;
+  let next = touchEntry(workspace, contentId, { lifecycle: 'active', trashedAt: null, archiveVolumeId }, time);
   if (reobligate && !next.obligations.some((o) => o.contentId === contentId && !o.waivedAt)) {
     const adopted = activeBranch(next).adopted.find((a) => a.contentId === contentId);
     if (adopted) {
@@ -322,7 +326,7 @@ export function switchBranch(workspace: Workspace, branchId: string): Workspace 
  * 已读内容采用修订：在目标内容原生成边界创建新分支，复制边界前的真实历史，
  * 采用编辑后修订并从「未读」开始；原分支及其后续内容保持不变。
  */
-export function forkForRevision(workspace: Workspace, parentBranchId: string, contentId: string, revision: ContentRevision, at = new Date()): Workspace {
+export function forkForRevision(workspace: Workspace, parentBranchId: string, contentId: string, revision: ContentRevision, at = new Date(), branchId = newId('branch', uuid)): Workspace {
   const parent = workspace.branches.find((b) => b.id === parentBranchId);
   if (!parent) throw new Error('父分支不存在');
   const index = parent.adopted.findIndex((a) => a.contentId === contentId);
@@ -331,7 +335,6 @@ export function forkForRevision(workspace: Workspace, parentBranchId: string, co
   const boundary = forkRevision && isGenerated(forkRevision) ? forkRevision.basis.eventCount : 0;
   const entry = workspace.entries.find((e) => e.id === contentId);
   if (!entry) throw new Error('内容条目不存在');
-  const branchId = newId('branch', uuid);
   // 分叉出来的修订必须登记到条目：否则它不被任何内容收录，后续编辑仍按旧 head 编译
   const ordinal = Math.max(0, ...entry.revisionIds.map((id) => workspace.revisions.find((r) => r.id === id)?.ordinal ?? 0)) + 1;
   const registered: ContentRevision = {

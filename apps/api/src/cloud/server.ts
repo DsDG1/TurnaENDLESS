@@ -3,7 +3,7 @@ import {
   ChallengeRequestSchema, CreateWorkspaceRequestSchema, IdempotencyKeySchema,
   LEGACY_PROVIDER_KEY_HEADER, VerifyRequestSchema, type CloudCapabilities,
   CLOUD_API_PREFIX, PrepareObjectRequestSchema, ActivateImportRequestSchema, InstallWorkspaceRequestSchema, type Device,
-  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema, RegisterStreamRequestSchema,
+  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema, RegisterStreamRequestSchema, MetadataCommandSchema, LifecycleCommandSchema, ArchiveCommandSchema, RevisionPreviewRequestSchema,
 } from '@endless/cloud-contracts';
 import type { CloudPool } from './db/client.js';
 import type { Mailer } from './mail.js';
@@ -236,6 +236,37 @@ export function createCloudServer(options: CloudServerOptions) {
           const body = RegisterStreamRequestSchema.safeParse(await readJsonBody(request));
           if (!body.success) throw badRequest('流注册请求格式无效；只接受父流与分叉点');
           return { status: 200, body: await sync.registerStream(auth, body.data) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/sync\/metadata$/,
+        handle: async ({ url, auth }) => ({ status: 200, body: await sync.metadata.snapshot(auth, workspaceOf(url)) }) },
+      { method: 'GET', access: 'session', pattern: /^\/sync\/management\/bootstrap$/,
+        handle: async ({ url, auth }) => ({ status: 200, body: await sync.management.bootstrap(auth, workspaceOf(url)) }) },
+      { method: 'GET', access: 'session', pattern: /^\/sync\/management\/pull$/,
+        handle: async ({ url, auth }) => ({ status: 200, body: await sync.management.pull(auth, workspaceOf(url),
+          url.searchParams.get('cursor') ?? '', Number(url.searchParams.get('limit') ?? '50')) }) },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/lifecycle$/,
+        handle: async ({ request, auth }) => {
+          const body = LifecycleCommandSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('回收站命令格式无效');
+          return { status: 200, body: await sync.management.submit(auth, body.data) };
+        } },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/archives$/,
+        handle: async ({ request, auth }) => {
+          const body = ArchiveCommandSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('归档命令格式无效');
+          return { status: 200, body: await sync.management.archives.submit(auth, body.data) };
+        } },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/revisions\/preview$/,
+        handle: async ({ request, auth }) => {
+          const body = RevisionPreviewRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('修订预览格式无效；只接受草稿和前置版本');
+          return { status: 200, body: await sync.management.revisionPreviews.submit(auth, body.data) };
+        } },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/metadata$/,
+        handle: async ({ request, auth }) => {
+          const body = MetadataCommandSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('展示信息命令格式无效');
+          return { status: 200, body: await sync.metadata.submit(auth, body.data) };
         } },
       { method: 'POST', access: 'session', pattern: /^\/sync\/push$/,
         handle: async ({ request, auth }) => {

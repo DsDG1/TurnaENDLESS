@@ -1,9 +1,14 @@
 import {
   ContractError, describeUnsupportedSave, parseWorkspace,
-  type Workspace, type WorkspaceIdentity,
+  buildVolume, bridge, validateArchiveProjection, type Content, type Workspace, type WorkspaceIdentity,
 } from '@endless/content';
-import { ResolveConflictRequestSchema, type CloudImportReceipt, type ResolveConflictResponse, type SyncConflict, type SyncPushReceipt, type WorkspaceInstallation } from '@endless/cloud-contracts';
+import { MetadataReceiptSchema, MetadataSnapshotSchema, ResolveConflictRequestSchema, type MetadataReceipt, type MetadataSnapshot, type CloudImportReceipt, type ResolveConflictResponse, type SyncConflict, type SyncPushReceipt, type WorkspaceInstallation } from '@endless/cloud-contracts';
 import { stableStringify } from '@endless/esl';
+import { ArchiveCommandSchema, ArchiveReceiptSchema, type ArchiveCommand, type ArchiveReceipt } from '@endless/cloud-contracts';
+import { acceptArchiveReceipt, archivePositions, emptyArchives, initialArchives, nativeArchiveState, parseArchives, rememberArchives, type ArchiveView } from './cloud/archives.js';
+import { LifecycleReceiptSchema, ManagementBootstrapSchema, ManagementPullSchema, type LifecycleReceipt, type ManagementBootstrap, type ManagementPull } from '@endless/cloud-contracts';
+import { emptyMetadata, enqueueMetadata, initialMetadata, mergeDisplayChanges, mergeMetadata, metadataEntries, parseMetadata, receiveMetadata, sameMetadata, type MetadataState } from './cloud/metadata.js';
+import { emptyLifecycle, enqueueLifecycle, initialLifecycle, lifecycleEntries, mergeLifecycle, parseLifecycle, receiveLifecycle, type LifecycleState } from './cloud/lifecycle.js';
 import { checkPreservation, type PendingPreservation } from './cloud/conflict.js';
 import { cloudDigest, isCloudNamespace, parseCloudInstallation, type CloudLocalInstallation } from './cloud/local.js';
 import {
@@ -164,6 +169,9 @@ export class WorkspaceRepository {
             meta.put({ ...rows.meta, management: rows.management }, 'workspace');
             meta.put(initial, 'cloud-installation');
             tx.objectStore('sync').put(emptySyncState(), 'sync');
+            tx.objectStore('sync').put(initialMetadata(workspace), 'metadata');
+            tx.objectStore('sync').put(initialLifecycle(workspace), 'lifecycle');
+            tx.objectStore('sync').put(initialArchives(workspace), 'archives');
             for (const [name, values] of [['revisions', rows.revisions], ['branches', rows.branches], ['objects', rows.objects]] as const) {
               for (const value of values) tx.objectStore(name).put(value, value.id);
             }
@@ -248,9 +256,12 @@ export class WorkspaceRepository {
       let objects: Record<string, unknown>[] = [];
       let sidecar = new Map<string, SidecarEntry>();
       let syncState: CloudSyncState = emptySyncState();
+      let metadataState: MetadataState = emptyMetadata();
+      let lifecycleState: LifecycleState = emptyLifecycle();
+      let archiveState: ArchiveView = emptyArchives();
       let preservation: PendingPreservation | null = null;
       let result = { enqueued: 0, replaced: [] as string[] };
-      let pending = 7;
+      let pending = 10;
       const metaStore = tx.objectStore('meta');
       metaStore.get('workspace').onsuccess = (e) => { meta = (e.target as IDBRequest).result; step(); };
       tx.objectStore('revisions').getAll().onsuccess = (e) => { revisions = (e.target as IDBRequest).result ?? []; step(); };
@@ -270,6 +281,18 @@ export class WorkspaceRepository {
       };
       tx.objectStore('sync').get('sync').onsuccess = (e) => { syncState = parseSyncState((e.target as IDBRequest).result); step(); };
       tx.objectStore('sync').get('preservation').onsuccess = (e) => { preservation = (e.target as IDBRequest).result ?? null; step(); };
+      tx.objectStore('sync').get('metadata').onsuccess = (e) => {
+        try { metadataState = parseMetadata((e.target as IDBRequest).result, syncing ? this.namespace.split(':')[3] : undefined); step(); }
+        catch { error = '展示信息同步状态不受支持，原件已保留'; tx.abort(); }
+      };
+      tx.objectStore('sync').get('lifecycle').onsuccess = (e) => {
+        try { lifecycleState = parseLifecycle((e.target as IDBRequest).result, this.namespace.split(':')[3] ?? ''); step(); }
+        catch { error = '生命周期同步状态不受支持，原件已保留'; tx.abort(); }
+      };
+      tx.objectStore('sync').get('archives').onsuccess = (e) => {
+        try { archiveState = parseArchives((e.target as IDBRequest).result, this.namespace.split(':')[3] ?? ''); step(); }
+        catch { error = '归档同步状态不受支持，原件保留'; tx.abort(); }
+      };
 
       const canonical = (value: unknown): unknown => Array.isArray(value)
         ? value.map(canonical)
@@ -440,6 +463,17 @@ export class WorkspaceRepository {
         metaStore.put({ ...rows.meta, management: rows.management }, 'workspace');
 
         if (syncing) {
+          if (meta && !same(meta.entries, next.entries) && archiveState.pending?.request.members.some((m) => {
+            const before = (meta!.entries as Workspace['entries']).find((e) => e.id === m.contentId), after = next.entries.find((e) => e.id === m.contentId);
+            return !before || !after || before.lifecycle !== after.lifecycle || before.archiveVolumeId !== after.archiveVolumeId;
+          })) { error = '归档请求尚未完成，请先恢复或处理该请求后再变更成员的回收站状态'; tx.abort(); return; }
+          let nextMetadata: MetadataState;
+          try { nextMetadata = enqueueMetadata(metadataState, (meta?.entries ?? []) as Workspace['entries'], next.entries, this.namespace.split(':')[3]!); }
+          catch (cause) { error = cause instanceof Error ? cause.message : '展示信息命令未保存'; throw cause; }
+          tx.objectStore('sync').put(nextMetadata, 'metadata');
+          try {
+            tx.objectStore('sync').put(enqueueLifecycle(lifecycleState, (meta?.entries ?? []) as Workspace['entries'], next.entries, this.namespace.split(':')[3]!), 'lifecycle');
+          } catch (cause) { error = cause instanceof Error ? cause.message : '回收站命令未保存'; throw cause; }
           // 事件身份与 Outbox 在同一事务内落库：业务提交成功而身份丢失不可能发生。
           const plan = planOutbox({
             stored: slices(branches as Parameters<typeof slices>[0]).filter((branch) => !options.preservation
@@ -581,6 +615,251 @@ export class WorkspaceRepository {
 
   private requireSync(): void {
     if (!isCloudNamespace(this.namespace)) throw new Error('只有云副本命名空间参与增量同步');
+  }
+
+  async archiveState(): Promise<ArchiveView> {
+    this.requireSync(); const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('sync', 'readonly'), request = tx.objectStore('sync').get('archives');
+      tx.oncomplete = () => { try { resolve(parseArchives(request.result, this.namespace.split(':')[3]!)); } catch { reject(new Error('归档同步状态不受支持，原件保留')); } };
+      tx.onabort = tx.onerror = () => reject(new Error('读取归档状态失败'));
+    });
+  }
+
+  /** Persists an intent, never an unverified completed volume. Offline UI must say queued until the server receipt is accepted. */
+  async queueArchive(content: Content, intent: { type: 'archive'; memberContentIds: string[]; title?: string } | { type: 'unarchive'; volumeId: string }): Promise<void> {
+    this.requireSync();
+    const workspace = await this.load(); if (!workspace) throw new Error('本机云副本不存在');
+    const volume = intent.type === 'archive' ? buildVolume(workspace, bridge(content, workspace), intent.memberContentIds, intent.title)
+      : workspace.volumes.find((v) => v.id === intent.volumeId);
+    if (!volume) throw new Error('归档卷不存在');
+    const db = await this.db(), workspaceId = this.namespace.split(':')[3]!;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['meta', 'sync', 'objects'], 'readwrite');
+      const sync = tx.objectStore('sync'), requests = { meta: tx.objectStore('meta').get('workspace'), archive: sync.get('archives'),
+        display: sync.get('metadata'), life: sync.get('lifecycle'), preservation: sync.get('preservation'), objects: tx.objectStore('objects').getAll() };
+      let left = Object.keys(requests).length, error = '归档请求未保存，尚未发出网络请求';
+      const step = () => {
+        if (--left) return;
+        try {
+          const meta = requests.meta.result;
+          if (meta?.identity.repositoryRevision !== workspace.identity.repositoryRevision) throw new Error('另一个窗口已更新工作区，请刷新后归档');
+          if (requests.preservation.result || requests.objects.result.some((o) => o.kind === 'ticket' && ['reserved', 'submitted'].includes(o.status))) throw new Error('进行中的任务尚未完成，暂不能归档');
+          const archive = parseArchives(requests.archive.result, workspaceId), display = parseMetadata(requests.display.result, workspaceId), life = parseLifecycle(requests.life.result, workspaceId);
+          if (!archive.known) throw new Error('请先同步，取得可验证的归档基线');
+          if (archive.pending) throw new Error('已有归档请求待恢复或处理');
+          const members = volume.members.map((m) => {
+            if (!life.known[m.contentId] || !display.known[m.contentId] || life.pending[m.contentId] || display.pending[m.contentId]) throw new Error('归档成员有未同步命令或缺少基线，请先同步');
+            return { contentId: m.contentId, revisionId: m.revisionId, lifecycleVersion: life.known[m.contentId]!.version, displayVersion: display.known[m.contentId]!.version };
+          });
+          const common = { workspaceId, commandId: crypto.randomUUID(), volumeId: volume.id, baseVersion: archive.known.version, members };
+          const request: ArchiveCommand = ArchiveCommandSchema.parse(intent.type === 'archive'
+            ? { ...common, type: 'archive', title: volume.title, basis: { streamId: volume.derivedFrom.branchId, eventCount: volume.derivedFrom.eventCount, eventHash: volume.derivedFrom.eventHash } }
+            : { ...common, type: 'unarchive' });
+          sync.put({ ...archive, pending: { request } }, 'archives');
+          tx.objectStore('meta').put({ ...meta, identity: { ...meta.identity, repositoryRevision: meta.identity.repositoryRevision + 1 } }, 'workspace');
+        } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
+      };
+      for (const request of Object.values(requests)) request.onsuccess = step;
+      tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(new Error(error));
+    });
+  }
+
+  async lifecycleState(): Promise<LifecycleState> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('sync', 'readonly'), request = tx.objectStore('sync').get('lifecycle');
+      tx.oncomplete = () => { try { resolve(parseLifecycle(request.result, this.namespace.split(':')[3]!)); } catch { reject(new Error('生命周期同步状态不受支持，原件已保留')); } };
+      tx.onabort = tx.onerror = () => reject(new Error('读取生命周期同步状态失败'));
+    });
+  }
+
+  /** Management page effects, command acknowledgements and cursor advance are a single atomic commit. */
+  async updateManagement(action: { bootstrap: ManagementBootstrap } | { pull: ManagementPull } | { receipt: LifecycleReceipt }
+    | { contentId: string; decision: 'local' | 'cloud'; commandId: string; version: number }
+    | { archiveReceipt: ArchiveReceipt } | { archiveDecision: 'retry' | 'cloud'; commandId: string; version: number }, content?: Content): Promise<void> {
+    this.requireSync();
+    const workspaceId = this.namespace.split(':')[3]!;
+    if ('bootstrap' in action) ManagementBootstrapSchema.parse(action.bootstrap);
+    if ('pull' in action) ManagementPullSchema.parse(action.pull);
+    if ('receipt' in action) LifecycleReceiptSchema.parse(action.receipt);
+    if ('archiveReceipt' in action) ArchiveReceiptSchema.parse(action.archiveReceipt);
+    const remote = 'bootstrap' in action ? action.bootstrap : 'pull' in action ? action.pull : 'receipt' in action ? action.receipt : 'archiveReceipt' in action ? action.archiveReceipt : null;
+    if (remote && remote.workspaceId !== workspaceId) throw new Error('管理变更来自其他工作区');
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['meta', 'sync', 'revisions', 'branches', 'objects', 'staging'], 'readwrite');
+      const sync = tx.objectStore('sync');
+      const requests = {
+        meta: tx.objectStore('meta').get('workspace'), display: sync.get('metadata'), life: sync.get('lifecycle'),
+        sync: sync.get('sync'), preservation: sync.get('preservation'),
+        archive: sync.get('archives'),
+        revisions: tx.objectStore('revisions').getAll(), branches: tx.objectStore('branches').getAll(), objects: tx.objectStore('objects').getAll(),
+      };
+      let remaining = Object.keys(requests).length;
+      let error = '管理变更未保存，原请求和游标保留，可重试';
+      const step = () => {
+        if (--remaining) return;
+        try {
+          const held = requests.meta.result;
+          if (!held) throw new Error('本机云副本不存在');
+          if (requests.preservation.result || requests.objects.result.some((o) => o.kind === 'ticket' && ['reserved', 'submitted'].includes(o.status))) throw new Error('进行中的任务尚未完成，暂不应用管理变更');
+          let display = parseMetadata(requests.display.result, workspaceId);
+          let life = parseLifecycle(requests.life.result, workspaceId);
+          let archive = parseArchives(requests.archive.result, workspaceId);
+          const completedArchive = 'archiveReceipt' in action && action.archiveReceipt.outcome === 'applied' ? archive.pending?.request : undefined;
+          const archiveBefore = archive.known;
+          const original = this.assemble(held, requests.revisions.result, requests.branches.result, requests.objects.result, held.management ?? []);
+          const remember = (state: NonNullable<ManagementBootstrap['archive']>, historical: boolean) => { archive = rememberArchives(archive, state, original, historical); };
+          const entries = held.entries as Workspace['entries'];
+          if ('bootstrap' in action) {
+            display = mergeMetadata(display, action.bootstrap.display, entries, workspaceId);
+            life = mergeLifecycle(life, action.bootstrap.lifecycle, entries, workspaceId);
+            if (action.bootstrap.archive) {
+              if (!archive.known && action.bootstrap.archiveOrigin) archive = rememberArchives(archive, { version: 0, volumes: action.bootstrap.archiveOrigin }, original);
+              remember(action.bootstrap.archive, false);
+            }
+            life.cursor = action.bootstrap.cursor; life.changeSeq = action.bootstrap.changeSeq;
+          } else if ('pull' in action) {
+            const page = action.pull;
+            if (page.fromCursor !== life.cursor || page.changes.some((change, index) => change.seq !== life.changeSeq + index + 1)
+              || (page.changes.length && page.nextCursor === page.fromCursor)
+              || (!page.changes.length && (page.hasMore || page.nextCursor !== page.fromCursor))) throw new Error('管理变更页与已保存游标不连续，原件保留');
+            for (const change of page.changes) {
+              if (change.type === 'display') display = mergeDisplayChanges(display, [change.entry], entries);
+              else if (change.type === 'lifecycle') life = mergeLifecycle(life, [change.entry], entries, workspaceId, true);
+              else {
+                life = mergeLifecycle(life, change.snapshot.lifecycle, entries, workspaceId, true);
+                remember(change.snapshot.state, true);
+              }
+            }
+            life.cursor = page.nextCursor;
+            life.changeSeq = page.changes.at(-1)?.seq ?? life.changeSeq;
+          } else if ('receipt' in action) life = receiveLifecycle(life, action.receipt);
+          else if ('archiveReceipt' in action) {
+            acceptArchiveReceipt(archive, action.archiveReceipt);
+            life = mergeLifecycle(life, action.archiveReceipt.snapshot.lifecycle, entries, workspaceId, true);
+            display = mergeDisplayChanges(display, action.archiveReceipt.display, entries);
+            remember(action.archiveReceipt.snapshot.state, true);
+            archive = { ...archive, pending: action.archiveReceipt.outcome === 'applied' ? null : { ...archive.pending!, resolution: action.archiveReceipt } };
+          } else if ('archiveDecision' in action) {
+            const pending = archive.pending;
+            if (!pending?.resolution || !archive.known || pending.request.commandId !== action.commandId || archive.known.version !== action.version) throw new Error('归档裁决已变化，请重新查看后处理');
+            tx.objectStore('staging').put(pending, `archive-conflict:${pending.request.commandId}`);
+            archive = { ...archive, pending: action.archiveDecision === 'cloud' ? null : { request: ArchiveCommandSchema.parse({
+              ...pending.request, commandId: crypto.randomUUID(), baseVersion: archive.known.version,
+              members: pending.request.members.map((m) => ({ ...m, lifecycleVersion: life.known[m.contentId]!.version, displayVersion: display.known[m.contentId]!.version })),
+            }) } };
+          }
+          else {
+            const pending = life.pending[action.contentId], known = life.known[action.contentId];
+            if (!pending?.conflict || !known || pending.request.commandId !== action.commandId || known.version !== action.version) throw new Error('回收站冲突已变化，请重新查看后选择');
+            tx.objectStore('staging').put(pending, `lifecycle-conflict:${pending.request.commandId}`);
+            if (action.decision === 'cloud') delete life.pending[action.contentId];
+            else life.pending[action.contentId] = { request: { ...pending.request, commandId: crypto.randomUUID(), baseVersion: known.version } };
+          }
+          const volumes = archive.known?.volumes ?? original.volumes;
+          const graphChanged = !sameMetadata(archiveBefore, archive.known);
+          const nextEntries = graphChanged ? archivePositions(lifecycleEntries(metadataEntries(entries, display), life), volumes) : lifecycleEntries(metadataEntries(entries, display), life);
+          const objects = [...requests.objects.result.filter((o) => o.kind !== 'volume'), ...volumes.map((v) => ({ kind: 'volume', ...v }))];
+          const management = [...(held.management ?? [])];
+          if (completedArchive && !management.some((e) => e.id === `mge_${completedArchive.commandId}`)) management.push({
+            id: `mge_${completedArchive.commandId}`, sequence: management.length, at: new Date().toISOString(),
+            op: completedArchive.type === 'archive' ? 'archive' : 'unarchive', branchId: completedArchive.type === 'archive' ? completedArchive.basis.streamId : null,
+            targets: [completedArchive.volumeId],
+          });
+          const candidate = this.assemble({ ...held, entries: nextEntries }, requests.revisions.result, requests.branches.result, objects, management);
+          if (!sameMetadata(original.volumes, volumes)) {
+            if (!content) throw new Error('缺少归档内容验证上下文，原件与游标保留');
+            for (const volume of volumes) validateArchiveProjection(content, candidate, volume);
+          }
+          if (!sameMetadata(nextEntries, entries) || !sameMetadata(original.volumes, volumes) || !sameMetadata(management, held.management ?? [])) {
+            const meta = { ...held, entries: nextEntries, management, identity: { ...held.identity, repositoryRevision: held.identity.repositoryRevision + 1 } };
+            tx.objectStore('meta').put(meta, 'workspace');
+            const store = tx.objectStore('objects');
+            for (const previous of original.volumes) if (!volumes.some((v) => v.id === previous.id)) store.delete(previous.id);
+            for (const volume of volumes) store.put({ kind: 'volume', ...volume }, volume.id);
+          }
+          sync.put(display, 'metadata'); sync.put(life, 'lifecycle'); sync.put(archive, 'archives');
+          if ('pull' in action || 'bootstrap' in action) sync.put({ ...parseSyncState(requests.sync.result), lastSyncedAt: new Date().toISOString() }, 'sync');
+        } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
+      };
+      for (const request of Object.values(requests)) request.onsuccess = step;
+      tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(new Error(error));
+    });
+  }
+
+  async metadataState(): Promise<MetadataState> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('sync', 'readonly');
+      const request = tx.objectStore('sync').get('metadata');
+      tx.oncomplete = () => { try { resolve(parseMetadata(request.result, this.namespace.split(':')[3])); } catch { reject(new Error('展示信息同步状态不受支持，原件保留')); } };
+      tx.onabort = tx.onerror = () => reject(new Error('读取展示信息同步状态失败'));
+    });
+  }
+
+  /** Remote display values, versions and command acknowledgements commit together under the same repository revision. */
+  async updateMetadata(action: { snapshot: MetadataSnapshot } | { receipt: MetadataReceipt } | {
+    contentId: string; decision: 'local' | 'cloud'; commandId: string; version: number;
+  }): Promise<void> {
+    this.requireSync();
+    const workspaceId = this.namespace.split(':')[3]!;
+    if ('snapshot' in action) {
+      MetadataSnapshotSchema.parse(action.snapshot);
+      if (action.snapshot.workspaceId !== workspaceId) throw new Error('展示信息来自其他工作区');
+    }
+    if ('receipt' in action) MetadataReceiptSchema.parse(action.receipt);
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['meta', 'sync', 'objects', 'staging'], 'readwrite');
+      const store = tx.objectStore('sync');
+      const metadata = store.get('metadata');
+      const meta = tx.objectStore('meta').get('workspace');
+      const preservation = store.get('preservation');
+      const sync = store.get('sync');
+      const objects = tx.objectStore('objects').getAll();
+      let error = '展示信息未保存，原请求保留，可重试';
+      let remaining = 5;
+      const step = () => {
+        if (--remaining) return;
+        try {
+          if (!meta.result) throw new Error('本机云副本不存在');
+          if (preservation.result || objects.result.some((o) => o.kind === 'ticket' && ['reserved', 'submitted'].includes(o.status))) {
+            throw new Error('进行中的任务尚未完成，暂不应用展示信息');
+          }
+          let state = parseMetadata(metadata.result, workspaceId);
+          const entries = meta.result.entries as Workspace['entries'];
+          if ('snapshot' in action) state = mergeMetadata(state, action.snapshot.entries, entries, workspaceId);
+          else if ('receipt' in action) state = receiveMetadata(state, action.receipt);
+          else {
+            const held = state.pending[action.contentId];
+            const known = state.known[action.contentId];
+            if (!held?.conflict || !known) throw new Error('这条展示信息没有待处理冲突');
+            if (held.request.commandId !== action.commandId || known.version !== action.version) {
+              throw new Error('展示信息冲突已变化，请重新查看两份内容后选择');
+            }
+            tx.objectStore('staging').put(held, `metadata-conflict:${held.request.commandId}`);
+            if (action.decision === 'cloud') delete state.pending[action.contentId];
+            else state.pending[action.contentId] = { request: {
+              ...held.request, commandId: globalThis.crypto.randomUUID(), baseVersion: known.version,
+            } };
+          }
+          const nextEntries = metadataEntries(entries, state);
+          if (!sameMetadata(entries, nextEntries)) tx.objectStore('meta').put({
+            ...meta.result, entries: nextEntries,
+            identity: { ...meta.result.identity, repositoryRevision: meta.result.identity.repositoryRevision + 1 },
+          }, 'workspace');
+          store.put(state, 'metadata');
+          if ('snapshot' in action) store.put({ ...parseSyncState(sync.result), lastSyncedAt: new Date().toISOString() }, 'sync');
+        } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
+      };
+      metadata.onsuccess = meta.onsuccess = preservation.onsuccess = objects.onsuccess = sync.onsuccess = step;
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(new Error(error));
+    });
   }
 
   async syncState(): Promise<CloudSyncState> {

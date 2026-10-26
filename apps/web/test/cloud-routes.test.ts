@@ -30,12 +30,12 @@ describe('路由解析', () => {
     expect(route.target.workspaceId).toBe(workspaceId);
   });
 
-  it('云阅读里只认阅读页；内容管理、Edition、设置一律回落到首页', () => {
+  it('云阅读包含已接入的回收站页，Edition 与设置回落到首页', () => {
     const base = `#cloud-read/${deployment}/${account}/${workspaceId}`;
     const pageOf = (hash: string) => parseRoute(hash).page;
     expect(pageOf(`${base}/watch`)).toBe('watch');
     expect(pageOf(`${base}/progress`)).toBe('progress');
-    expect(pageOf(`${base}/library`)).toBe('home');
+    expect(pageOf(`${base}/library`)).toBe('library');
     expect(pageOf(`${base}/settings`)).toBe('home');
     expect(pageOf(`${base}/edition`)).toBe('home');
     expect(pageOf(`${base}/cloud`)).toBe('home');
@@ -60,7 +60,7 @@ describe('深链生成', () => {
     const target = { deploymentId: deployment, accountId: account, workspaceId };
     expect(cloudHash(target)).toBe(`cloud-read/${deployment}/${account}/${workspaceId}`);
     expect(cloudHash(target, 'watch')).toBe(`cloud-read/${deployment}/${account}/${workspaceId}/watch`);
-    expect(cloudHash(target, 'library')).toBe(`cloud-read/${deployment}/${account}/${workspaceId}`);
+    expect(cloudHash(target, 'library')).toBe(`cloud-read/${deployment}/${account}/${workspaceId}/library`);
   });
 
   it('生成的链接能被同一个解析器读回来', () => {

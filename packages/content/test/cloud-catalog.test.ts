@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getScenes } from '@endless/player';
-import { checked, newId, openCloudCatalog, type ContentRevision, type Workspace } from '../src/index.js';
+import { checked, memoryCatalogCache, newId, openCloudCatalog, type ContentRevision, type Workspace } from '../src/index.js';
 import { cloudTestContent as content, cloudTestWorkspace } from './cloud-fixture.js';
 
 function withUnreadSequel(workspace: Workspace): { workspace: Workspace; firstId: string; laterId: string } {
@@ -54,5 +54,32 @@ describe('云内容目录按需编译', () => {
 
     expect(() => catalog.loadEpisode(laterId)).toThrow(/重复/);
     expect(catalog.compiledGenerated()).toEqual([firstId]);
+  });
+
+  it('同一页面缓存按修订哈希复用已编译的集，不再次编译', () => {
+    const { workspace, firstId, laterId } = withUnreadSequel(cloudTestWorkspace(true));
+    const cache = memoryCatalogCache();
+    const first = openCloudCatalog(content, workspace, cache);
+    const loaded = first.loadEpisode(firstId);
+    const library = first.library();
+    expect(first.compiledGenerated()).toEqual([firstId]);
+
+    const again = openCloudCatalog(content, workspace, cache);
+    expect(again.loadEpisode(firstId)).toBe(loaded);
+    expect(again.compiledGenerated()).toEqual([]);
+    expect(again.library().entities).toEqual(library.entities);
+    expect(again.library().predicates).toEqual(library.predicates);
+
+    const revision = workspace.revisions.find((item) => item.episodeId === firstId && item.origin !== 'bundled') as ContentRevision;
+    cache.keep(revision.id, revision.hash, { ...loaded, id: 'forged-episode' }, cache.tail()!);
+    const forged = openCloudCatalog(content, workspace, cache);
+    expect(forged.loadEpisode(firstId).id).toBe(firstId);
+    expect(forged.compiledGenerated()).toEqual([firstId]);
+
+    expect(() => again.loadEpisode(laterId)).toThrow(/重复/);
+    expect(again.compiledGenerated()).toEqual([]);
+    const afterFailure = openCloudCatalog(content, workspace, cache);
+    expect(afterFailure.loadEpisode(firstId).id).toBe(firstId);
+    expect(afterFailure.compiledGenerated()).toEqual([]);
   });
 });

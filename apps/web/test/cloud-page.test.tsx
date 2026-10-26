@@ -88,7 +88,7 @@ describe('云端页面状态', () => {
     expect(html).not.toContain('确认导入（激活云端副本）');
   });
 
-  it('未领取时只有「领取」；领取后出现阅读入口，并说明元数据还没同步', () => {
+  it('未领取时只有「领取」；领取后出现阅读入口，并说明展示信息与生命周期的能力边界', () => {
     const workspaceList = [{
       id: workspaceId, sourceLocalId: 'local-1', contract: 'endless-workspace/1' as const, cloudVersion: '1',
       status: 'active' as const, role: 'owner' as const, createdAt: '2026-10-25T00:00:00.000Z',
@@ -101,7 +101,8 @@ describe('云端页面状态', () => {
 
     const claimed = render({ status: 'signed-in', me, workspaces: workspaceList, installed: [workspaceId] });
     expect(claimed).toContain('>打开云端副本</button>');
-    expect(claimed).toContain('标题、标签、回收站等元数据还没有同步通道');
+    expect(claimed).toContain('同步阅读进度、展示信息、回收站和归档');
+    expect(claimed).toContain('采用修订尚未接入');
     expect(claimed).toContain('云端生成、额度与付费都还没实现');
   });
 

@@ -40,6 +40,8 @@ test('真实作答、提示、恢复和回看不会重复刷记录', async ({ pa
   await page.screenshot({ path: testInfo.outputPath('chat.png'), fullPage: true });
   await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByRole('button', { name: '需要一点提示？' }).click();
+  // The click completes before asynchronous IDB persistence. The hint renders only after the business commit succeeds.
+  await expect(page.getByText(/看过提示后，这一题会记为练习/)).toBeVisible();
   await page.reload();
   await expect(page.getByText(/看过提示后，这一题会记为练习/)).toBeVisible();
   await page.getByRole('button', { name: '3. under', exact: true }).click();

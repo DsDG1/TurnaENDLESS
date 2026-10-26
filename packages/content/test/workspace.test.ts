@@ -182,11 +182,56 @@ describe('endless-workspace 运行时', () => {
     expect(() => adoptRevisionInPlace(played, entry.id, preview2.revision!)).toThrow(/新分支/);
   });
 
+  it('调用方持久身份可复现同一修订和分叉，重试不改生成时间或原答案', () => {
+    let ws = generatedDoc(playedPilot()).ws;
+    const entry = ws.entries.find((e) => e.sourceKind === 'generated')!;
+    const head = ws.revisions.find((r) => r.id === entry.headRevisionId)!;
+    if (head.origin === 'bundled') throw new Error('fixture');
+    ws = applyPlayerCommand(content, ws, { type: 'select', episode: head.episodeId }, new Date(at));
+    const first = getScenes(bridge(content, ws).library.episodes.find((e) => e.id === head.episodeId)!)[0]!;
+    const options = getOptions(first);
+    ws = applyPlayerCommand(content, ws, options.length
+      ? { type: 'answer', scene: first.id, choice: options.findIndex((o) => o.correct) }
+      : { type: 'advance', scene: first.id, skip: false }, new Date(at));
+    const original = structuredClone(ws);
+    const revisionId = `rev_${crypto.randomUUID()}`, branchId = `brn_${crypto.randomUUID()}`;
+    const run = () => {
+      const preview = previewRevision(content, ws, entry, head.draft, new Date(at), revisionId);
+      expect(preview.ok).toBe(true);
+      return adoptRevision(content, ws, entry, preview.revision!, new Date(at), branchId);
+    };
+    const firstRun = run(), secondRun = run();
+    expect(firstRun.mode).toBe('fork');
+    expect(firstRun.workspace.activeBranchId).toBe(branchId);
+    expect(firstRun.workspace.revisions.find((r) => r.id === revisionId)).toEqual(secondRun.workspace.revisions.find((r) => r.id === revisionId));
+    expect(firstRun.workspace.branches.at(-1)).toEqual(secondRun.workspace.branches.at(-1));
+    expect(firstRun.workspace.branches.at(-1)!.session.events).toEqual(ws.branches[0]!.session.events.slice(0, head.basis.eventCount));
+    expect(firstRun.workspace.branches[0]).toEqual(original.branches[0]);
+    expect(ws).toEqual(original);
+  });
+
   it('v3 文档不能写入工作区：给出契约错误而不是 TypeError', () => {
     const { ws, doc } = generatedDoc(playedPilot());
     const tampered = { ...doc, learningVersion: 3, creation: undefined } as unknown as GeneratedEpisode;
     const { workspace: reserved, ticket } = reserveTicket(ws, new Date(at));
     expect(() => commitTicketResult(content, reserved, ticket.id, tampered)).toThrow(/v4 创作草稿/);
+  });
+
+  it('已归档生成内容回收后恢复仍满足成员双向一致，历史与义务不变', () => {
+    const ws = generatedDoc(playedPilot()).ws;
+    const entry = ws.entries.find((e: ContentEntry) => e.sourceKind === 'generated')!;
+    const volume = buildVolume(ws, bridge(content, ws), [entry.id], '恢复原归档');
+    const archived = attachVolume(ws, volume);
+    const trashed = trashContent(archived, entry.id);
+    expect(trashed.entries.find((e: ContentEntry) => e.id === entry.id)!.archiveVolumeId).toBeNull();
+    const restored = restoreContent(trashed, entry.id);
+    expect(restored.entries.find((e: ContentEntry) => e.id === entry.id)!.archiveVolumeId).toBe(volume.id);
+    expect(restored.branches).toEqual(archived.branches);
+    expect(restored.volumes).toEqual(archived.volumes);
+    expect(restored.obligations).toEqual(archived.obligations);
+    expect(() => checked(restored)).not.toThrow();
+    const ambiguous = attachVolume(trashed, buildVolume(trashed, bridge(content, trashed), [entry.id], '另一原卷'));
+    expect(() => restoreContent(ambiguous, entry.id)).toThrow('多个归档卷');
   });
 
   it('归档卷只覆盖真实读完的集；生成上下文用摘要替代原文', () => {

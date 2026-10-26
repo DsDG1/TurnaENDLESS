@@ -24,6 +24,7 @@ function Dialog({ title, onClose, children }: { title: string; onClose(): void; 
 
 /** 展示信息编辑（改名/标签/备注，不改正文与已有答案）。 */
 export function DisplayEditor({ entry, player, onClose }: { entry: ContentEntry; player: Player; onClose(): void }) {
+  const baseline = useRef(entry);
   const [title, setTitle] = useState(entry.display.title);
   const [tags, setTags] = useState(entry.display.tags.join(', '));
   const [note, setNote] = useState(entry.display.note);
@@ -32,7 +33,7 @@ export function DisplayEditor({ entry, player, onClose }: { entry: ContentEntry;
     <label>显示名称<input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={100} /></label>
     <label>标签（逗号分隔）<input value={tags} onChange={(e) => setTags(e.target.value)} maxLength={200} /></label>
     <label>个人备注<textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} rows={3} /></label>
-    <button className="button button-dark" disabled={!title.trim()} onClick={() => void player.editDisplay(entry, {
+    <button className="button button-dark" disabled={!title.trim() || player.busy} onClick={() => void player.editDisplay(baseline.current, {
       title: title.trim(), note,
       tags: tags.split(',').map((t) => t.trim()).filter(Boolean).slice(0, 12),
     }).then((ok) => { if (ok) onClose(); })}>保存展示信息</button>
@@ -88,21 +89,22 @@ export function EntryMenu({ entry, player }: { entry: ContentEntry; player: Play
       document.removeEventListener('keydown', key);
     };
   }, [open]);
-  if (entry.sourceKind !== 'generated') return null;
+  if (entry.sourceKind !== 'generated' && !player.cloudMode) return null;
   const busy = player.busy;
+  const lifecycleBusy = busy || !!player.cloudLifecycle?.pending[entry.id];
   return <span className="entry-menu" ref={root}>
     <button className="icon-button" aria-label="管理此内容" aria-haspopup="menu" aria-expanded={open}
       onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><Icon name="settings" size={16} /></button>
     {open && <div className="entry-menu-list" role="menu" onClick={(e) => e.stopPropagation()}>
-      <button role="menuitem" disabled={busy} onClick={() => { setDisplay(true); setOpen(false); }}>编辑展示信息</button>
-      <button role="menuitem" disabled={busy} onClick={() => { setBody(true); setOpen(false); }}>编辑内容</button>
-      {entry.lifecycle !== 'trashed' &&
-        <button role="menuitem" disabled={busy} onClick={() => void player.trash(entry).then(() => setOpen(false))}>移入回收站</button>}
-      {entry.lifecycle === 'trashed' && <>
-        <button role="menuitem" disabled={busy} onClick={() => void player.restore(entry).then(() => setOpen(false))}>恢复</button>
-        <button role="menuitem" disabled={busy || blocked} onClick={() => setConfirmPurge(true)}>
+      <button role="menuitem" disabled={busy || !!player.cloudMetadata?.pending[entry.id]} onClick={() => { setDisplay(true); setOpen(false); }}>编辑展示信息</button>
+      {!player.cloudMode && <button role="menuitem" disabled={busy} onClick={() => { setBody(true); setOpen(false); }}>编辑内容</button>}
+      {entry.sourceKind === 'generated' && entry.lifecycle !== 'trashed' &&
+        <button role="menuitem" disabled={lifecycleBusy} onClick={() => void player.trash(entry).then(() => setOpen(false))}>移入回收站</button>}
+      {entry.sourceKind === 'generated' && entry.lifecycle === 'trashed' && <>
+        <button role="menuitem" disabled={lifecycleBusy} onClick={() => void player.restore(entry).then(() => setOpen(false))}>恢复</button>
+        {!player.cloudMode && <button role="menuitem" disabled={busy || blocked} onClick={() => setConfirmPurge(true)}>
           {blocked ? '仍被引用，不能彻底删除' : '彻底删除'}
-        </button>
+        </button>}
       </>}
     </div>}
     {display && <DisplayEditor entry={entry} player={player} onClose={() => setDisplay(false)} />}
@@ -117,6 +119,8 @@ export function EntryMenu({ entry, player }: { entry: ContentEntry; player: Play
 /** 「管理」页：归档卷、回收站、完整备份与导入。 */
 export function LibraryPage({ player }: { player: Player }) {
   const [importError, setImportError] = useState('');
+  const [archiveMembers, setArchiveMembers] = useState<string[]>([]);
+  const [archiveTitle, setArchiveTitle] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const trashed = player.entries.filter((e) => e.lifecycle === 'trashed');
   const obligationIds = new Set(player.obligations.map((o) => o.contentId));
@@ -135,14 +139,27 @@ export function LibraryPage({ player }: { player: Player }) {
   return <>
     <section className="page-heading"><div><span className="eyebrow">LIBRARY</span><h1>归档与回收站<span className="heading-dot">。</span></h1></div></section>
     <section className="surface"><div className="section-heading"><h2>归档卷</h2></div>
-      {!player.volumes.length && <p className="muted-copy">还没有归档。{player.suggestions.length ? '有内容可以成卷：' : '完成更多集后可以按系列成卷。'}</p>}
-      {player.suggestions.map((s, i) => <div key={i} className="volume-row">
+      {player.cloudMode && <div className="cloud-archive-form">
+        <p className="muted-copy">选择要成卷的内容。摘要与引用由已确认的阅读记录生成；离线时先保存请求，同步确认后才加入归档。采用修订尚未接入。</p>
+        <label>归档名称<input value={archiveTitle} maxLength={100} onChange={(event) => setArchiveTitle(event.target.value)} /></label>
+        <fieldset disabled={player.busy || !!player.cloudArchives?.pending}><legend>选择归档内容</legend>
+          {player.workspace?.branches.find((b) => b.id === player.workspace?.activeBranchId)?.adopted.map((adopted) => player.entries.find((e) => e.id === adopted.contentId))
+            .filter((entry): entry is ContentEntry => !!entry && entry.lifecycle === 'active' && !entry.archiveVolumeId).map((entry) => <label key={entry.id}>
+              <input type="checkbox" checked={archiveMembers.includes(entry.id)} disabled={!!player.cloudLifecycle?.pending[entry.id] || !!player.cloudMetadata?.pending[entry.id]}
+                onChange={(event) => setArchiveMembers((held) => event.target.checked ? [...held, entry.id] : held.filter((id) => id !== entry.id))} />{entry.display.title}
+            </label>)}
+        </fieldset>
+        <button className="button button-outline" disabled={player.busy || !!player.cloudArchives?.pending || !archiveMembers.length || archiveMembers.length > 500 || !archiveTitle.trim()}
+          onClick={() => void player.archive(archiveMembers, archiveTitle.trim()).then((ok) => { if (ok) { setArchiveMembers([]); setArchiveTitle(''); } })}>提交归档请求</button>
+      </div>}
+      {!player.volumes.length && <p className="muted-copy">{player.cloudMode ? '还没有已确认的归档卷。' : `还没有归档。${player.suggestions.length ? '有内容可以成卷：' : '完成更多集后可以按系列成卷。'}`}</p>}
+      {!player.cloudMode && player.suggestions.map((s, i) => <div key={i} className="volume-row">
         <span>{s.reason}（{s.contentIds.length} 集）</span>
         <button className="text-button" onClick={() => void player.archive(s.contentIds)}>成卷归档</button>
       </div>)}
       {player.volumes.map((v) => <div key={v.id} className="volume-row">
         <div><strong>{v.title}</strong><small>{v.members.length} 集 · {v.narrative}</small></div>
-        <button className="text-button" onClick={() => void player.unarchive(v)}>移出归档</button>
+        <button className="text-button" disabled={player.busy || !!player.cloudArchives?.pending} onClick={() => void player.unarchive(v)}>{player.cloudMode ? '提交取消归档请求' : '移出归档'}</button>
       </div>)}
     </section>
     <section className="surface"><div className="section-heading"><h2>回收站</h2></div>
@@ -150,13 +167,13 @@ export function LibraryPage({ player }: { player: Player }) {
       {trashed.map((entry) => <div key={entry.id} className="volume-row">
         <div><strong>{entry.display.title}</strong><small>{obligationIds.has(entry.id) ? '仍有阅读义务' : '无阅读义务'}</small></div>
         <div className="button-row">
-          <button className="text-button" onClick={() => void player.restore(entry)}>恢复</button>
-          {obligationIds.has(entry.id) && <button className="text-button" onClick={() => void player.waive(entry)}>撤销阅读义务</button>}
+          <button className="text-button" disabled={player.busy || !!player.cloudLifecycle?.pending[entry.id]} onClick={() => void player.restore(entry)}>恢复</button>
+          {!player.cloudMode && obligationIds.has(entry.id) && <button className="text-button" onClick={() => void player.waive(entry)}>撤销阅读义务</button>}
           <EntryMenu entry={entry} player={player} />
         </div>
       </div>)}
     </section>
-    <section className="surface"><div className="section-heading"><h2>完整备份</h2></div>
+    {!player.cloudMode && <section className="surface"><div className="section-heading"><h2>完整备份</h2></div>
       <p className="muted-copy">导出包含原件、修订、分支、事件与归档，不含临时 Key 或服务器配置。</p>
       <div className="button-row">
         <button className="button button-outline" onClick={() => { const b = player.backup(); if (b) downloadSession(b); }}><Icon name="download" size={17} />导出完整备份</button>
@@ -164,7 +181,7 @@ export function LibraryPage({ player }: { player: Player }) {
         <input ref={fileRef} type="file" accept=".json,.endless.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />
       </div>
       {importError && <p className="error-text" role="alert">{importError}</p>}
-    </section>
+    </section>}
     <section className="surface"><div className="section-heading"><h2>分支</h2></div>
       {player.branches.map((b) => <div key={b.id} className="volume-row">
         <div><strong>{b.label}</strong><small>{b.session.events.length} 条事件{b.id === player.workspace?.activeBranchId ? ' · 当前' : ''}</small></div>

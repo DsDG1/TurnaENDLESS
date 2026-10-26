@@ -1,5 +1,9 @@
 import {
-  CLOUD_API_PREFIX, CLOUD_LIMITS, ChallengeResponseSchema, CloudCapabilitiesSchema,
+  CLOUD_API_PREFIX, CLOUD_LIMITS, ChallengeResponseSchema, CloudCapabilitiesSchema, MetadataReceiptSchema, MetadataSnapshotSchema,
+  type MetadataCommand, type MetadataReceipt, type MetadataSnapshot,
+  LifecycleReceiptSchema, ManagementBootstrapSchema, ManagementPullSchema,
+  type LifecycleCommand, type LifecycleReceipt, type ManagementBootstrap, type ManagementPull,
+  ArchiveReceiptSchema, type ArchiveCommand, type ArchiveReceipt,
   CloudErrorBodySchema, CloudImportPreviewResponseSchema, CloudImportResponseSchema,
   CloudPackageResponseSchema, DeviceListResponseSchema, IDEMPOTENCY_KEY_HEADER, MeResponseSchema,
   VerifyResponseSchema, WorkspaceInstallationResponseSchema, WorkspaceListResponseSchema,
@@ -93,6 +97,12 @@ function parse<T>(schema: { parse(value: unknown): T }, value: unknown): T {
 }
 
 export interface CloudApiPort {
+  submitArchive(input: ArchiveCommand): Promise<ArchiveReceipt>;
+  managementBootstrap(workspaceId: string): Promise<ManagementBootstrap>;
+  managementPull(workspaceId: string, cursor: string): Promise<ManagementPull>;
+  submitLifecycle(input: LifecycleCommand): Promise<LifecycleReceipt>;
+  metadata(workspaceId: string): Promise<MetadataSnapshot>;
+  submitMetadata(input: MetadataCommand): Promise<MetadataReceipt>;
   capabilities(): Promise<CloudCapabilities>;
   me(): Promise<MeResponse>;
   devices(): Promise<Device[]>;
@@ -117,6 +127,34 @@ export interface CloudApiPort {
 
 export class CloudApi implements CloudApiPort {
   constructor(private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {}
+  async submitArchive(input: ArchiveCommand) {
+    return parse(ArchiveReceiptSchema, await request(this.fetcher, '/sync/archives', {
+      method: 'POST', contentType: 'application/json', body: JSON.stringify(input),
+    }));
+  }
+
+  async managementBootstrap(workspaceId: string) {
+    return parse(ManagementBootstrapSchema, await request(this.fetcher, `/sync/management/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`));
+  }
+  async managementPull(workspaceId: string, cursor: string) {
+    const params = new URLSearchParams({ workspaceId, cursor });
+    return parse(ManagementPullSchema, await request(this.fetcher, `/sync/management/pull?${params}`));
+  }
+  async submitLifecycle(input: LifecycleCommand) {
+    return parse(LifecycleReceiptSchema, await request(this.fetcher, '/sync/lifecycle', {
+      method: 'POST', contentType: 'application/json', body: JSON.stringify(input),
+    }));
+  }
+
+  async metadata(workspaceId: string) {
+    return parse(MetadataSnapshotSchema, await request(this.fetcher, `/sync/metadata?workspaceId=${encodeURIComponent(workspaceId)}`));
+  }
+
+  async submitMetadata(input: MetadataCommand) {
+    return parse(MetadataReceiptSchema, await request(this.fetcher, '/sync/metadata', {
+      method: 'POST', contentType: 'application/json', body: JSON.stringify(input),
+    }));
+  }
 
   async capabilities() {
     return parse(CloudCapabilitiesSchema, await request(this.fetcher, '/capabilities'));

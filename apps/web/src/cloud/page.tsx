@@ -121,8 +121,8 @@ function SyncCard({ sync, enabled, busy, actions }: {
     </ul>}
     {!!sync.conflicts.length && <button className="button button-outline" disabled={busy} onClick={() => actions.exportConflict()}>下载本机完整冲突包</button>}
     <p className="section-footnote">
-      同步只搬运真实阅读事件：同一批次只会生效一次，事件身份在本地提交时分配，重试沿用同一个。
-      可把离线冲突保留为独立分支并恢复云端主线；标题、标签、回收站等元数据仍没有同步通道。
+      阅读记录来自实际阅读操作，同一批次只会生效一次，重试沿用同一个请求。
+      可把离线阅读冲突保留为独立分支并恢复云端主线。打开阅读器可同步展示信息、回收站和归档，并处理并发修改；归档摘要依照已确认的阅读记录生成，采用修订尚未接入。回收不删除历史或解除阅读义务。
       保留中断后可点「立即同步」恢复同一请求，不会重新创建分支。
     </p>
   </section>;
@@ -247,7 +247,7 @@ export function CloudPage({ state, actions, backup }: {
               && <button className="text-button" disabled={state.busy} onClick={() => actions.open(workspace.id)}>打开云端副本</button>}
           </li>)}</ul>}
         {state.installation && <p className="generation-phase" role="status">安装回执已保存：{new Date(state.installation.installedAt).toLocaleString('zh-CN')} · 设备 {short(state.installation.deviceId)}</p>}
-        <p className="section-footnote">领取会把同一份副本写进这台设备的独立云库，不覆盖游客存档，也不覆盖本机后续进度。领取后可用「打开云端副本」继续阅读，读到的进度会走增量同步；标题、标签、回收站等元数据还没有同步通道。</p>
+        <p className="section-footnote">领取会把同一份副本写进这台设备的独立云库，不覆盖游客存档，也不覆盖本机后续进度。领取后可用「打开云端副本」继续阅读，同步阅读进度、展示信息、回收站和归档；采用修订尚未接入。</p>
       </section>
 
       {state.sync && <SyncCard sync={state.sync} enabled={!!state.capabilities?.features.sync} busy={state.busy} actions={actions} />}

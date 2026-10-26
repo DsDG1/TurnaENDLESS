@@ -60,6 +60,14 @@ function volumeProjection(content: Content, workspace: Workspace, volume: Archiv
   return buildVolume(workspace, runtime, volume.members.map((member) => member.contentId), volume.title);
 }
 
+/** The same projection check is used for imported and synchronized archive bodies. No caller-supplied read/quote claim is authoritative. */
+export function validateArchiveProjection(content: Content, workspace: Workspace, volume: ArchiveVolume): void {
+  const expected = volumeProjection(content, workspace, volume);
+  for (const key of ['members', 'series', 'facts', 'choices', 'threads', 'reading', 'quotes'] as const) {
+    if (!same(volume[key], expected[key])) reject();
+  }
+}
+
 export function validateCloudBackup(content: Content, raw: unknown): Backup {
   const backup = parseBackup(raw).backup;
   if (!same(raw, backup)) reject();
@@ -115,10 +123,7 @@ export function validateCloudBackup(content: Content, raw: unknown): Backup {
     if (!same(checkpoint.state, json(exportProjection(projectSession(runtime.session, runtime.library))))) reject();
   }
   for (const volume of workspace.volumes) {
-    const expected = volumeProjection(content, workspace, volume);
-    for (const key of ['members', 'series', 'facts', 'choices', 'threads', 'reading', 'quotes'] as const) {
-      if (!same(volume[key], expected[key])) reject();
-    }
+    validateArchiveProjection(content, workspace, volume);
   }
   return backup;
 }

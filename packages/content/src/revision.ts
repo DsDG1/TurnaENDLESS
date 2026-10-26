@@ -4,7 +4,7 @@
  */
 import { contentHash, type ValidationIssue } from '@endless/esl';
 import {
-  newId, type Content, type ContentEntry, type ContentRevision, type GeneratedEpisode,
+  newId, RevisionIdSchema, type Content, type ContentEntry, type ContentRevision, type GeneratedEpisode,
   type GenerationBasis, type SavedPlayer, type Workspace,
 } from './index.js';
 import {
@@ -57,8 +57,9 @@ export interface RevisionPreview {
   after?: { scenes: { id: string; type: string }[] };
 }
 
-/** 编译编辑后的草稿。task 由原修订的计划依据重建，plannedAt 保持原值以复现学习任务。 */
-export function previewRevision(content: Content, workspace: Workspace, entry: ContentEntry, draftText: string, at = new Date()): RevisionPreview {
+/** 编译编辑后的草稿。task 由原修订的计划依据重建，plannedAt 保持原值；可注入已持久化的身份供显式重试。 */
+export function previewRevision(content: Content, workspace: Workspace, entry: ContentEntry, draftText: string, at = new Date(), revisionId = newId('revision', uuid)): RevisionPreview {
+  RevisionIdSchema.parse(revisionId);
   const head = adoptedRevision(workspace, entry.id);
   if (!head) return { ok: false, issues: [{ code: 'E-REVISION', level: 'error', message: '当前分支未采用该内容，不能编辑正文' }] };
   if (!isGenerated(head)) return { ok: false, issues: [{ code: 'E-REVISION', level: 'error', message: '只有生成内容可以编辑正文' }] };
@@ -91,7 +92,7 @@ export function previewRevision(content: Content, workspace: Workspace, entry: C
     return { ok: false, issues, before: { scenes: scenesOf(head.batch) } };
   }
   const revision: ContentRevision = {
-    id: newId('revision', uuid), contentId: entry.id, parentRevisionId: head.id,
+    id: revisionId, contentId: entry.id, parentRevisionId: head.id,
     ordinal: head.ordinal + 1, origin: 'edited', episodeId: head.episodeId,
     draft: compiled.creation.draft, batch: compiled.batch, hash: contentHash(compiled.batch),
     title: compiled.title, subtitle: compiled.subtitle, description: compiled.description,
@@ -110,11 +111,11 @@ export function previewRevision(content: Content, workspace: Workspace, entry: C
  * 确认采用：未交互内容原位替换；已有交互则创建新分支（forkForRevision 复制边界前历史）。
  * 返回 {workspace, mode}，mode 标明原位替换或新分支。
  */
-export function adoptRevision(content: Content, workspace: Workspace, entry: ContentEntry, revision: ContentRevision, at = new Date()): { workspace: Workspace; mode: 'in-place' | 'fork' } {
+export function adoptRevision(content: Content, workspace: Workspace, entry: ContentEntry, revision: ContentRevision, at = new Date(), branchId?: string): { workspace: Workspace; mode: 'in-place' | 'fork' } {
   const runtime: WorkspaceRuntime = bridge(content, workspace, workspace.activeBranchId);
   const hasEvents = runtime.branch.session.events.some((event) => event.episode === revision.episodeId);
   if (!hasEvents) {
     return { workspace: adoptRevisionInPlace(workspace, entry.id, revision, at), mode: 'in-place' };
   }
-  return { workspace: forkForRevision(workspace, runtime.branch.id, entry.id, revision, at), mode: 'fork' };
+  return { workspace: forkForRevision(workspace, runtime.branch.id, entry.id, revision, at, branchId), mode: 'fork' };
 }
