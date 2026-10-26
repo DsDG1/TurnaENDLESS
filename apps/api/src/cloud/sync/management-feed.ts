@@ -1,12 +1,13 @@
 import type { Querier } from '../db/client.js';
-import { CLOUD_LIMITS, type MetadataEntry, type LifecycleEntry, type ArchiveSnapshot } from '@endless/cloud-contracts';
+import { CLOUD_LIMITS, type MetadataEntry, type LifecycleEntry, type ArchiveSnapshot, type RevisionRegistration } from '@endless/cloud-contracts';
 import { CloudError } from '../errors.js';
 
 /** Caller holds account → workspace locks. Allocation and insertion commit with the command's receipt. */
 export async function recordManagement(q: Querier, accountId: string, workspaceId: string, commandId: string,
-  change: { type: 'display'; entry: MetadataEntry } | { type: 'lifecycle'; entry: LifecycleEntry } | { type: 'archive'; snapshot: ArchiveSnapshot }) {
+  change: { type: 'display'; entry: MetadataEntry } | { type: 'lifecycle'; entry: LifecycleEntry } | { type: 'archive'; snapshot: ArchiveSnapshot }
+    | { type: 'revision'; registration: RevisionRegistration }) {
   if (Buffer.byteLength(JSON.stringify(change)) > CLOUD_LIMITS.uploadObjectBytes - 4096) throw new CloudError(413, 'STORAGE_QUOTA', 'sync', '管理变更超过当前有界同步容量，整笔未提交', 'contact_support');
-  if (change.type === 'archive') {
+  if (change.type === 'archive' || change.type === 'revision') {
     const bytes = (await q.query<{ bytes: number }>('SELECT octet_length($1::jsonb::text) AS bytes', [JSON.stringify({ seq: 0, ...change })])).rows[0]!.bytes;
     if (bytes > CLOUD_LIMITS.uploadObjectBytes - 4096) throw new CloudError(413, 'STORAGE_QUOTA', 'sync', '归档变更超过当前分页容量，整笔未提交', 'contact_support');
   }

@@ -3,7 +3,7 @@ import {
   ChallengeRequestSchema, CreateWorkspaceRequestSchema, IdempotencyKeySchema,
   LEGACY_PROVIDER_KEY_HEADER, VerifyRequestSchema, type CloudCapabilities,
   CLOUD_API_PREFIX, PrepareObjectRequestSchema, ActivateImportRequestSchema, InstallWorkspaceRequestSchema, type Device,
-  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema, RegisterStreamRequestSchema, MetadataCommandSchema, LifecycleCommandSchema, ArchiveCommandSchema, RevisionPreviewRequestSchema,
+  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema, RegisterStreamRequestSchema, MetadataCommandSchema, LifecycleCommandSchema, ArchiveCommandSchema, RevisionPreviewRequestSchema, RevisionAdoptionCommandSchema,
 } from '@endless/cloud-contracts';
 import type { CloudPool } from './db/client.js';
 import type { Mailer } from './mail.js';
@@ -262,6 +262,14 @@ export function createCloudServer(options: CloudServerOptions) {
           if (!body.success) throw badRequest('修订预览格式无效；只接受草稿和前置版本');
           return { status: 200, body: await sync.management.revisionPreviews.submit(auth, body.data) };
         } },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/revisions\/adopt$/,
+        handle: async ({ request, auth }) => {
+          const body = RevisionAdoptionCommandSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('修订确认格式无效；必须绑定已完成的预览');
+          return { status: 200, body: await sync.management.revisionPreviews.adopt(auth, body.data) };
+        } },
+      { method: 'GET', access: 'session', pattern: /^\/sync\/revisions\/catalog$/,
+        handle: async ({ url, auth }) => ({ status: 200, body: await sync.management.revisionPreviews.catalog(auth, workspaceOf(url)) }) },
       { method: 'POST', access: 'session', pattern: /^\/sync\/metadata$/,
         handle: async ({ request, auth }) => {
           const body = MetadataCommandSchema.safeParse(await readJsonBody(request));

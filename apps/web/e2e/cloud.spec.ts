@@ -146,6 +146,7 @@ test('展示信息冲突刷新后可显式保留本机，丢响应后恢复原�
       origin: { cursor: '0', streams: seeded.streams },
     };
     else if (url.pathname.endsWith('/sync/pull')) body = { changes: [], nextCursor: '0', hasMore: false, cloudVersion: '0' };
+    else if (url.pathname.endsWith('/sync/revisions/catalog')) { await route.fulfill({ status: 404 }); return; }
     else if (url.pathname.endsWith('/sync/management/bootstrap')) body = { workspaceId, cursor: String(changes.length), changeSeq: changes.length, display: snapshot.entries, lifecycle: seeded.lifecycle };
     else if (url.pathname.endsWith('/sync/management/pull')) {
       const fromCursor = url.searchParams.get('cursor')!;
@@ -246,6 +247,7 @@ test('两浏览器离线归档、取消归档与回收恢复，丢响应刷新�
       let body: unknown;
       if (url.pathname.endsWith('/sync/bootstrap')) body = { workspaceId, cloudVersion: '0', changeSeq: 0, cursor: '0', streams, origin: { cursor: '0', streams } };
       else if (url.pathname.endsWith('/sync/pull')) body = { changes: [], nextCursor: '0', hasMore: false, cloudVersion: '0' };
+      else if (url.pathname.endsWith('/sync/revisions/catalog')) { await route.fulfill({ status: 404 }); return; }
       else if (url.pathname.endsWith('/sync/management/bootstrap')) body = { workspaceId, cursor: String(changes.length), changeSeq: changes.length, display, lifecycle, archive };
       else if (url.pathname.endsWith('/sync/management/pull')) {
         const fromCursor = url.searchParams.get('cursor')!;

@@ -9,11 +9,15 @@ import {
   CLOUD_LIMITS, RevisionPreviewRequestSchema, RevisionPreviewReceiptSchema,
   SyncBranchManifestSchema, SyncPlayerEventSchema,
   type RevisionPreviewRequest, type RevisionPreviewReceipt, type SyncBranchManifest,
+  RevisionAdoptionCommandSchema, RevisionAdoptionReceiptSchema, RevisionRegistrationSchema, MetadataEntrySchema,
+  type RevisionAdoptionCommand, type RevisionAdoptionReceipt, type RevisionRegistration,
 } from '@endless/cloud-contracts';
 import type { AuthContext } from '../auth/service.js';
 import type { CloudPool, Querier } from '../db/client.js';
-import { CloudError, idempotencyMismatch, notFound } from '../errors.js';
+import { CloudError, badRequest, idempotencyMismatch, notFound } from '../errors.js';
 import { archiveSnapshot } from './archives.js';
+import { recordManagement } from './management-feed.js';
+import { boundRevisionCatalog, revisionCatalog, withRegisteredRevisions } from './revision-registry.js';
 
 const sha = (value: unknown) => createHash('sha256').update(stableStringify(value)).digest('hex');
 const unsupported = () => new CloudError(409, 'UNSUPPORTED_CONTRACT', 'sync', '当前部署缺少可验证的修订上下文；原内容与请求保留', 'contact_support');
@@ -65,42 +69,174 @@ export class RevisionPreviewService {
       await this.gate.lock(q, ctx, input.workspaceId);
       const held = (await this.held(q, ctx, input, digest))!;
       if (held.receipt !== null) return RevisionPreviewReceiptSchema.parse(held.receipt);
-      let receipt: RevisionPreviewReceipt;
       const common = { workspaceId: input.workspaceId, requestId: input.requestId, adoptionAvailable: false as const };
-      try {
-        const snapshot = await archiveSnapshot(q, ctx, input.workspaceId);
-        const display = (await q.query<{ version: string }>('SELECT version FROM content_metadata WHERE account_id = $1 AND workspace_id = $2 AND content_id = $3', [ctx.accountId, input.workspaceId, input.contentId])).rows[0];
-        const lifecycle = snapshot.lifecycle.find((e) => e.contentId === input.contentId);
-        const stream = (await q.query<{ event_seq: string; last_event_id: string | null; branch_manifest: unknown }>(
-          'SELECT event_seq, last_event_id, branch_manifest FROM sync_streams WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3',
-          [ctx.accountId, input.workspaceId, input.streamId])).rows[0];
-        if (!display || !lifecycle || !stream) throw notFound('修订内容或分支不存在');
-        const manifest = SyncBranchManifestSchema.safeParse(stream.branch_manifest);
-        if (!manifest.success) throw new Rejected('history');
-        if (Number(stream.event_seq) !== input.baseSeq || stream.last_event_id !== input.baseEventId
-          || Number(display.version) !== input.displayVersion || lifecycle.version !== input.lifecycleVersion || snapshot.state.version !== input.archiveVersion
-          || !manifest.data.adopted.some((a) => a.contentId === input.contentId && a.revisionId === input.baseRevisionId)) {
-          receipt = { ...common, outcome: 'conflict', reason: 'precondition' };
-        } else if (lifecycle.sourceKind !== 'generated' || lifecycle.value.lifecycle !== 'active'
-          || snapshot.state.volumes.some((v) => (v as { members: { contentId: string }[] }).members.some((m) => m.contentId === input.contentId))) {
-          throw new Rejected('members');
-        } else {
-          const inventory = await this.inventory(q, ctx, input, source);
-          receipt = this.compile(input, held, inventory.workspace, {
-            sourceDigest: sha(source), inventoryDigest: inventory.digest, streamId: input.streamId, baseRevisionId: input.baseRevisionId,
-            eventCount: input.baseSeq, lastEventId: input.baseEventId, displayVersion: input.displayVersion,
-            lifecycleVersion: input.lifecycleVersion, archiveVersion: input.archiveVersion,
-          });
-        }
-      } catch (error) {
-        if (!(error instanceof Rejected)) throw error;
-        receipt = { ...common, outcome: 'rejected', reason: error.reason };
-      }
+      let receipt = await this.evaluate(q, ctx, input, held, source);
       if (Buffer.byteLength(JSON.stringify(receipt)) > MAX_BYTES) receipt = { ...common, outcome: 'rejected', reason: 'capacity' };
       RevisionPreviewReceiptSchema.parse(receipt);
       await q.query('UPDATE revision_previews SET receipt = $3 WHERE account_id = $1 AND request_id = $2', [ctx.accountId, input.requestId, JSON.stringify(receipt)]);
       return receipt;
     });
+  }
+
+  async catalog(ctx: AuthContext, workspaceId: string) {
+    return this.app.withTenant(ctx.accountId, async (q) => {
+      await this.gate.lock(q, ctx, workspaceId);
+      return revisionCatalog(q, ctx, workspaceId);
+    });
+  }
+
+  private async adoptionHeld(q: Querier, ctx: AuthContext, input: RevisionAdoptionCommand, digest: string) {
+    const row = (await q.query<{ request_digest: string; receipt: unknown }>(
+      'SELECT request_digest, receipt FROM metadata_commands WHERE account_id = $1 AND command_id = $2', [ctx.accountId, input.commandId])).rows[0];
+    if (!row) return null;
+    if (row.request_digest !== digest) throw idempotencyMismatch();
+    return RevisionAdoptionReceiptSchema.parse(row.receipt);
+  }
+
+  private async confirmedPreview(q: Querier, ctx: AuthContext, input: RevisionAdoptionCommand) {
+    const row = (await q.query<Reservation & { request: unknown }>(
+      'SELECT * FROM revision_previews WHERE account_id = $1 AND workspace_id = $2 AND request_id = $3',
+      [ctx.accountId, input.workspaceId, input.previewRequestId])).rows[0];
+    if (!row) throw notFound('修订预览不存在');
+    const preview = RevisionPreviewReceiptSchema.safeParse(row.receipt);
+    if (!preview.success || preview.data.outcome !== 'ready' || preview.data.artifact.digest !== input.artifactDigest) throw badRequest('确认必须绑定已完成预览的摘要');
+    const request = RevisionPreviewRequestSchema.parse(row.request);
+    if (request.workspaceId !== input.workspaceId || request.requestId !== input.previewRequestId || sha(request) !== row.request_digest) throw unsupported();
+    return { row, request, artifact: preview.data.artifact };
+  }
+
+  /** Explicit confirmation revalidates the immutable preview under the same locks as event pushes. */
+  async adopt(ctx: AuthContext, raw: RevisionAdoptionCommand): Promise<RevisionAdoptionReceipt> {
+    const input = RevisionAdoptionCommandSchema.parse(raw), digest = sha(input);
+    const saved = await this.app.withTenant(ctx.accountId, async (q) => {
+      await this.gate.lock(q, ctx, input.workspaceId);
+      const receipt = await this.adoptionHeld(q, ctx, input, digest);
+      if (!receipt) await this.confirmedPreview(q, ctx, input);
+      return receipt;
+    });
+    if (saved) return saved;
+    if (!this.source || !this.content) throw unsupported();
+    await this.gate.ensure(ctx, input.workspaceId);
+    const source = await this.source(ctx, input.workspaceId); // never inside the retried transaction
+    return this.app.withTenant(ctx.accountId, async (q) => {
+      await this.gate.lock(q, ctx, input.workspaceId);
+      const duplicate = await this.adoptionHeld(q, ctx, input, digest); if (duplicate) return duplicate;
+      const preview = await this.confirmedPreview(q, ctx, input);
+      const common = { workspaceId: input.workspaceId, commandId: input.commandId };
+      let receipt: RevisionAdoptionReceipt;
+      let candidate: Workspace | undefined;
+      let registration: RevisionRegistration | undefined;
+      const catalog = await revisionCatalog(q, ctx, input.workspaceId);
+      // A different confirmation of the same preview is a stale action, not a second installation.
+      if (catalog.registrations.some((r) => r.previewRequestId === input.previewRequestId)) {
+        receipt = { ...common, outcome: 'conflict', reason: 'precondition' };
+      } else {
+        const current = await this.evaluate(q, ctx, preview.request, preview.row, source);
+        if (current.outcome === 'conflict') receipt = { ...common, outcome: 'conflict', reason: current.reason };
+        else if (current.outcome === 'rejected') receipt = { ...common, outcome: 'rejected', reason: current.reason };
+        else if (current.artifact.digest !== input.artifactDigest) receipt = { ...common, outcome: 'conflict', reason: 'precondition' };
+        else {
+          const expanded = withRegisteredRevisions(source, catalog);
+          const inventory = await this.inventory(q, ctx, preview.request, expanded);
+          const revision = ContentRevisionSchema.parse(current.artifact.revision);
+          candidate = adoptRevision(this.content!, inventory.workspace, inventory.workspace.entries.find((e) => e.id === revision.contentId)!,
+            revision, preview.row.authored_at, preview.row.branch_id).workspace;
+          const entry = candidate.entries.find((e) => e.id === revision.contentId)!;
+          const displayRow = (await q.query<{ version: string; value: Record<string, unknown> }>(
+            'SELECT version, value FROM content_metadata WHERE account_id = $1 AND workspace_id = $2 AND content_id = $3',
+            [ctx.accountId, input.workspaceId, revision.contentId])).rows[0]!;
+          const display = MetadataEntrySchema.parse({ contentId: revision.contentId, version: Number(displayRow.version) + 1,
+            value: { ...displayRow.value, title: revision.title }, updatedAt: preview.row.authored_at.toISOString() });
+          const count = current.artifact.mode === 'fork' ? current.artifact.branch.commonPrefixSeq : preview.request.baseSeq;
+          const last = count ? (await q.query<{ event_id: string }>(
+            'SELECT event_id FROM stream_events WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 AND event_seq = $4',
+            [ctx.accountId, input.workspaceId, preview.request.streamId, count])).rows[0]?.event_id : null;
+          if (count && !last) throw unsupported();
+          const readingHead = (await q.query<{ change_seq: string }>(
+            'SELECT change_seq FROM workspace_change_heads WHERE account_id = $1 AND workspace_id = $2', [ctx.accountId, input.workspaceId])).rows[0];
+          const prefixEventIds = current.artifact.mode === 'fork' ? (await q.query<{ event_id: string }>(
+            'SELECT event_id FROM stream_events WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 AND event_seq <= $4 ORDER BY event_seq',
+            [ctx.accountId, input.workspaceId, preview.request.streamId, count])).rows.map((r) => r.event_id) : [];
+          registration = RevisionRegistrationSchema.parse({ format: 'cloud-revision-registration/1', version: catalog.version + 1,
+            readingChangeSeq: Number(readingHead?.change_seq ?? 0),
+            prefixEventIds,
+            commandId: input.commandId, previewRequestId: input.previewRequestId, artifact: current.artifact,
+            entry: { contentId: entry.id, revisionIds: entry.revisionIds, headRevisionId: entry.headRevisionId, updatedAt: entry.updatedAt },
+            obligations: candidate.obligations, display,
+            stream: { streamId: current.artifact.branch.streamId, branchId: current.artifact.branch.streamId, eventSeq: count, lastEventId: last },
+          });
+          try { boundRevisionCatalog({ workspaceId: input.workspaceId, version: registration.version,
+            registrations: [...catalog.registrations, registration], digest: sha([...catalog.registrations, registration]) }); }
+          catch { registration = undefined; }
+          receipt = registration ? { ...common, outcome: 'applied', registration } : { ...common, outcome: 'rejected', reason: 'capacity' };
+        }
+      }
+      RevisionAdoptionReceiptSchema.parse(receipt);
+      await q.query(`INSERT INTO metadata_commands (account_id, workspace_id, command_id, device_id, request_digest, request, receipt)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)`, [ctx.accountId, input.workspaceId, input.commandId, ctx.deviceId, digest, JSON.stringify(input), JSON.stringify(receipt)]);
+      if (receipt.outcome === 'applied' && registration && candidate) {
+        const { artifact, stream, display } = registration;
+        const revision = ContentRevisionSchema.parse(artifact.revision);
+        if (artifact.mode === 'fork') {
+          // Create the empty stream first (membership has a stream FK), then share existing prefix identities.
+          await q.query(`INSERT INTO sync_streams (account_id, workspace_id, stream_id, branch_id, parent_stream_id, fork_at_seq, branch_manifest)
+            VALUES ($1, $2, $3, $3, $4, $5, $6)`,
+          [ctx.accountId, input.workspaceId, stream.streamId, preview.request.streamId, stream.eventSeq, JSON.stringify(artifact.branch)]);
+          await q.query(`INSERT INTO stream_events (account_id, workspace_id, stream_id, event_seq, event_id)
+            SELECT account_id, workspace_id, $4, event_seq, event_id FROM stream_events
+            WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 AND event_seq <= $5`,
+          [ctx.accountId, input.workspaceId, preview.request.streamId, stream.streamId, stream.eventSeq]);
+        }
+        await q.query(`UPDATE sync_streams SET event_seq = $4, last_event_id = $5, branch_manifest = $6, updated_at = now()
+          WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3`,
+        [ctx.accountId, input.workspaceId, stream.streamId, stream.eventSeq, stream.lastEventId, JSON.stringify(artifact.branch)]);
+        await q.query(`UPDATE content_metadata SET version = $4, value = $5, updated_at = $6
+          WHERE account_id = $1 AND workspace_id = $2 AND content_id = $3`,
+        [ctx.accountId, input.workspaceId, display.contentId, display.version, JSON.stringify(display.value), display.updatedAt]);
+        await q.query(`INSERT INTO revision_registrations (account_id, workspace_id, version, command_id, preview_request_id, content_id, revision_id, digest, body)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [ctx.accountId, input.workspaceId, registration.version, input.commandId, input.previewRequestId, revision.contentId, revision.id, sha(registration), JSON.stringify(registration)]);
+        await q.query('UPDATE workspaces SET cloud_version = cloud_version + 1 WHERE account_id = $1 AND id = $2', [ctx.accountId, input.workspaceId]);
+        await recordManagement(q, ctx.accountId, input.workspaceId, input.commandId, { type: 'revision', registration });
+      }
+      return receipt;
+    });
+  }
+
+  private async evaluate(q: Querier, ctx: AuthContext, input: RevisionPreviewRequest, held: Reservation, original: Workspace): Promise<RevisionPreviewReceipt> {
+    const source = withRegisteredRevisions(original, await revisionCatalog(q, ctx, input.workspaceId));
+    let receipt: RevisionPreviewReceipt;
+    const common = { workspaceId: input.workspaceId, requestId: input.requestId, adoptionAvailable: false as const };
+    try {
+      const snapshot = await archiveSnapshot(q, ctx, input.workspaceId);
+      const display = (await q.query<{ version: string }>('SELECT version FROM content_metadata WHERE account_id = $1 AND workspace_id = $2 AND content_id = $3', [ctx.accountId, input.workspaceId, input.contentId])).rows[0];
+      const lifecycle = snapshot.lifecycle.find((e) => e.contentId === input.contentId);
+      const stream = (await q.query<{ event_seq: string; last_event_id: string | null; branch_manifest: unknown }>(
+        'SELECT event_seq, last_event_id, branch_manifest FROM sync_streams WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3',
+        [ctx.accountId, input.workspaceId, input.streamId])).rows[0];
+      if (!display || !lifecycle || !stream) throw notFound('修订内容或分支不存在');
+      const manifest = SyncBranchManifestSchema.safeParse(stream.branch_manifest);
+      if (!manifest.success) throw new Rejected('history');
+      if (Number(stream.event_seq) !== input.baseSeq || stream.last_event_id !== input.baseEventId
+        || Number(display.version) !== input.displayVersion || lifecycle.version !== input.lifecycleVersion || snapshot.state.version !== input.archiveVersion
+        || !manifest.data.adopted.some((a) => a.contentId === input.contentId && a.revisionId === input.baseRevisionId)) {
+        receipt = { ...common, outcome: 'conflict', reason: 'precondition' };
+      } else if (lifecycle.sourceKind !== 'generated' || lifecycle.value.lifecycle !== 'active'
+        || snapshot.state.volumes.some((v) => (v as { members: { contentId: string }[] }).members.some((m) => m.contentId === input.contentId))) {
+        throw new Rejected('members');
+      } else {
+        const inventory = await this.inventory(q, ctx, input, source);
+        receipt = this.compile(input, held, inventory.workspace, {
+          sourceDigest: sha(source), inventoryDigest: inventory.digest, streamId: input.streamId, baseRevisionId: input.baseRevisionId,
+          eventCount: input.baseSeq, lastEventId: input.baseEventId, displayVersion: input.displayVersion,
+          lifecycleVersion: input.lifecycleVersion, archiveVersion: input.archiveVersion,
+        });
+      }
+    } catch (error) {
+      if (!(error instanceof Rejected)) throw error;
+      receipt = { ...common, outcome: 'rejected', reason: error.reason };
+    }
+    return receipt;
   }
 
   private async inventory(q: Querier, ctx: AuthContext, input: RevisionPreviewRequest, source: Workspace) {
@@ -171,7 +307,8 @@ export class RevisionPreviewService {
       const preview = previewRevision(this.content!, workspace, entry, input.draft, at, held.revision_id);
       if (!preview.ok || !preview.revision) return { ...common, outcome: 'rejected', reason: 'content' };
       const candidate = adoptRevision(this.content!, workspace, entry, preview.revision, at, held.branch_id);
-      if (candidate.workspace.branches.length > LIMIT.streams) throw new Rejected('capacity');
+      if (candidate.workspace.branches.length > LIMIT.streams
+        || candidate.workspace.branches.reduce((sum, b) => sum + b.session.events.length, 0) > LIMIT.events) throw new Rejected('capacity');
       // Validate the complete result, including later adopted episodes. It is still only a dry run.
       checked(candidate.workspace);
       for (const branch of candidate.workspace.branches) bridge(this.content!, candidate.workspace, branch.id);

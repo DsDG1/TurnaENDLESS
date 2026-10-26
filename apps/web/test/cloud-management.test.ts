@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { applyPlayerCommand, attachVolume, bridge, buildBackup, buildVolume, deriveCloudCopy, restoreContent, trashContent, updateDisplay } from '@endless/content';
+import { applyPlayerCommand, adoptRevision, previewRevision, attachVolume, bridge, buildBackup, buildVolume, deriveCloudCopy, restoreContent, trashContent, updateDisplay } from '@endless/content';
 import { getScenes } from '@endless/player';
-import type { ArchiveCommand, ArchiveReceipt, CloudImportReceipt, LifecycleCommand, LifecycleEntry, LifecycleReceipt, ManagementChange, MetadataCommand, MetadataEntry, MetadataReceipt } from '@endless/cloud-contracts';
+import type { ArchiveCommand, ArchiveReceipt, CloudImportReceipt, LifecycleCommand, LifecycleEntry, LifecycleReceipt, ManagementChange, MetadataCommand, MetadataEntry, MetadataReceipt, RevisionRegistration } from '@endless/cloud-contracts';
 import { WorkspaceRepository } from '../src/storage.js';
 import { SessionCommitter } from '../src/session-writer.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
@@ -119,6 +119,37 @@ async function fixture(archived = false) {
 }
 
 describe('归档请求、确定性接收与恢复', () => {
+  it('修订尚未接收时拒绝整页和引导，不推进游标、不覆盖本机历史与待提交命令', async () => {
+    const f = await fixture(), device = await f.device(); await device.sync.run();
+    await f.edit(device.repo, 'display');
+    const entry = f.copy.entries.find((e) => e.id === f.contentId)!;
+    const old = f.copy.revisions.find((r) => r.id === entry.headRevisionId)!;
+    if (old.origin === 'bundled') throw new Error('fixture');
+    const at = new Date('2026-10-26T11:00:00.000Z');
+    const preview = previewRevision(content, f.copy, entry, old.draft.replace('Cloud fixture', 'New revision'), at);
+    if (!preview.ok || !preview.revision) throw new Error('fixture');
+    const candidate = adoptRevision(content, f.copy, entry, preview.revision, at).workspace;
+    const branch = candidate.branches[0]!;
+    const binding = { sourceDigest: '0'.repeat(64), inventoryDigest: '1'.repeat(64), streamId: branch.id, baseRevisionId: old.id,
+      eventCount: branch.session.events.length, lastEventId: crypto.randomUUID(), displayVersion: 0, lifecycleVersion: 0, archiveVersion: 0 };
+    const artifactBase = { compiler: 'cloud-revision-preview/1' as const, mode: 'in-place' as const, binding,
+      revision: preview.revision, revisionDigest: await cloudDigest(preview.revision), branch: { streamId: branch.id, label: branch.label,
+        parentBranchId: branch.parentBranchId, forkAtEventCount: branch.forkAtEventCount, adopted: branch.adopted,
+        catalog: branch.session.catalog, createdAt: branch.createdAt, commonStreamId: null, commonPrefixSeq: 0 } };
+    const registration: RevisionRegistration = { format: 'cloud-revision-registration/1', version: 1, readingChangeSeq: 0,
+      commandId: crypto.randomUUID(), previewRequestId: crypto.randomUUID(), artifact: { ...artifactBase, digest: await cloudDigest(artifactBase) },
+      entry: { contentId: entry.id, headRevisionId: preview.revision.id, revisionIds: [...entry.revisionIds, preview.revision.id], updatedAt: at.toISOString() },
+      obligations: candidate.obligations, display: { ...f.display.get(entry.id)!, version: 1, value: { title: preview.revision.title, tags: [], note: '' } },
+      stream: { streamId: branch.id, branchId: branch.id, eventSeq: binding.eventCount, lastEventId: binding.lastEventId } };
+    const before = await device.repo.rawSnapshot(), state = await device.repo.lifecycleState();
+    await expect(device.repo.updateManagement({ pull: { workspaceId: f.workspaceId, fromCursor: state.cursor!, nextCursor: '1', hasMore: false,
+      changes: [{ seq: state.changeSeq + 1, type: 'revision', registration }] } })).rejects.toThrow('尚未完整接收');
+    await expect(device.repo.updateManagement({ bootstrap: { ...await f.api.managementBootstrap(),
+      revisionCatalog: { workspaceId: f.workspaceId, version: 1, registrations: [registration], digest: await cloudDigest([registration]) } } })).rejects.toThrow('尚未完整接收');
+    expect(await device.repo.rawSnapshot()).toEqual(before);
+    expect((await device.repo.metadataState()).pending[entry.id]).toBeDefined();
+    await device.repo.close();
+  });
   it('离线只保存请求，确认前不生成已完成卷；刷新同请求接受后保持原事件与义务', async () => {
     const f = await fixture(), a = await f.device(); await a.sync.run();
     await a.repo.queueArchive(content, { type: 'archive', memberContentIds: f.copy.entries.map((e) => e.id), title: '真实阅读归档' });

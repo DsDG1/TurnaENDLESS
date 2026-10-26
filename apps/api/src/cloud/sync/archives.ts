@@ -9,6 +9,7 @@ import type { AuthContext } from '../auth/service.js';
 import type { CloudPool, Querier } from '../db/client.js';
 import { CloudError, idempotencyMismatch, notFound } from '../errors.js';
 import { recordManagement } from './management-feed.js';
+import { revisionCatalog, withRegisteredRevisions } from './revision-registry.js';
 
 const MAX_BYTES = CLOUD_LIMITS.uploadObjectBytes - 4096;
 const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
@@ -92,7 +93,8 @@ export class ArchiveService {
           || current.some((v) => v.members.some((n) => n.contentId === m.contentId)))) {
           outcome = 'rejected'; reason = 'members';
         } else {
-          const volume = await this.build(q, ctx, input, source!, display);
+          const expanded = withRegisteredRevisions(source!, await revisionCatalog(q, ctx, input.workspaceId));
+          const volume = await this.build(q, ctx, input, expanded, display);
           if (!volume) { outcome = 'rejected'; reason = 'basis'; }
           else next = [...current, volume];
         }

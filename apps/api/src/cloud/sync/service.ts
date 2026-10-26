@@ -16,6 +16,7 @@ import { CloudError, badRequest, idempotencyMismatch, notFound } from '../errors
 import { MetadataService, seedMetadata } from './metadata.js';
 import { ManagementService, seedLifecycle } from './management.js';
 import { seedArchives } from './archives.js';
+import { revisionCatalog } from './revision-registry.js';
 
 /**
  * 增量同步（计划 §8）。
@@ -400,7 +401,7 @@ export class SyncService {
       if (stream.baseSeq !== head || (stream.baseEventId ?? null) !== row.last_event_id) {
         throw new SyncRejection('stream-head-changed', stream.streamId, stream.baseSeq, head, stream.events);
       }
-      await this.assertStamps(q, ctx, input.workspaceId, stream.events);
+      await this.assertStamps(q, ctx, input.workspaceId, stream.events, stream.streamId);
       const ids: string[] = [];
       let expected = head + 1;
       for (const entry of stream.events) {
@@ -486,13 +487,22 @@ export class SyncService {
   }
 
   /** 事件盖章必须指向本工作区真实的导入映射，客户端不能凭自称内容 ID 写入历史。 */
-  private async assertStamps(q: Querier, ctx: AuthContext, workspaceId: string, events: SyncEventEntry[]) {
+  private async assertStamps(q: Querier, ctx: AuthContext, workspaceId: string, events: SyncEventEntry[], streamId?: string) {
     const contentIds = new Set<string>();
     const revisionIds = new Set<string>();
     for (const entry of events) {
       const { contentId, revisionId } = entry.event;
       if ((contentId === undefined) !== (revisionId === undefined)) throw badRequest('事件的内容/修订盖章必须成对出现');
       if (contentId && revisionId) { contentIds.add(contentId); revisionIds.add(revisionId); }
+    }
+    const registered = await revisionCatalog(q, ctx, workspaceId);
+    const manifest = streamId ? (await q.query<{ branch_manifest: unknown }>(
+      'SELECT branch_manifest FROM sync_streams WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3',
+      [ctx.accountId, workspaceId, streamId])).rows[0]?.branch_manifest : undefined;
+    const branch = SyncBranchManifestSchema.safeParse(manifest);
+    if (registered.version && (!branch.success || events.some((e) => !e.event.contentId || !e.event.revisionId
+      || !branch.data.adopted.some((a) => a.contentId === e.event.contentId && a.revisionId === e.event.revisionId)))) {
+      throw new CloudError(409, 'BASIS_CHANGED', 'sync', '云端已采用新修订，请先接收修订清单；本机事件保留，不能按旧正文追加', 'retry_read');
     }
     if (!contentIds.size) return;
     const rows = await q.query<{ kind: string; source_id: string }>(
@@ -502,6 +512,7 @@ export class SyncService {
       [ctx.accountId, workspaceId, [...contentIds], [...revisionIds]],
     );
     const known = new Set(rows.rows.map((row) => `${row.kind}:${row.source_id}`));
+    for (const registration of registered.registrations) known.add(`revision:${registration.entry.headRevisionId}`);
     for (const entry of events) {
       const { contentId, revisionId } = entry.event;
       if (contentId && revisionId && (!known.has(`content:${contentId}`) || !known.has(`revision:${revisionId}`))) {
@@ -561,6 +572,7 @@ export class SyncService {
       const lastSeq = pageRows.length ? Number(pageRows[pageRows.length - 1]!.change_seq) : position.seq;
       return {
         changes, hasMore: rows.rows.length > page,
+        fromChangeSeq: position.seq, changeSeq: lastSeq,
         nextCursor: encodeSyncCursor(workspaceId, lastSeq, epoch),
         cloudVersion: String(workspace.cloud_version),
       };
@@ -655,6 +667,8 @@ export class SyncService {
       if (conflict.baseSeq + conflict.events.length > 10_000) throw new CloudError(409, 'STORAGE_QUOTA', 'sync',
         '保留历史超过当前恢复容量，候选与原历史保留；不能截断创建分支', 'contact_support');
       const original = await this.history(q, ctx, workspaceId, conflict.streamId, fallback);
+      // An old rejected batch cannot inherit a newer adoption manifest during preservation.
+      await this.assertStamps(q, ctx, workspaceId, conflict.events, conflict.streamId);
       if (input.streamId === conflict.streamId || (conflict.baseSeq ? original.events[conflict.baseSeq - 1]?.eventId : null) !== input.baseEventId) {
         throw badRequest('共同前缀身份不匹配，不能创建独立分支');
       }

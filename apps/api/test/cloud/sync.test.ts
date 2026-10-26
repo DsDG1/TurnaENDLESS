@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { stableStringify } from '@endless/esl';
-import { applyPlayerCommand, buildBackup, validateCloudBackup, attachVolume, buildVolume, bridge, trashContent, type Workspace } from '@endless/content';
+import { applyPlayerCommand, adoptRevision, buildBackup, validateCloudBackup, attachVolume, buildVolume, bridge, trashContent, ContentRevisionSchema, type Workspace } from '@endless/content';
 import { getOptions, getScenes } from '@endless/player';
 import type { ArchiveCommand, ArchiveReceipt, SyncEventEntry, SyncStreamIdSchema } from '@endless/cloud-contracts';
 import type { z } from 'zod';
@@ -165,6 +165,253 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     } };
   }
 
+  async function confirmation(local = cloudTestWorkspace(true)) {
+    const prepared = await revisionPreview(local);
+    const preview = await sync.management.revisionPreviews.submit(a, prepared.input);
+    if (preview.outcome !== 'ready') throw new Error('preview fixture');
+    return { ...prepared, preview, command: { protocol: 'cloud-revision-adoption/1' as const, workspaceId: prepared.workspaceId,
+      commandId: randomUUID(), previewRequestId: prepared.input.requestId, artifactDigest: preview.artifact.digest } };
+  }
+
+  function interactGenerated(local: Workspace) {
+    const revision = local.revisions.find((r) => r.origin !== 'bundled')!;
+    let next = applyPlayerCommand(content, local, { type: 'select', episode: revision.episodeId });
+    const scene = getScenes(bridge(content, next).library.episodes.find((e) => e.id === revision.episodeId)!)[0]!;
+    next = applyPlayerCommand(content, next, getOptions(scene).length
+      ? { type: 'answer', scene: scene.id, choice: getOptions(scene).findIndex((o) => o.correct) }
+      : { type: 'advance', scene: scene.id, skip: false }, new Date('2026-10-26T01:00:00.000Z'));
+    return next;
+  }
+
+  it('确认原位采用原子登记修订/义务/展示/管理流，原件、旧正文与阅读身份保持不变', async () => {
+    const prepared = await confirmation();
+    const { local, workspaceId, preview, command, entry, revision } = prepared;
+    const before = await sync.bootstrap(a, workspaceId);
+    const management = await sync.management.bootstrap(a, workspaceId);
+    const result = await request('/sync/revisions/adopt', 'POST', command);
+    expect(result.status).toBe(200); expect(result.body.outcome).toBe('applied');
+    const registration = result.body.registration;
+    expect(registration.artifact).toEqual(preview.artifact);
+    expect(registration.entry).toMatchObject({ contentId: entry.id, headRevisionId: (preview.artifact.revision as any).id,
+      revisionIds: [...entry.revisionIds, (preview.artifact.revision as any).id] });
+    expect(registration.obligations.find((o: any) => o.contentId === entry.id).revisionId).toBe((preview.artifact.revision as any).id);
+    expect(registration.display.value.title).toBe('Cloud revision');
+    expect(registration.display.version).toBe(1);
+    const after = await sync.bootstrap(a, workspaceId);
+    expect(after.streams).toEqual(before.streams); expect(after.changeSeq).toBe(before.changeSeq);
+    const changes = await sync.management.pull(second, workspaceId, management.cursor);
+    expect(changes.changes).toEqual([{ seq: 1, type: 'revision', registration }]);
+    const distributed = await request(`/sync/revisions/catalog?workspaceId=${workspaceId}`, 'GET', undefined, secondCookie);
+    expect(distributed.status).toBe(200); expect(distributed.body.registrations).toEqual([registration]);
+    expect(distributed.body.digest).toBe(sha([registration]));
+    expect((await sync.management.bootstrap(second, workspaceId)).revisionCatalog).toEqual(distributed.body);
+    expect((await imports.package(a, workspaceId)).workspace.revisions).toEqual(local.revisions);
+    expect((await imports.package(a, workspaceId)).workspace.revisions.find((r) => r.id === revision.id)).toEqual(revision);
+    expect(await sync.management.revisionPreviews.submit(a, prepared.input)).toEqual(preview);
+  });
+
+  it('已交互采用只新建修订分支并共享前缀身份，保留父流和旧答案；后续再次预览仍按原依据编译', async () => {
+    const { local, workspaceId, command, preview, input, entry } = await confirmation(interactGenerated(cloudTestWorkspace(true)));
+    const original = await sync.bootstrap(a, workspaceId);
+    const before = await fixture.app.withTenant(a.accountId, (q) => q.query('SELECT event_id, digest, body FROM event_objects WHERE workspace_id = $1 ORDER BY event_id', [workspaceId]));
+    const result = await sync.management.revisionPreviews.adopt(a, command);
+    if (result.outcome !== 'applied') throw new Error('adopt fixture');
+    expect(result.registration.artifact.mode).toBe('fork');
+    const streams = (await sync.bootstrap(second, workspaceId)).streams;
+    expect(streams).toContainEqual(original.streams[0]);
+    const fork = result.registration.stream;
+    expect(fork.eventSeq).toBe(preview.artifact.branch.commonPrefixSeq);
+    const memberships = await fixture.app.withTenant(a.accountId, (q) => q.query(`SELECT c.event_id AS child, p.event_id AS parent FROM stream_events c
+      JOIN stream_events p ON p.account_id = c.account_id AND p.workspace_id = c.workspace_id AND p.event_seq = c.event_seq
+      WHERE c.workspace_id = $1 AND c.stream_id = $2 AND p.stream_id = $3`, [workspaceId, fork.streamId, streamOf(local)]));
+    expect(memberships.rows).toHaveLength(fork.eventSeq);
+    expect(memberships.rows.every((r) => r.child === r.parent)).toBe(true);
+    const after = await fixture.app.withTenant(a.accountId, (q) => q.query('SELECT event_id, digest, body FROM event_objects WHERE workspace_id = $1 ORDER BY event_id', [workspaceId]));
+    expect(after.rows).toEqual(before.rows);
+    const next = await sync.management.revisionPreviews.submit(a, { ...input, requestId: randomUUID(), streamId: fork.streamId,
+      baseSeq: fork.eventSeq, baseEventId: fork.lastEventId, displayVersion: 1, baseRevisionId: result.registration.entry.headRevisionId,
+      draft: input.draft.replace('Cloud revision', 'Next revision') });
+    expect(next.outcome).toBe('ready');
+    if (next.outcome !== 'ready') throw new Error('next fixture');
+    expect((next.artifact.revision as any).basis).toEqual((preview.artifact.revision as any).basis);
+    expect((next.artifact.revision as any).parentRevisionId).toBe(result.registration.entry.headRevisionId);
+    expect(result.registration.obligations).toEqual(local.obligations);
+    expect(entry.revisionIds).toHaveLength(1);
+  });
+
+  it('20 个并发确认只提交一次；丢响应与源对象故障恢复同回执，换正文 409，另一个确认不会重复采用', async () => {
+    const { command, workspaceId } = await confirmation();
+    const results = await Promise.all(Array.from({ length: 20 }, (_, i) => sync.management.revisionPreviews.adopt(i % 2 ? second : a, command)));
+    expect(results[0]!.outcome).toBe('applied'); expect(new Set(results.map(stableStringify)).size).toBe(1);
+    expect((await sync.management.revisionPreviews.catalog(a, workspaceId)).version).toBe(1);
+    expect((await sync.management.bootstrap(a, workspaceId)).changeSeq).toBe(1);
+    const offline = new SyncService(fixture.app, async () => { throw new Error('synthetic source outage'); }, content);
+    expect(await offline.management.revisionPreviews.adopt(a, command)).toEqual(results[0]);
+    await expect(offline.management.revisionPreviews.adopt(a, { ...command, artifactDigest: '0'.repeat(64) })).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+    expect(await sync.management.revisionPreviews.adopt(a, { ...command, commandId: randomUUID() })).toMatchObject({ outcome: 'conflict' });
+    await expect(fixture.app.withTenant(a.accountId, (q) => q.query("UPDATE revision_registrations SET body = '{}' WHERE workspace_id = $1", [workspaceId]))).rejects.toThrow(/permission denied/);
+  });
+
+  it('确认时重新检查版本，预览后阅读或展示修改得到持久冲突，旧预览不变', async () => {
+    for (const kind of ['reading', 'display'] as const) {
+      const { local, workspaceId, input, command, preview } = await confirmation();
+      if (kind === 'display') await sync.metadata.submit(second, { workspaceId, commandId: randomUUID(), type: 'set-display',
+        contentId: input.contentId, baseVersion: 0, value: { title: 'Another device', tags: [], note: '' } });
+      else {
+        const played = interactGenerated(local);
+        await sync.push(second, { workspaceId, batchId: randomUUID(), baseVersion: '0', streams: [{ streamId: input.streamId,
+          baseSeq: input.baseSeq, baseEventId: input.baseEventId, events: entries(played, input.baseSeq) }] });
+      }
+      const result = await sync.management.revisionPreviews.adopt(a, command);
+      expect(result).toMatchObject({ outcome: 'conflict', reason: 'precondition' });
+      expect(await sync.management.revisionPreviews.adopt(second, command)).toEqual(result);
+      expect((await sync.management.revisionPreviews.catalog(a, workspaceId)).version).toBe(0);
+      expect(await sync.management.revisionPreviews.submit(a, input)).toEqual(preview);
+    }
+  });
+
+  it('确认源读取期间另一设备追加历史，最终锁内裁决冲突并保留新事件', async () => {
+    const { local, input, command, workspaceId } = await confirmation();
+    let enter!: () => void, resume!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const resumed = new Promise<void>((resolve) => { resume = resolve; });
+    const delayed = new SyncService(fixture.app, async (ctx, id) => { enter(); await resumed; return (await imports.package(ctx, id)).workspace; }, content);
+    const running = delayed.management.revisionPreviews.adopt(a, command);
+    await entered;
+    try { await sync.push(second, { workspaceId, batchId: randomUUID(), baseVersion: '0', streams: [{ streamId: input.streamId,
+      baseSeq: input.baseSeq, baseEventId: input.baseEventId, events: entries(interactGenerated(local), input.baseSeq) }] }); }
+    finally { resume(); }
+    expect(await running).toMatchObject({ outcome: 'conflict' });
+    expect((await sync.bootstrap(a, workspaceId)).streams[0]!.eventSeq).toBe(input.baseSeq + 1);
+  });
+
+  it('管理变更落库失败让登记、分支、展示和回执整笔回滚；原预览身份重试成功', async () => {
+    const { workspaceId, command, preview } = await confirmation(interactGenerated(cloudTestWorkspace(true)));
+    const before = await sync.bootstrap(a, workspaceId);
+    await withClient(fixture.cluster.adminDsn, async (q) => {
+      await q.query(`CREATE FUNCTION test_adoption_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic adoption failure'; END $$`);
+      await q.query('CREATE TRIGGER test_adoption_failure BEFORE INSERT ON management_changes FOR EACH ROW EXECUTE FUNCTION test_adoption_failure()');
+    });
+    try { await expect(sync.management.revisionPreviews.adopt(a, command)).rejects.toThrow('synthetic adoption failure'); }
+    finally { await withClient(fixture.cluster.adminDsn, async (q) => {
+      await q.query('DROP TRIGGER test_adoption_failure ON management_changes'); await q.query('DROP FUNCTION test_adoption_failure()');
+    }); }
+    expect(await sync.bootstrap(a, workspaceId)).toEqual(before);
+    expect((await sync.management.revisionPreviews.catalog(a, workspaceId)).version).toBe(0);
+    expect((await sync.metadata.snapshot(a, workspaceId)).entries.find((e) => e.contentId === (preview.artifact.revision as any).contentId)!.version).toBe(0);
+    const held = await fixture.app.withTenant(a.accountId, (q) => q.query('SELECT 1 FROM metadata_commands WHERE command_id = $1', [command.commandId]));
+    expect(held.rowCount).toBe(0);
+    expect(await sync.management.revisionPreviews.adopt(a, command)).toMatchObject({ outcome: 'applied', registration: { artifact: preview.artifact } });
+  });
+
+  it('新修订事件按新流采用清单盖章，旧修订/跨流/无盖章的事件拒绝，读取分发后可以追加并继续编译', async () => {
+    const { local, entry, preview, command, input, workspaceId } = await confirmation();
+    const result = await sync.management.revisionPreviews.adopt(a, command);
+    if (result.outcome !== 'applied') throw new Error('fixture');
+    const candidate = adoptRevision(content, local, entry, ContentRevisionSchema.parse(preview.artifact.revision),
+      new Date((preview.artifact.revision as any).authoredAt), preview.artifact.branch.streamId).workspace;
+    const next = interactGenerated(candidate), valid = entries(next, input.baseSeq);
+    for (const event of [entries(interactGenerated(local), input.baseSeq)[0]!,
+      { ...valid[0]!, event: { ...valid[0]!.event, revisionId: local.revisions[0]!.id } },
+      { ...valid[0]!, event: Object.fromEntries(Object.entries(valid[0]!.event).filter(([k]) => !['contentId', 'revisionId'].includes(k))) as any }]) {
+      event.digest = sha(event.event);
+      await expect(sync.push(second, { workspaceId, batchId: randomUUID(), baseVersion: '0', streams: [{ streamId: input.streamId,
+        baseSeq: input.baseSeq, baseEventId: input.baseEventId, events: [event] }] })).rejects.toMatchObject({ code: 'BASIS_CHANGED' });
+    }
+    const accepted = await sync.push(second, { workspaceId, batchId: randomUUID(), baseVersion: '0', streams: [{ streamId: input.streamId,
+      baseSeq: input.baseSeq, baseEventId: input.baseEventId, events: valid }] });
+    expect(accepted.receipt.applied).toBe(1);
+    const subsequent = await sync.management.revisionPreviews.submit(a, { ...input, requestId: randomUUID(),
+      baseRevisionId: result.registration.entry.headRevisionId, displayVersion: 1, baseSeq: input.baseSeq + 1, baseEventId: valid[0]!.eventId });
+    expect(subsequent.outcome).toBe('ready');
+    if (subsequent.outcome === 'ready') expect(subsequent.artifact.mode).toBe('fork');
+  });
+
+  it('确认必须绑定真实预览；拒绝客户端候选、错误摘要和跨租户读取，BYOK 与未知协议不放行', async () => {
+    const { command, workspaceId } = await confirmation();
+    for (const extra of [{ revision: {} }, { draft: 'forged' }, { at: new Date().toISOString() }, { branchId: `brn_${randomUUID()}` }])
+      expect((await request('/sync/revisions/adopt', 'POST', { ...command, ...extra })).status).toBe(400);
+    expect((await request('/sync/revisions/adopt', 'POST', { ...command, protocol: 'unknown' })).status).toBe(400);
+    expect((await request('/sync/revisions/adopt', 'POST', { ...command, artifactDigest: '0'.repeat(64) })).status).toBe(400);
+    expect((await request('/sync/revisions/adopt', 'POST', command, cookieB)).status).toBe(404);
+    expect((await request(`/sync/revisions/catalog?workspaceId=${workspaceId}`, 'GET', undefined, cookieB)).status).toBe(404);
+    const response = await fetch(`${base}/api/cloud/v1/sync/revisions/adopt`, { method: 'POST', headers: { origin: ORIGIN, cookie,
+      'content-type': 'application/json', 'X-Endless-Provider-Key': 'synthetic-do-not-store' }, body: JSON.stringify(command) });
+    expect(response.status).toBe(403);
+    expect(await sync.management.revisionPreviews.adopt(a, command)).toMatchObject({ outcome: 'applied' });
+    expect((await fixture.app.withTenant(b.accountId, (q) => q.query('SELECT 1 FROM revision_registrations WHERE workspace_id = $1', [workspaceId]))).rowCount).toBe(0);
+  });
+
+  it('不同预览并发确认仅采用其中一份；未提交的源故障重试保持同一候选', async () => {
+    const { command, input, workspaceId } = await confirmation();
+    const offline = new SyncService(fixture.app, async () => { throw new Error('synthetic source outage'); }, content);
+    await expect(offline.management.revisionPreviews.adopt(a, command)).rejects.toThrow('synthetic source outage');
+    expect((await sync.management.revisionPreviews.catalog(a, workspaceId)).version).toBe(0);
+    const other = await sync.management.revisionPreviews.submit(second, { ...input, requestId: randomUUID(), draft: input.draft.replace('Cloud revision', 'Different revision') });
+    if (other.outcome !== 'ready') throw new Error('fixture');
+    const competing = { ...command, commandId: randomUUID(), previewRequestId: other.requestId, artifactDigest: other.artifact.digest };
+    const results = await Promise.all([sync.management.revisionPreviews.adopt(a, command), sync.management.revisionPreviews.adopt(second, competing)]);
+    expect(results.map((r) => r.outcome).sort()).toEqual(['applied', 'conflict']);
+    expect((await sync.management.revisionPreviews.catalog(a, workspaceId)).version).toBe(1);
+    expect((await sync.management.bootstrap(a, workspaceId)).changeSeq).toBe(1);
+  });
+
+  it('采用后归档按已注册修订重放；原生成依据、旧正文和阅读事件不被改写', async () => {
+    const { local, entry, workspaceId, command, preview, input } = await confirmation();
+    const adopted = await sync.management.revisionPreviews.adopt(a, command);
+    if (adopted.outcome !== 'applied') throw new Error('fixture');
+    const candidate = adoptRevision(content, local, entry, ContentRevisionSchema.parse(preview.artifact.revision),
+      new Date((preview.artifact.revision as any).authoredAt)).workspace;
+    const runtime = bridge(content, candidate);
+    const volume = buildVolume(candidate, runtime, [entry.id], 'Registered revision');
+    const result = await sync.management.archives.submit(a, { type: 'archive', commandId: randomUUID(), workspaceId,
+      volumeId: volume.id, baseVersion: 0, title: volume.title,
+      basis: { streamId: input.streamId, eventCount: runtime.session.events.length, eventHash: content.historyKey(runtime.session).hash },
+      members: [{ contentId: entry.id, revisionId: adopted.registration.entry.headRevisionId, displayVersion: 1, lifecycleVersion: 0 }] });
+    expect(result.outcome).toBe('applied');
+    expect((result.snapshot.state.volumes[0] as any).members[0].revisionId).toBe(adopted.registration.entry.headRevisionId);
+    expect((result.snapshot.state.volumes[0] as any).quotes).toEqual([]);
+    expect((await imports.package(a, workspaceId)).workspace.revisions).toEqual(local.revisions);
+  });
+
+  it('库存超限安全拒绝确认，未知注册摘要停止分发且保留原记录', async () => {
+    const limited = await confirmation();
+    const extraStream = `brn_${randomUUID()}`;
+    await fixture.app.withTenant(a.accountId, (q) => q.query(`INSERT INTO sync_streams
+      (account_id, workspace_id, stream_id, branch_id, event_seq, last_event_id, branch_manifest)
+      SELECT account_id, workspace_id, $3, $3, 10001, last_event_id, branch_manifest FROM sync_streams
+      WHERE account_id = $1 AND workspace_id = $2`, [a.accountId, limited.workspaceId, extraStream]));
+    expect(await sync.management.revisionPreviews.adopt(a, limited.command)).toMatchObject({ outcome: 'rejected', reason: 'capacity' });
+    expect((await sync.management.revisionPreviews.catalog(a, limited.workspaceId)).version).toBe(0);
+    expect((await sync.bootstrap(a, limited.workspaceId)).streams.some((s) => s.streamId === extraStream && s.eventSeq === 10001)).toBe(true);
+    const stored = await confirmation();
+    expect(await sync.management.revisionPreviews.adopt(a, stored.command)).toMatchObject({ outcome: 'applied' });
+    await withClient(fixture.cluster.adminDsn, (q) => q.query("UPDATE revision_registrations SET digest = repeat('0', 64) WHERE workspace_id = $1", [stored.workspaceId]));
+    await expect(sync.management.revisionPreviews.catalog(a, stored.workspaceId)).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTRACT' });
+    expect((await fixture.app.withTenant(a.accountId, (q) => q.query('SELECT 1 FROM revision_registrations WHERE workspace_id = $1', [stored.workspaceId]))).rowCount).toBe(1);
+    // The saved confirmation remains recoverable even if later catalog verification fails.
+    expect(await sync.management.revisionPreviews.adopt(a, stored.command)).toMatchObject({ outcome: 'applied' });
+  });
+
+  it('采用后保留旧冲突不能套用新修订清单，旧候选完整保留且不创建错误分支', async () => {
+    const { local, input, workspaceId, command } = await confirmation();
+    const base = input.baseSeq - 1;
+    const history = await fixture.app.withTenant(a.accountId, (q) => q.query<{ event_id: string }>(
+      'SELECT event_id FROM stream_events WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3 AND event_seq = $4',
+      [a.accountId, workspaceId, input.streamId, base]));
+    const candidates = entries(interactGenerated(local), base);
+    await expect(sync.push(second, { workspaceId, batchId: randomUUID(), baseVersion: '0', streams: [{ streamId: input.streamId,
+      baseSeq: base, baseEventId: history.rows[0]!.event_id, events: candidates }] })).rejects.toMatchObject({ code: 'SYNC_CONFLICT' });
+    const conflict = (await sync.conflicts(second, workspaceId)).conflicts[0]!;
+    expect(await sync.management.revisionPreviews.adopt(a, command)).toMatchObject({ outcome: 'applied' });
+    const before = await sync.bootstrap(a, workspaceId);
+    await expect(sync.resolve(second, workspaceId, conflict.id, { workspaceId, decision: 'keep-branch',
+      streamId: `brn_${randomUUID()}`, baseEventId: history.rows[0]!.event_id })).rejects.toMatchObject({ code: 'BASIS_CHANGED' });
+    expect(await sync.bootstrap(a, workspaceId)).toEqual(before);
+    const retained = (await sync.conflicts(second, workspaceId)).conflicts.find((c) => c.id === conflict.id)!;
+    expect(retained.status).toBe('open'); expect(retained.events).toEqual(candidates);
+  });
+
   it('权威修订预览沿用原计划时间与编译器，未读原位候选不写清单/事件/管理流', async () => {
     const { local, workspaceId, revision, input } = await revisionPreview();
     const before = await sync.bootstrap(a, workspaceId);
@@ -183,7 +430,7 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     expect(after).toEqual(before);
     expect(await sync.management.bootstrap(a, workspaceId)).toEqual(management);
     expect((await imports.package(a, workspaceId)).workspace.revisions).toEqual(local.revisions);
-    expect((await request('/sync/revisions/adopt', 'POST', input)).status).toBe(404);
+    expect((await request('/sync/revisions/adopt', 'POST', input)).status).toBe(400);
   });
 
   it('读过内容预览创建稳定新分支候选，只复制生成边界前历史，原分支保持不变', async () => {

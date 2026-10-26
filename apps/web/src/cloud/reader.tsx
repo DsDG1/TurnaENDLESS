@@ -3,6 +3,7 @@ import type { CloudReadView } from '../use-player.js';
 import type { MetadataState } from './metadata.js';
 import type { LifecycleState } from './lifecycle.js';
 import type { ArchiveView } from './archives.js';
+import { revisionFrozen, type RevisionState } from './revisions.js';
 
 /**
  * 云副本阅读状态条。
@@ -20,7 +21,7 @@ const STOP_TEXT: Record<NonNullable<CloudReadView['stopped']>, string> = {
   prefix: '有分支的本机历史被整体替换过，已停止推送；不会把替换后的历史当成「追加」。',
 };
 
-export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = [], activeBranchId, onBranch, metadata, onResolveMetadata, lifecycle, onResolveLifecycle, archives, onResolveArchive }: {
+export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = [], activeBranchId, onBranch, metadata, onResolveMetadata, lifecycle, onResolveLifecycle, archives, onResolveArchive, revisions }: {
   view: CloudReadView | null;
   syncing: boolean;
   onSync(): void;
@@ -33,6 +34,7 @@ export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = []
   lifecycle?: LifecycleState | null;
   onResolveLifecycle?(contentId: string, decision: 'local' | 'cloud', commandId: string, version: number): void;
   archives?: ArchiveView | null;
+  revisions?: RevisionState | null;
   onResolveArchive?(decision: 'retry' | 'cloud', commandId: string, version: number): void;
 }) {
   return <section className="surface cloud-reader" aria-label="云端副本同步状态">
@@ -41,7 +43,7 @@ export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = []
       <Icon name="cloud" />
     </div>
     {branches.length > 1 && <label>当前阅读分支（仅这台设备）
-      <select aria-label="当前阅读分支" value={activeBranchId} disabled={syncing} onChange={(event) => onBranch?.(event.target.value)}>
+      <select aria-label="当前阅读分支" value={activeBranchId} disabled={syncing || (!!revisions && revisionFrozen(revisions))} onChange={(event) => onBranch?.(event.target.value)}>
         {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.label}</option>)}
       </select>
     </label>}
@@ -59,6 +61,13 @@ export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = []
         有 {view.needsRebase} 个分支的本机历史被整体替换过，已停止推送。本机事件没有删除。
       </p>}
       {view.note && <p className="generation-phase" role="status">{view.note}</p>}
+      {revisions?.pending && <section className="surface" aria-label="修订请求状态">
+        <h3>{revisionFrozen(revisions) ? '修订确认待恢复' : '修订预览待处理'}</h3>
+        <p>{revisionFrozen(revisions) ? '确认请求已保存，结果接收完成前暂停本机修改。可点击立即同步恢复同一请求。'
+          : revisions.pending.result ? '云端未采用本次修订。请从内容菜单重新打开编辑器，保留原请求后重新预览。'
+            : revisions.pending.preview?.outcome === 'ready' ? '预览已经保存，尚未采用。请从内容菜单重新打开编辑器，查看并显式确认。'
+              : '预览请求已保存，可点击立即同步恢复；原文和阅读历史保留。'}</p>
+      </section>}
       {archives?.pending && <section className="surface" aria-label="归档请求状态">
         <h3>{archives.pending.resolution ? '归档请求需要处理' : '归档请求待确认'}</h3>
         <p>{archives.pending.request.type === 'archive' ? `创建「${archives.pending.request.title}」` : '取消归档'} · {archives.pending.request.members.length} 项内容。内容与阅读历史继续保留。</p>
@@ -104,7 +113,7 @@ export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = []
           <Icon name="arrow" size={17} />{syncing ? '正在同步…' : '立即同步'}
         </button>
         <a className="button button-outline" href={exitHref}>退出云端阅读</a>
-        <span className="generation-note">同步阅读事件、展示信息、回收站和归档；AI 生成与采用修订尚未接入。回收不解除阅读义务。</span>
+        <span className="generation-note">同步阅读事件、展示信息、回收站、归档和修订；云端 AI 生成尚未接入。回收不解除阅读义务。</span>
       </div>
     </>}
   </section>;

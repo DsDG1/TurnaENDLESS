@@ -268,6 +268,7 @@ function StoryApp({ route }: { route: AppRoute }) {
       <main id="main-content" className="main-content" ref={heading} tabIndex={-1}>
         {player.notice && <div className="notice notice-error" role="alert"><Icon name="info" size={18} /><span>{player.notice}</span></div>}
         {route.shell === 'cloud' && <CloudReadBanner view={player.cloudView} syncing={player.cloudSyncing} onSync={() => void player.syncNow()} exitHref="#cloud"
+          revisions={player.cloudRevisions}
           metadata={player.cloudMetadata} onResolveMetadata={(id, decision, commandId, version) => void player.resolveMetadata(id, decision, commandId, version)}
           lifecycle={player.cloudLifecycle} onResolveLifecycle={(id, decision, commandId, version) => void player.resolveLifecycle(id, decision, commandId, version)}
           archives={player.cloudArchives} onResolveArchive={(decision, commandId, version) => void player.resolveArchive(decision, commandId, version)}

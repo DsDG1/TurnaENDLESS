@@ -84,10 +84,10 @@ describe('云副本阅读状态条', () => {
     expect(paused).toContain('已暂停（事件继续排队）');
   });
 
-  it('说明展示信息已同步，生成和生命周期命令未接；退出链接指回云端页', () => {
+  it('说明已接入的同步范围和云生成边界；退出链接指回云端页', () => {
     const html = render(base);
-    expect(html).toContain('同步阅读事件、展示信息、回收站和归档');
-    expect(html).toContain('AI 生成与采用修订尚未接入');
+    expect(html).toContain('同步阅读事件、展示信息、回收站、归档和修订');
+    expect(html).toContain('云端 AI 生成尚未接入');
     expect(html).toContain('回收不解除阅读义务');
     expect(html).toContain('href="#cloud"');
   });

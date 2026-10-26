@@ -1,4 +1,6 @@
 import {
+  RevisionPreviewReceiptSchema, RevisionAdoptionReceiptSchema, RevisionCatalogSchema,
+  type RevisionPreviewRequest, type RevisionPreviewReceipt, type RevisionAdoptionCommand, type RevisionAdoptionReceipt, type RevisionCatalog,
   CLOUD_API_PREFIX, CLOUD_LIMITS, ChallengeResponseSchema, CloudCapabilitiesSchema, MetadataReceiptSchema, MetadataSnapshotSchema,
   type MetadataCommand, type MetadataReceipt, type MetadataSnapshot,
   LifecycleReceiptSchema, ManagementBootstrapSchema, ManagementPullSchema,
@@ -97,6 +99,9 @@ function parse<T>(schema: { parse(value: unknown): T }, value: unknown): T {
 }
 
 export interface CloudApiPort {
+  revisionPreview(input: RevisionPreviewRequest): Promise<RevisionPreviewReceipt>;
+  revisionAdopt(input: RevisionAdoptionCommand): Promise<RevisionAdoptionReceipt>;
+  revisionCatalog(workspaceId: string): Promise<RevisionCatalog>;
   submitArchive(input: ArchiveCommand): Promise<ArchiveReceipt>;
   managementBootstrap(workspaceId: string): Promise<ManagementBootstrap>;
   managementPull(workspaceId: string, cursor: string): Promise<ManagementPull>;
@@ -127,6 +132,16 @@ export interface CloudApiPort {
 
 export class CloudApi implements CloudApiPort {
   constructor(private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {}
+  async revisionPreview(input: RevisionPreviewRequest): Promise<RevisionPreviewReceipt> {
+    return parse(RevisionPreviewReceiptSchema, await request(this.fetcher, '/sync/revisions/preview', { method: 'POST', contentType: 'application/json', body: JSON.stringify(input) }));
+  }
+  async revisionAdopt(input: RevisionAdoptionCommand): Promise<RevisionAdoptionReceipt> {
+    return parse(RevisionAdoptionReceiptSchema, await request(this.fetcher, '/sync/revisions/adopt', { method: 'POST', contentType: 'application/json', body: JSON.stringify(input) }));
+  }
+  async revisionCatalog(workspaceId: string): Promise<RevisionCatalog> {
+    return parse(RevisionCatalogSchema, await request(this.fetcher, `/sync/revisions/catalog?workspaceId=${encodeURIComponent(workspaceId)}`));
+  }
+
   async submitArchive(input: ArchiveCommand) {
     return parse(ArchiveReceiptSchema, await request(this.fetcher, '/sync/archives', {
       method: 'POST', contentType: 'application/json', body: JSON.stringify(input),

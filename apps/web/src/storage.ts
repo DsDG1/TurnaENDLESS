@@ -1,3 +1,5 @@
+import { candidateFor, emptyRevisions, parseRevisions, revisionFrozen, validatePreview, type RevisionState } from './cloud/revisions.js';
+import { RevisionAdoptionReceiptSchema, RevisionPreviewRequestSchema, RevisionRegistrationSchema, type RevisionPreviewReceipt, type RevisionAdoptionReceipt, type RevisionRegistration } from '@endless/cloud-contracts';
 import {
   ContractError, describeUnsupportedSave, parseWorkspace,
   buildVolume, bridge, validateArchiveProjection, type Content, type Workspace, type WorkspaceIdentity,
@@ -261,7 +263,7 @@ export class WorkspaceRepository {
       let archiveState: ArchiveView = emptyArchives();
       let preservation: PendingPreservation | null = null;
       let result = { enqueued: 0, replaced: [] as string[] };
-      let pending = 10;
+      let pending = 11;
       const metaStore = tx.objectStore('meta');
       metaStore.get('workspace').onsuccess = (e) => { meta = (e.target as IDBRequest).result; step(); };
       tx.objectStore('revisions').getAll().onsuccess = (e) => { revisions = (e.target as IDBRequest).result ?? []; step(); };
@@ -294,6 +296,11 @@ export class WorkspaceRepository {
         catch { error = '归档同步状态不受支持，原件保留'; tx.abort(); }
       };
 
+      let revisionsPending = emptyRevisions();
+      tx.objectStore('sync').get('revisions').onsuccess = (e) => {
+        try { revisionsPending = parseRevisions((e.target as IDBRequest).result, this.namespace.split(':')[3] ?? ''); step(); }
+        catch { error = '修订同步状态不受支持，原件保留'; tx.abort(); }
+      };
       const canonical = (value: unknown): unknown => Array.isArray(value)
         ? value.map(canonical)
         : value && typeof value === 'object'
@@ -327,6 +334,7 @@ export class WorkspaceRepository {
         try { write(); } catch { tx.abort(); }
       };
       const write = () => {
+        if (syncing && revisionFrozen(revisionsPending) && !options.remote) { error = '修订确认结果尚未确定，请先恢复同一请求；本机历史保留'; tx.abort(); return; }
         if (preservation && !options.preservation) {
           error = '冲突保留请求尚未完成，请先恢复同一请求；本机完整历史已保留';
           tx.abort();
@@ -637,13 +645,14 @@ export class WorkspaceRepository {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['meta', 'sync', 'objects'], 'readwrite');
       const sync = tx.objectStore('sync'), requests = { meta: tx.objectStore('meta').get('workspace'), archive: sync.get('archives'),
-        display: sync.get('metadata'), life: sync.get('lifecycle'), preservation: sync.get('preservation'), objects: tx.objectStore('objects').getAll() };
+        display: sync.get('metadata'), life: sync.get('lifecycle'), preservation: sync.get('preservation'), revisions: sync.get('revisions'), objects: tx.objectStore('objects').getAll() };
       let left = Object.keys(requests).length, error = '归档请求未保存，尚未发出网络请求';
       const step = () => {
         if (--left) return;
         try {
           const meta = requests.meta.result;
           if (meta?.identity.repositoryRevision !== workspace.identity.repositoryRevision) throw new Error('另一个窗口已更新工作区，请刷新后归档');
+          if (revisionFrozen(parseRevisions(requests.revisions.result, workspaceId))) throw new Error('修订确认结果尚未确定，请先恢复同一请求');
           if (requests.preservation.result || requests.objects.result.some((o) => o.kind === 'ticket' && ['reserved', 'submitted'].includes(o.status))) throw new Error('进行中的任务尚未完成，暂不能归档');
           const archive = parseArchives(requests.archive.result, workspaceId), display = parseMetadata(requests.display.result, workspaceId), life = parseLifecycle(requests.life.result, workspaceId);
           if (!archive.known) throw new Error('请先同步，取得可验证的归档基线');
@@ -675,6 +684,159 @@ export class WorkspaceRepository {
     });
   }
 
+  async revisionState(): Promise<RevisionState> {
+    this.requireSync();
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('sync', 'readonly'), request = tx.objectStore('sync').get('revisions');
+      tx.oncomplete = () => { try { resolve(parseRevisions(request.result, this.namespace.split(':')[3]!)); } catch { reject(new Error('修订同步状态不受支持，原件保留')); } };
+      tx.onabort = tx.onerror = () => reject(new Error('读取修订请求失败，原件保留'));
+    });
+  }
+
+  /** Expensive native compilation runs before IDB. The write compares the complete read set, including sidecars,
+   * then commits workspace, registration, receipt acknowledgement and shared prefix identities atomically. */
+  async revisionAction(content: Content, action: { queue: { contentId: string; draft: string } }
+    | { confirm: { requestId: string; digest: string } } | { discard: string }
+    | { preview: RevisionPreviewReceipt } | { result: RevisionAdoptionReceipt } | { install: RevisionRegistration; readingSeq: number }): Promise<void> {
+    this.requireSync();
+    const workspaceId = this.namespace.split(':')[3]!;
+    const before = await this.rawSnapshot() as any;
+    const value = (key: string) => before.sync.find((row: any) => row.key === key)?.value;
+    const original = this.assemble(before.meta, before.revisions, before.branches, before.objects, before.meta?.management ?? []);
+    let workspace = original, state = parseRevisions(value('revisions'), workspaceId);
+    let display = parseMetadata(value('metadata'), workspaceId), sync = parseSyncState(value('sync'));
+    const life = parseLifecycle(value('lifecycle'), workspaceId), archive = parseArchives(value('archives'), workspaceId);
+    if (value('preservation') || original.tickets.some((t) => ['reserved', 'submitted'].includes(t.status))) throw new Error('进行中的任务尚未完成，修订请求保留');
+    const stage: { key: string; value: unknown }[] = [], identities: { key: string; value: SidecarEntry }[] = [];
+    const idle = () => {
+      if (before.outbox.length || sync.pendingPush || sync.conflicts.length || sync.needsRebase.length
+        || Object.keys(display.pending).length || Object.keys(life.pending).length || archive.pending || !archive.known) throw new Error('请先完成阅读和内容管理同步，再请求修订预览或确认');
+    };
+    if ('queue' in action) {
+      if (state.pending) throw new Error('已有待处理修订，请先恢复或保留原请求后重新编辑');
+      idle();
+      const branch = workspace.branches.find((b) => b.id === workspace.activeBranchId)!;
+      const entry = workspace.entries.find((e) => e.id === action.queue.contentId);
+      const adopted = branch.adopted.find((a) => a.contentId === entry?.id), head = sync.streams[branch.id];
+      if (!entry || entry.sourceKind !== 'generated' || entry.lifecycle !== 'active' || !adopted || !head
+        || head.seq !== branch.session.events.length || workspace.volumes.some((v) => v.members.some((m) => m.contentId === entry.id))
+        || !display.known[entry.id] || !life.known[entry.id]) throw new Error('此内容或阅读前缀尚不满足云端修订条件');
+      const request = RevisionPreviewRequestSchema.parse({ workspaceId, requestId: crypto.randomUUID(), streamId: branch.id, contentId: entry.id,
+        baseRevisionId: adopted.revisionId, baseSeq: head.seq, baseEventId: head.eventId,
+        displayVersion: display.known[entry.id]!.version, lifecycleVersion: life.known[entry.id]!.version,
+        archiveVersion: archive.known!.version, draft: action.queue.draft });
+      state = { ...state, pending: { request, baseline: original } };
+    } else if ('preview' in action) {
+      const receipt = await validatePreview(content, state, action.preview);
+      if (state.pending!.preview && !sameMetadata(state.pending!.preview, receipt)) throw new Error('原预览裁决不可改写');
+      state = { ...state, pending: { ...state.pending!, preview: receipt } };
+    } else if ('confirm' in action) {
+      idle();
+      const held = state.pending;
+      if (!held || held.request.requestId !== action.confirm.requestId || held.preview?.outcome !== 'ready'
+        || held.preview.artifact.digest !== action.confirm.digest || held.confirmation) throw new Error('预览已变化，请重新查看后确认');
+      const request = held.request, branch = original.branches.find((b) => b.id === request.streamId);
+      const head = sync.streams[request.streamId];
+      if (original.activeBranchId !== request.streamId || !branch || branch.session.events.length !== request.baseSeq
+        || !head || head.seq !== request.baseSeq || head.eventId !== request.baseEventId
+        || display.known[request.contentId]?.version !== request.displayVersion || life.known[request.contentId]?.version !== request.lifecycleVersion
+        || archive.known!.version !== request.archiveVersion) throw new Error('阅读或内容版本已变化，请保留原预览后重新编译');
+      state = { ...state, pending: { ...held, confirmation: { protocol: 'cloud-revision-adoption/1', workspaceId, commandId: crypto.randomUUID(),
+        previewRequestId: request.requestId, artifactDigest: action.confirm.digest } } };
+    } else if ('result' in action) {
+      const receipt = RevisionAdoptionReceiptSchema.parse(action.result), held = state.pending;
+      if (!held?.confirmation || receipt.workspaceId !== workspaceId || receipt.commandId !== held.confirmation.commandId
+        || (receipt.outcome === 'applied' && (receipt.registration.commandId !== receipt.commandId
+          || receipt.registration.previewRequestId !== held.request.requestId || held.preview?.outcome !== 'ready'
+          || !sameMetadata(receipt.registration.artifact, held.preview.artifact)))) throw new Error('确认回执与本机原请求不一致，原请求保留');
+      if (held.result && !sameMetadata(held.result, receipt)) throw new Error('原确认裁决不可改写');
+      state = { ...state, pending: { ...held, result: receipt } };
+    } else if ('discard' in action) {
+      if (!state.pending || state.pending.request.requestId !== action.discard || revisionFrozen(state)) throw new Error('确认结果未知，必须恢复同一请求后再编辑');
+      stage.push({ key: `revision-request:${state.pending.request.requestId}`, value: state.pending });
+      state = { ...state, pending: null };
+    } else {
+      const registration = RevisionRegistrationSchema.parse(action.install), old = state.installed[registration.version - 1];
+      if (old) { if (!sameMetadata(old, registration)) throw new Error('同一登记版本正文不同，原件保留'); return; }
+      if (registration.version !== state.installed.length + 1) throw new Error('修订登记不连续，原件保留');
+      if (!Number.isSafeInteger(action.readingSeq) || action.readingSeq < registration.readingChangeSeq) throw new Error('修订所需阅读同步屏障尚未到达，原件保留');
+      const binding = registration.artifact.binding;
+      if (sync.pendingPush || sync.needsRebase.includes(binding.streamId) || sync.conflicts.some((c) => c.streamId === binding.streamId)
+        || before.outbox.some((e: any) => e.value.streamId === binding.streamId)) throw new Error('原分支仍有未确认事件，不能采用云端修订；原历史保留');
+      const boundHead = sync.streams[binding.streamId];
+      const boundIdentity = before.eventIds.find((r: any) => r.key === sidecarKey(binding.streamId, binding.eventCount))?.value;
+      if ((boundIdentity?.eventId ?? (boundHead?.seq === binding.eventCount ? boundHead.eventId : undefined)) !== binding.lastEventId
+        && binding.eventCount !== 0) throw new Error('修订所需阅读前缀身份尚未到达或不一致，原件保留');
+      workspace = await candidateFor(content, original, registration.artifact);
+      const entry = workspace.entries.find((e) => e.id === registration.entry.contentId)!;
+      if (!entry || !sameMetadata(entry.revisionIds, registration.entry.revisionIds) || entry.headRevisionId !== registration.entry.headRevisionId
+        || entry.updatedAt !== registration.entry.updatedAt || registration.display.contentId !== entry.id
+        || registration.display.version !== binding.displayVersion + 1 || registration.display.value.title !== entry.display.title
+        || !sameMetadata(workspace.obligations, registration.obligations)) throw new Error('修订条目或义务与本机原生规则不同');
+      const own = state.pending?.confirmation?.commandId === registration.commandId;
+      if (own && (state.pending!.request.requestId !== registration.previewRequestId || state.pending!.preview?.outcome !== 'ready'
+        || !sameMetadata(state.pending!.preview.artifact, registration.artifact)
+        || (state.pending!.result && (state.pending!.result.outcome !== 'applied' || !sameMetadata(state.pending!.result.registration, registration))))) throw new Error('修订登记与原确认请求不一致');
+      workspace = { ...workspace, activeBranchId: own ? workspace.activeBranchId : original.activeBranchId };
+      const { stream, artifact } = registration;
+      const count = artifact.mode === 'fork' ? artifact.branch.commonPrefixSeq : artifact.binding.eventCount;
+      if (stream.streamId !== artifact.branch.streamId || stream.branchId !== stream.streamId || stream.eventSeq !== count
+        || (count === 0) !== (stream.lastEventId === null) || (artifact.mode === 'in-place' && stream.lastEventId !== artifact.binding.lastEventId)) throw new Error('采用流头身份不一致');
+      if (artifact.mode === 'fork') {
+        const parent = original.branches.find((b) => b.id === artifact.binding.streamId)!;
+        const ids = registration.prefixEventIds ?? parent.session.events.slice(0, count).map((_e, i) => before.eventIds.find((r: any) => r.key === sidecarKey(parent.id, i + 1))?.value.eventId);
+        if (ids.length !== count || new Set(ids).size !== ids.length || ids.some((id) => typeof id !== 'string') || (ids.at(-1) ?? null) !== stream.lastEventId) throw new Error('修订分支缺少完整前缀身份，原件保留');
+        ids.forEach((id, i) => {
+          for (const target of [parent.id, stream.streamId]) {
+            const key = sidecarKey(target, i + 1), held = before.eventIds.find((r: any) => r.key === key)?.value;
+            const value = { eventId: id, event: parent.session.events[i]! } as SidecarEntry;
+            if (held && !sameMetadata(held, value)) throw new Error('前缀事件身份不同，原历史保留');
+            identities.push({ key, value });
+          }
+        });
+      }
+      const confirmed = sync.streams[stream.streamId];
+      if (confirmed?.seq === count && confirmed.eventId !== stream.lastEventId) throw new Error('已确认流头身份不同');
+      sync = { ...sync, streams: { ...sync.streams, [stream.streamId]: confirmed && confirmed.seq > count ? confirmed : { seq: count, eventId: stream.lastEventId } } };
+      display = mergeDisplayChanges(display, [registration.display], workspace.entries);
+      // Native adoption updates the title; an unresolved local display command still owns its visible candidate.
+      const entries = workspace.entries.map((e) => display.pending[e.id]
+        ? { ...e, display: { ...e.display, ...display.pending[e.id]!.request.value } } : e);
+      workspace = { ...workspace, entries: metadataEntries(entries, display) };
+      state = { ...state, installed: [...state.installed, registration] };
+      if (own) { stage.push({ key: `revision-result:${registration.commandId}`, value: state.pending }); state = { ...state, pending: null }; }
+    }
+    parseRevisions(state, workspaceId);
+    workspace = parseWorkspace({ ...workspace, identity: { ...workspace.identity, repositoryRevision: original.identity.repositoryRevision + 1 } });
+    const db = await this.db(), rows = this.rows(workspace);
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging', ...SYNC_STORES], 'readwrite');
+      const actual: any = {}, names = ['revisions', 'branches', 'objects', 'staging', ...SYNC_STORES];
+      let remaining = names.length + 1, error = '修订保存失败，原请求与原文保留，可重试';
+      const done = () => {
+        if (--remaining) return;
+        try {
+          if (!sameMetadata(actual, before)) throw new Error('另一个窗口或同步已更新存档，修订未提交，请重新读取后重试');
+          tx.objectStore('meta').put({ ...rows.meta, management: rows.management }, 'workspace');
+          for (const revision of rows.revisions) tx.objectStore('revisions').put(revision, revision.id);
+          for (const branch of rows.branches) tx.objectStore('branches').put(branch, branch.id);
+          tx.objectStore('sync').put(state, 'revisions'); tx.objectStore('sync').put(sync, 'sync'); tx.objectStore('sync').put(display, 'metadata');
+          for (const row of identities) tx.objectStore('eventIds').put(row.value, row.key);
+          for (const row of stage) tx.objectStore('staging').put(row.value, row.key);
+        } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
+      };
+      const meta = tx.objectStore('meta').get('workspace'); meta.onsuccess = () => { actual.meta = meta.result ?? null; done(); };
+      for (const name of names) {
+        if ((SYNC_STORES as readonly string[]).includes(name)) {
+          const cursor = tx.objectStore(name).openCursor(), values: any[] = []; actual[name] = values;
+          cursor.onsuccess = () => { const row = cursor.result; if (row) { values.push({ key: row.key, value: row.value }); row.continue(); } else done(); };
+        } else { const request = tx.objectStore(name).getAll(); request.onsuccess = () => { actual[name] = request.result; done(); }; }
+      }
+      tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(new Error(error));
+    });
+  }
+
   /** Management page effects, command acknowledgements and cursor advance are a single atomic commit. */
   async updateManagement(action: { bootstrap: ManagementBootstrap } | { pull: ManagementPull } | { receipt: LifecycleReceipt }
     | { contentId: string; decision: 'local' | 'cloud'; commandId: string; version: number }
@@ -694,7 +856,7 @@ export class WorkspaceRepository {
       const requests = {
         meta: tx.objectStore('meta').get('workspace'), display: sync.get('metadata'), life: sync.get('lifecycle'),
         sync: sync.get('sync'), preservation: sync.get('preservation'),
-        archive: sync.get('archives'),
+        archive: sync.get('archives'), revisionState: sync.get('revisions'),
         revisions: tx.objectStore('revisions').getAll(), branches: tx.objectStore('branches').getAll(), objects: tx.objectStore('objects').getAll(),
       };
       let remaining = Object.keys(requests).length;
@@ -705,6 +867,12 @@ export class WorkspaceRepository {
           const held = requests.meta.result;
           if (!held) throw new Error('本机云副本不存在');
           if (requests.preservation.result || requests.objects.result.some((o) => o.kind === 'ticket' && ['reserved', 'submitted'].includes(o.status))) throw new Error('进行中的任务尚未完成，暂不应用管理变更');
+          const revisionState = parseRevisions(requests.revisionState.result, workspaceId);
+          if (revisionFrozen(revisionState)) throw new Error('修订确认尚未完成，暂不应用管理变更');
+          if ('bootstrap' in action && action.bootstrap.revisionCatalog &&
+            !sameMetadata(revisionState.installed, action.bootstrap.revisionCatalog.registrations)) throw new Error('管理引导所需修订尚未完整接收，原游标保留');
+          if ('pull' in action && action.pull.changes.some((change) => change.type === 'revision' &&
+            !sameMetadata(revisionState.installed[change.registration.version - 1], change.registration))) throw new Error('管理页所需修订尚未完整接收，原游标保留');
           let display = parseMetadata(requests.display.result, workspaceId);
           let life = parseLifecycle(requests.life.result, workspaceId);
           let archive = parseArchives(requests.archive.result, workspaceId);
@@ -729,7 +897,7 @@ export class WorkspaceRepository {
             for (const change of page.changes) {
               if (change.type === 'display') display = mergeDisplayChanges(display, [change.entry], entries);
               else if (change.type === 'lifecycle') life = mergeLifecycle(life, [change.entry], entries, workspaceId, true);
-              else {
+              else if (change.type === 'archive') {
                 life = mergeLifecycle(life, change.snapshot.lifecycle, entries, workspaceId, true);
                 remember(change.snapshot.state, true);
               }
@@ -820,13 +988,15 @@ export class WorkspaceRepository {
       const meta = tx.objectStore('meta').get('workspace');
       const preservation = store.get('preservation');
       const sync = store.get('sync');
+      const revision = store.get('revisions');
       const objects = tx.objectStore('objects').getAll();
       let error = '展示信息未保存，原请求保留，可重试';
-      let remaining = 5;
+      let remaining = 6;
       const step = () => {
         if (--remaining) return;
         try {
           if (!meta.result) throw new Error('本机云副本不存在');
+          if (revisionFrozen(parseRevisions(revision.result, workspaceId))) throw new Error('修订确认尚未完成，暂不应用展示信息');
           if (preservation.result || objects.result.some((o) => o.kind === 'ticket' && ['reserved', 'submitted'].includes(o.status))) {
             throw new Error('进行中的任务尚未完成，暂不应用展示信息');
           }
@@ -856,7 +1026,7 @@ export class WorkspaceRepository {
           if ('snapshot' in action) store.put({ ...parseSyncState(sync.result), lastSyncedAt: new Date().toISOString() }, 'sync');
         } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
       };
-      metadata.onsuccess = meta.onsuccess = preservation.onsuccess = objects.onsuccess = sync.onsuccess = step;
+      metadata.onsuccess = meta.onsuccess = preservation.onsuccess = objects.onsuccess = sync.onsuccess = revision.onsuccess = step;
       tx.oncomplete = () => resolve();
       tx.onabort = tx.onerror = () => reject(new Error(error));
     });

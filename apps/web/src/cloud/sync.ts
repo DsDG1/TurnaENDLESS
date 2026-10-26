@@ -34,7 +34,7 @@ export interface SyncApiPort {
   registerStream(input: { workspaceId: string; streamId: string; parentStreamId: string; forkAtSeq: number }): Promise<SyncStreamBinding>;
   push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
   pull(workspaceId: string, cursor: string | null, limit?: number): Promise<{
-    changes: SyncChange[]; nextCursor: string; hasMore: boolean; cloudVersion: string;
+    fromChangeSeq?: number; changeSeq?: number; changes: SyncChange[]; nextCursor: string; hasMore: boolean; cloudVersion: string;
   }>;
   conflicts(workspaceId: string): Promise<{ conflicts: SyncConflict[] }>;
   resolveConflict(workspaceId: string, conflictId: string, decision: 'discard' | 'keep-branch', preservation?: { streamId: string; baseEventId: string | null }): Promise<ResolveConflictResponse>;
@@ -47,6 +47,7 @@ export interface SyncDeps {
   workspaceId: string;
   deviceId: string;
   digest(value: unknown): Promise<string>;
+  revisions?: { prepare(): Promise<void>; through(seq: number): Promise<void> };
   newBatchId(): string;
   now?(): Date;
 }
@@ -316,8 +317,15 @@ export class WorkspaceSync {
         await this.fail(error instanceof Error ? error.message : '拉取失败');
         throw error;
       }
+      // Fetch after the reading page: any adoption that produced one of its events must now be visible.
+      if (this.deps.revisions) {
+        await this.deps.revisions.prepare();
+        const from = response.fromChangeSeq ?? (response.changes[0] ? response.changes[0].seq - 1 : undefined);
+        if (from !== undefined) await this.deps.revisions.through(from);
+      }
       const streams: CloudSyncState['streams'] = { ...state.streams };
       for (const change of response.changes) {
+        await this.deps.revisions?.through(change.seq - 1);
         // 无论谁写的，服务端的流头都成为本机新的已确认前缀；
         // 否则重放别人的变更之后就再也接不上自己的推送。
         const last = change.events[change.events.length - 1];
@@ -325,7 +333,7 @@ export class WorkspaceSync {
         if (!known || change.toSeq > known.seq) {
           streams[change.streamId] = { seq: change.toSeq, eventId: last?.eventId ?? null };
         }
-        if (change.deviceId === this.deps.deviceId && !change.branch?.commonStreamId) continue; // 本机自己写的事件，已经在本机
+        if (change.deviceId === this.deps.deviceId && !change.branch?.commonStreamId) { await this.deps.revisions?.through(change.seq); continue; } // 本机自己写的事件，已经在本机
         const outcome = await this.applyChange(change);
         if (outcome !== 'applied' && outcome !== 'empty') {
           await this.deps.repo.saveSyncState({ ...(await this.deps.repo.syncState()), streams });
@@ -333,10 +341,14 @@ export class WorkspaceSync {
           return { pushed: 0, applied, pending: (await this.deps.repo.pendingOutbox()).length, stopped: outcome, note: stopText[outcome] };
         }
         if (outcome === 'applied') applied++;
+        await this.deps.revisions?.through(change.seq);
       }
+      if (response.changeSeq !== undefined) await this.deps.revisions?.through(response.changeSeq);
       cursor = response.nextCursor;
       const fresh = await this.deps.repo.syncState();
-      await this.deps.repo.saveSyncState({ ...fresh, cursor, streams, cloudVersion: response.cloudVersion, lastError: null });
+      const merged = { ...fresh.streams };
+      for (const [id, head] of Object.entries(streams)) if (!merged[id] || merged[id]!.seq < head.seq) merged[id] = head;
+      await this.deps.repo.saveSyncState({ ...fresh, cursor, streams: merged, cloudVersion: response.cloudVersion, lastError: null });
       if (!response.hasMore) break;
     }
     return {

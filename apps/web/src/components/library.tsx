@@ -3,7 +3,7 @@
  * 回收站、归档卷与完整备份/导入。所有操作走工作区管理命令，不伪造学习事件。
  */
 import { useEffect, useRef, useState } from 'react';
-import { adoptedRevision, type ContentEntry, type RevisionPreview } from '@endless/content';
+import { adoptedRevision, type ContentEntry, type ContentRevision, type RevisionPreview } from '@endless/content';
 import { downloadSession } from '../storage.js';
 import { Icon } from './icons.js';
 import type { usePlayer } from '../use-player.js';
@@ -67,6 +67,46 @@ export function DraftEditor({ entry, player, onClose }: { entry: ContentEntry; p
   </Dialog>;
 }
 
+function CloudDraftEditor({ entry, player, onClose }: { entry: ContentEntry; player: Player; onClose(): void }) {
+  const head = player.workspace ? adoptedRevision(player.workspace, entry.id) : null;
+  const held = player.cloudRevisions?.pending;
+  const pending = held?.request.contentId === entry.id ? held : null;
+  const [draft, setDraft] = useState(pending?.request.draft ?? (head && head.origin !== 'bundled' ? head.draft : ''));
+  const preview = pending?.preview;
+  const ready = preview?.outcome === 'ready' ? preview : null;
+  const revision = ready?.artifact.revision as ContentRevision | undefined;
+  const frozen = !!pending?.confirmation && (!pending.result || pending.result.outcome === 'applied');
+  const submitted = useRef<string | null>(pending?.confirmation?.commandId ?? null);
+  const [installed, setInstalled] = useState(false);
+  useEffect(() => {
+    if (pending?.confirmation) submitted.current = pending.confirmation.commandId;
+    if (submitted.current && player.cloudRevisions?.installed.some((r) => r.commandId === submitted.current)) setInstalled(true);
+  }, [pending, player.cloudRevisions]);
+  return <Dialog title="编辑云端内容" onClose={onClose}>
+    <p className="section-footnote">修改草稿后提交云端编译预览，检查结果后再确认采用。已有阅读记录时会建立修订分支，原分支保留。</p>
+    <textarea aria-label="云端内容草稿" className="draft-editor" value={draft} readOnly={!!pending} maxLength={120000} rows={16} spellCheck={false}
+      onChange={(event) => setDraft(event.target.value)} />
+    <div className="button-row">
+      {!pending && !installed && <button className="button button-outline" disabled={player.busy || !draft.trim() || !!held || !player.cloudRevisionAvailable}
+        onClick={() => void player.cloudRevisionAction({ queue: { contentId: entry.id, draft } })}>提交编译预览</button>}
+      {pending && !preview && <p role="status">预览请求已保存在本机，等待云端响应。断网或刷新后继续恢复同一请求。</p>}
+      {ready && !pending?.confirmation && <button className="button button-dark" disabled={player.busy}
+        onClick={() => void player.cloudRevisionAction({ confirm: { requestId: pending!.request.requestId, digest: ready.artifact.digest } })}>
+        {ready.artifact.mode === 'fork' ? '确认采用并建立新分支' : '确认采用此修订'}</button>}
+      {pending && !frozen && <button className="button button-outline" disabled={player.busy}
+        onClick={() => void player.cloudRevisionAction({ discard: pending.request.requestId })}>保留原请求，重新编辑</button>}
+      {pending && <button className="button button-outline" disabled={player.cloudSyncing} onClick={() => void player.syncNow()}>恢复同步</button>}
+    </div>
+    {installed && <p className="notice" role="status">新修订已接收并采用，原阅读历史保留。<button className="text-button" onClick={onClose}>完成</button></p>}
+    {ready && <p className="notice" role="status">云端与本机编译校验通过：{revision?.batch.scenes.length} 节，标题「{revision?.title}」。
+      {ready.artifact.mode === 'fork' ? '确认后创建新分支。' : '确认后在当前分支采用。'}当前仍保留原修订。</p>}
+    {preview?.outcome === 'conflict' && <p className="error-text" role="alert">阅读或内容版本已变化，请保留原请求后重新预览。</p>}
+    {preview?.outcome === 'rejected' && <p className="error-text" role="alert">预览未通过（{preview.reason === 'content' ? '草稿未通过内容校验' : preview.reason === 'capacity' ? '超过当前容量' : '内容或历史暂不符合修订条件'}），原文保留。</p>}
+    {pending?.confirmation && <p role="status">{frozen ? '确认请求已保存，正在恢复结果与接收修订。结果确定前暂停写入，原阅读历史保留。'
+      : '云端未采用本次修订，原文保留。请重新预览后再确认。'}</p>}
+  </Dialog>;
+}
+
 /** 生成条目的管理菜单。 */
 export function EntryMenu({ entry, player }: { entry: ContentEntry; player: Player }) {
   const [open, setOpen] = useState(false);
@@ -97,7 +137,8 @@ export function EntryMenu({ entry, player }: { entry: ContentEntry; player: Play
       onClick={(e) => { e.stopPropagation(); setOpen(!open); }}><Icon name="settings" size={16} /></button>
     {open && <div className="entry-menu-list" role="menu" onClick={(e) => e.stopPropagation()}>
       <button role="menuitem" disabled={busy || !!player.cloudMetadata?.pending[entry.id]} onClick={() => { setDisplay(true); setOpen(false); }}>编辑展示信息</button>
-      {!player.cloudMode && <button role="menuitem" disabled={busy} onClick={() => { setBody(true); setOpen(false); }}>编辑内容</button>}
+      {entry.sourceKind === 'generated' && <button role="menuitem" disabled={busy || (player.cloudMode && !player.cloudRevisionAvailable && !player.cloudRevisions?.pending)}
+        onClick={() => { setBody(true); setOpen(false); }}>{player.cloudMode ? '编辑云端内容' : '编辑内容'}</button>}
       {entry.sourceKind === 'generated' && entry.lifecycle !== 'trashed' &&
         <button role="menuitem" disabled={lifecycleBusy} onClick={() => void player.trash(entry).then(() => setOpen(false))}>移入回收站</button>}
       {entry.sourceKind === 'generated' && entry.lifecycle === 'trashed' && <>
@@ -108,7 +149,7 @@ export function EntryMenu({ entry, player }: { entry: ContentEntry; player: Play
       </>}
     </div>}
     {display && <DisplayEditor entry={entry} player={player} onClose={() => setDisplay(false)} />}
-    {body && <DraftEditor entry={entry} player={player} onClose={() => setBody(false)} />}
+    {body && (player.cloudMode ? <CloudDraftEditor entry={entry} player={player} onClose={() => setBody(false)} /> : <DraftEditor entry={entry} player={player} onClose={() => setBody(false)} />)}
     {confirmPurge && <Dialog title="彻底删除" onClose={() => setConfirmPurge(false)}>
       <p>将从本机移除该内容与修订，已产生的记录不会被删除。</p>
       <button className="button button-dark" onClick={() => void player.purge(entry).then((ok) => { if (ok) setConfirmPurge(false); })}>确认删除</button>
@@ -140,7 +181,7 @@ export function LibraryPage({ player }: { player: Player }) {
     <section className="page-heading"><div><span className="eyebrow">LIBRARY</span><h1>归档与回收站<span className="heading-dot">。</span></h1></div></section>
     <section className="surface"><div className="section-heading"><h2>归档卷</h2></div>
       {player.cloudMode && <div className="cloud-archive-form">
-        <p className="muted-copy">选择要成卷的内容。摘要与引用由已确认的阅读记录生成；离线时先保存请求，同步确认后才加入归档。采用修订尚未接入。</p>
+        <p className="muted-copy">选择要成卷的内容。摘要与引用由已确认的阅读记录生成；离线时先保存请求，同步确认后才加入归档。</p>
         <label>归档名称<input value={archiveTitle} maxLength={100} onChange={(event) => setArchiveTitle(event.target.value)} /></label>
         <fieldset disabled={player.busy || !!player.cloudArchives?.pending}><legend>选择归档内容</legend>
           {player.workspace?.branches.find((b) => b.id === player.workspace?.activeBranchId)?.adopted.map((adopted) => player.entries.find((e) => e.id === adopted.contentId))

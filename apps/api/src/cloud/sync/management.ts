@@ -13,6 +13,7 @@ import type { MetadataService } from './metadata.js';
 import { recordManagement } from './management-feed.js';
 import { ArchiveService, archiveSnapshot } from './archives.js';
 import { RevisionPreviewService } from './revisions.js';
+import { revisionCatalog } from './revision-registry.js';
 
 export async function seedLifecycle(q: Querier, accountId: string, workspaceId: string, copy: Workspace) {
   for (const entry of copy.entries) {
@@ -88,7 +89,9 @@ export class ManagementService {
       }
       const changeSeq = await this.head(q, ctx, workspaceId);
       const origin = (await q.query<{ origin_volumes: unknown[] }>('SELECT origin_volumes FROM workspace_archives WHERE account_id = $1 AND workspace_id = $2', [ctx.accountId, workspaceId])).rows[0]!;
+      const revisions = await revisionCatalog(q, ctx, workspaceId);
       return { workspaceId, cursor: cursor(workspaceId, changeSeq, epoch), changeSeq,
+        ...(revisions.version ? { revisionCatalog: revisions } : {}),
         display: display.rows.map((row) => MetadataEntrySchema.parse({ contentId: row.content_id, version: Number(row.version), value: row.value, updatedAt: row.updated_at.toISOString() })),
         lifecycle: lifecycle.rows.map(wire), archive: (await archiveSnapshot(q, ctx, workspaceId)).state, archiveOrigin: origin.origin_volumes };
     });

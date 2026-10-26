@@ -17,6 +17,7 @@ import { apiStatus, generateEpisode } from './api.js';
 import { CloudApi } from './cloud/client.js';
 import { cloudDigest } from './cloud/local.js';
 import { WorkspaceSync, type SyncReport } from './cloud/sync.js';
+import { RevisionSync, revisionFrozen, type RevisionState } from './cloud/revisions.js';
 import { ManagementSync } from './cloud/management-sync.js';
 import type { LifecycleState } from './cloud/lifecycle.js';
 import type { ArchiveView } from './cloud/archives.js';
@@ -71,6 +72,9 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
   const [cloudMetadata, setCloudMetadata] = useState<MetadataState | null>(null);
   const [cloudLifecycle, setCloudLifecycle] = useState<LifecycleState | null>(null);
   const [cloudArchives, setCloudArchives] = useState<ArchiveView | null>(null);
+  const [cloudRevisionAvailable, setCloudRevisionAvailable] = useState(false);
+  const [cloudRevisions, setCloudRevisions] = useState<RevisionState | null>(null);
+  const revisionEngine = useRef<RevisionSync | null>(null);
   const syncEngine = useRef<WorkspaceSync | null>(null);
   const syncBusy = useRef(false);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,7 +106,9 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
         writer.current = new SessionCommitter(storage, stored.identity.repositoryRevision);
         current.current = stored;
         setWorkspace(stored);
+        revisionEngine.current = new RevisionSync(storage, new CloudApi(), content, cloud.workspaceId);
         syncEngine.current = new WorkspaceSync({
+          revisions: revisionEngine.current,
           repo: storage, api: new CloudApi(), content, workspaceId: cloud.workspaceId, deviceId,
           digest: (value) => cloudDigest(value),
           newBatchId: () => globalThis.crypto.randomUUID(),
@@ -217,6 +223,7 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     let report: SyncReport | undefined;
     let message = '';
     try {
+      await revisionEngine.current?.resume();
       report = await engine.run();
       if (cloud && !(await repo.syncState()).paused) await new ManagementSync(repo, new CloudApi(), cloud.workspaceId, content).run();
     } catch (error) {
@@ -230,6 +237,8 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
           setWorkspace(stored);
           writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision);
         }
+        setCloudRevisionAvailable(revisionEngine.current?.available ?? false);
+        setCloudRevisions(await repo.revisionState());
         setCloudMetadata(metadata);
         setCloudLifecycle(lifecycle);
         setCloudArchives(archives);
@@ -491,6 +500,28 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
   const waive = (entry: ContentEntry) => manage((ws) => waiveObligation(ws, entry.id));
   const purge = (entry: ContentEntry) => manage((ws) => purgeContent(ws, entry.id));
   const purgeInfo = (entry: ContentEntry) => current.current ? purgePreview(current.current, entry.id) : null;
+  async function cloudRevisionAction(action: { queue: { contentId: string; draft: string } }
+    | { confirm: { requestId: string; digest: string } } | { discard: string }): Promise<boolean> {
+    if (!cloud || !repository.current || pending.current || currentTicket.current) return false;
+    await syncNow();
+    await awaitSyncIdle();
+    const repo = repository.current;
+    syncBusy.current = true; setCloudSyncing(true);
+    try {
+      assertNoSecrets(action, [apiKey]);
+      await repo.revisionAction(content, action);
+      setNotice('');
+      return true;
+    } catch (error) { setNotice(error instanceof Error ? error.message : '修订请求未保存'); return false; }
+    finally {
+      try {
+        const stored = await repo.load();
+        if (stored) { current.current = stored; setWorkspace(stored); writer.current = new SessionCommitter(repo, stored.identity.repositoryRevision); }
+        setCloudRevisions(await repo.revisionState());
+      } catch (error) { setNotice(error instanceof Error ? error.message : '读取修订结果失败，原请求保留'); }
+      finally { syncBusy.current = false; setCloudSyncing(false); scheduleSync(); }
+    }
+  }
   const previewEdit = (entry: ContentEntry, draft: string): RevisionPreview | null =>
     current.current ? previewRevision(content, current.current, entry, draft) : null;
   const adoptEdit = (entry: ContentEntry, revision: ContentRevision) =>
@@ -587,7 +618,8 @@ export function usePlayer(cloud?: CloudPlayerOptions) {
     switchBranchTo: (id: string) => manage((ws) => switchBranch(ws, id), true),
     editDisplay, resolveMetadata, cloudMetadata, resolveLifecycle, cloudLifecycle, cloudArchives, resolveArchive, trash, restore, waive, purge, purgeInfo, previewEdit, adoptEdit,
     archive, unarchive, suggestions, backup, previewImport, importBackup,
-    busy: saving || generating || cloudSyncing || !!currentTicket.current,
+    busy: saving || generating || cloudSyncing || !!currentTicket.current || (!!cloudRevisions && revisionFrozen(cloudRevisions)),
+    cloudRevisions, cloudRevisionAvailable, cloudRevisionAction,
     cloudMode: !!cloud, cloudCatalog: cloudCatalog?.entries ?? null, cloudView, cloudSyncing, syncNow,
     raw,
   };

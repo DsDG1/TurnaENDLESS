@@ -3,6 +3,7 @@ import { UuidSchema, CLOUD_LIMITS } from './envelope.js';
 import { MetadataEntrySchema } from './metadata.js';
 import { LifecycleEntrySchema, LifecycleCommandSchema, LifecycleReceiptSchema } from './lifecycle.js';
 import { ArchiveSnapshotSchema } from './archives.js';
+import { RevisionRegistrationSchema, RevisionCatalogSchema } from './revisions.js';
 export * from './lifecycle.js';
 
 const Version = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
@@ -10,6 +11,7 @@ export const ManagementChangeSchema = z.discriminatedUnion('type', [
   z.object({ seq: z.number().int().positive(), type: z.literal('display'), entry: MetadataEntrySchema }).strict(),
   z.object({ seq: z.number().int().positive(), type: z.literal('lifecycle'), entry: LifecycleEntrySchema }).strict(),
   z.object({ seq: z.number().int().positive(), type: z.literal('archive'), snapshot: ArchiveSnapshotSchema }).strict(),
+  z.object({ seq: z.number().int().positive(), type: z.literal('revision'), registration: RevisionRegistrationSchema }).strict(),
 ]);
 export type ManagementChange = z.infer<typeof ManagementChangeSchema>;
 export const ManagementBootstrapSchema = z.object({
@@ -19,6 +21,7 @@ export const ManagementBootstrapSchema = z.object({
   lifecycle: z.array(LifecycleEntrySchema).max(2000),
   archive: ArchiveSnapshotSchema.shape.state.optional(),
   archiveOrigin: ArchiveSnapshotSchema.shape.state.shape.volumes.optional(),
+  revisionCatalog: RevisionCatalogSchema.optional(),
 }).strict().refine((v) => new Set(v.display.map((e) => e.contentId)).size === v.display.length
   && new Set(v.lifecycle.map((e) => e.contentId)).size === v.lifecycle.length);
 export type ManagementBootstrap = z.infer<typeof ManagementBootstrapSchema>;

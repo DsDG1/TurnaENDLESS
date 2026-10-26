@@ -172,6 +172,8 @@ export const SyncChangeSchema = z.object({
 export type SyncChange = z.infer<typeof SyncChangeSchema>;
 
 export const SyncPullResponseSchema = z.object({
+  fromChangeSeq: z.number().int().nonnegative().optional(),
+  changeSeq: z.number().int().nonnegative().optional(),
   changes: z.array(SyncChangeSchema).max(CLOUD_LIMITS.listPageMax),
   nextCursor: z.string().min(1).max(512),
   hasMore: z.boolean(),
