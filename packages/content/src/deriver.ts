@@ -3,51 +3,18 @@
  *
  * 核心机制（借 ScrollToStudy「无限的不是内容，而是题目」与错题回插）：
  * 1. 不调 LLM：对到期复习或近期学过的条目，如果某个形式在已读剧集的叙述行（台词/旁白）中恰好出现过一次，
- *    即可就地挖空生成一道 cloze 填空题。
+ *    即可就地挖空生成一道 cloze 填空题。取材只限真实阅读过的场景（readScenes 过滤），
+ *    未读剧集与集内被跳过的场景绝不取材（R4：未展示内容不计入学习）。
  * 2. 0 毫秒即时生成：作为后台调用大模型生成新一集时的「等待过渡互动（Filler Card）」，
  *    彻底消除用户等待生成时的空转卡顿。
- * 3. 严格遵循防启动规则（R4）：只从更早已读批次取材，取材句子不提前泄露本批内容。
+ * 3. 批次内 derive 场景的编译期规划（planDerivedScene）由 apps/lab/src/deriver.ts 独占实现，
+ *    本文件只保留运行时真正消费的取材与填缝部分。
  */
 import { locateForm, type TextUnit } from '@endless/esl';
 import type { Lexicon } from '@endless/learning';
 import type { Library } from '@endless/player';
 
-export interface DeriveOptions {
-  brief: { review: { item: string }[] };
-  /** 已播放批次：batchId → 该批文本单元（只含更早批次） */
-  priorTexts: Map<string, TextUnit[]>;
-  lexicon: {
-    formsOf(item: string): string[] | undefined;
-    confusables?(item: string): string[];
-  };
-  /** 最近答错的条目（错题回插，优先派生） */
-  recentlyWrong: string[];
-  /** 本批基本场景数（用于 25% 上限） */
-  baseCards: number;
-  /** 本批已被占用的场景 id（生成新 id 用） */
-  usedSceneIds: string[];
-}
-
-export interface DerivedPlan {
-  /** 直接追加进 scenes 的 derive 场景规范 */
-  scene: {
-    id: string;
-    type: 'derive';
-    from: string;
-    kind: 'cloze_pick';
-    item: string;
-    distractors: 'confusables';
-  };
-  item: string;
-  from: string;
-  /** 取材批次与那句话，便于日志核对 */
-  sourceBatch: string;
-  sourceText: string;
-  /** 是否属于错题回插 */
-  errorReplay: boolean;
-}
-
-/** 前端播放器在等待 AI 生成时即时消费的填缝交互卡 */
+/** 生成等待期间，为前端直接产出 0 毫秒立即可互动的填缝交互卡 */
 export interface FillerCard {
   id: string;
   item: string;
@@ -64,21 +31,9 @@ export interface FillerCard {
   };
 }
 
-const MAX_DERIVED_PER_BATCH = 1;
-const MAX_DERIVED_RATIO = 0.25;
-
-/** 下一个可用场景 id：s1..s99 里取第一个没被占用的。 */
-function nextSceneId(used: string[]): string {
-  const taken = new Set(used);
-  for (let i = 1; i < 100; i++) {
-    const id = `s${i}`;
-    if (!taken.has(id)) return id;
-  }
-  return `s${used.length + 1}`;
-}
-
 /**
  * 从 Library 中提取所有已播放剧集的叙述性文本单元（气泡、对白、旁白）。
+ * 注意：这里不做阅读状态过滤，调用方（deriveFillerCard）用 readScenes 过滤真实读过的场景。
  */
 export function extractPriorTexts(library: Library): Map<string, TextUnit[]> {
   const map = new Map<string, TextUnit[]>();
@@ -170,42 +125,9 @@ export function findPriorSentence(
 }
 
 /**
- * 编译/实验流派生规划器（与 lab/deriver 语义完全对齐）。
- */
-export function planDerivedScene(opts: DeriveOptions): DerivedPlan | null {
-  if (MAX_DERIVED_PER_BATCH < 1) return null;
-  const totalAfter = opts.baseCards + MAX_DERIVED_PER_BATCH;
-  if (MAX_DERIVED_PER_BATCH / totalAfter > MAX_DERIVED_RATIO) return null;
-
-  const wrong = new Set(opts.recentlyWrong);
-  const ordered = [...opts.brief.review].sort((a, b) => Number(wrong.has(b.item)) - Number(wrong.has(a.item)));
-
-  for (const r of ordered) {
-    const forms = (opts.lexicon.formsOf(r.item) ?? []).filter(Boolean);
-    if (forms.length === 0) continue;
-    const found = findPriorSentence(opts.priorTexts, forms);
-    if (!found) continue;
-    return {
-      scene: {
-        id: nextSceneId(opts.usedSceneIds),
-        type: 'derive',
-        from: found.from,
-        kind: 'cloze_pick',
-        item: r.item,
-        distractors: 'confusables',
-      },
-      item: r.item,
-      from: found.from,
-      sourceBatch: found.batch,
-      sourceText: found.text,
-      errorReplay: wrong.has(r.item),
-    };
-  }
-  return null;
-}
-
-/**
  * 生成等待期间，为前端直接产出 0 毫秒立即可互动的填缝卡（FillerCard）。
+ * readScenes：真实读过的场景集合（`episodeId.sceneId`）；提供时只从这些场景取材，
+ * 未读剧集与被跳过的场景绝不出现（R4：未展示内容不计入学习）。
  */
 export function deriveFillerCard(
   library: Library,
@@ -213,9 +135,17 @@ export function deriveFillerCard(
   options: {
     wrongItems?: string[];
     candidates?: string[];
+    readScenes?: Set<string>;
   } = {},
 ): FillerCard | null {
-  const priorTexts = extractPriorTexts(library);
+  const allTexts = extractPriorTexts(library);
+  const priorTexts = options.readScenes
+    ? new Map(
+        [...allTexts]
+          .map(([batchId, units]) => [batchId, units.filter((u) => options.readScenes!.has(`${batchId}.${u.sceneId}`))] as const)
+          .filter(([, units]) => units.length > 0),
+      )
+    : allTexts;
   const wrongSet = new Set(options.wrongItems ?? []);
 
   // 候选条目池：优先答错条目 -> 传入的 candidates -> 词库中已有的 sense 条目
@@ -245,35 +175,36 @@ export function deriveFillerCard(
     const clozePrompt = found.text.slice(0, found.hit.start) + '____' + found.text.slice(found.hit.end);
     const correctForm = found.matchedForm;
 
-    // 收集干扰项：优先 confusables，不足时补充同词性词
+    // 收集干扰项：优先 confusables，不足时补充同词性词。
+    // 干扰项与正确答案取同一屈折位置的形式（词库 forms 顺序为 原形/三单/过去式/进行式），
+    // 避免「正确项是过去式、干扰项全是原形」这种靠词形就能猜出的泄底。
+    const matchedIndex = Math.max(0, forms.indexOf(found.matchedForm));
+    const alignedForm = (otherItem: string): string | null => {
+      const f = (lexicon.forms.get(otherItem) ?? [])[matchedIndex];
+      return f && f.toLowerCase() !== correctForm.toLowerCase() ? f : null;
+    };
     const distractors: string[] = [];
-    const confusables = entry.confusables ?? [];
-    for (const cid of confusables) {
-      const f = (lexicon.forms.get(cid) ?? [])[0];
-      if (f && f.toLowerCase() !== correctForm.toLowerCase() && !distractors.includes(f)) {
-        distractors.push(f);
-      }
+    const pushDistractor = (f: string | null): void => {
+      if (f && !distractors.includes(f)) distractors.push(f);
+    };
+
+    for (const cid of entry.confusables ?? []) {
+      pushDistractor(alignedForm(cid));
     }
 
     if (distractors.length < 3) {
       for (const [otherItem, otherEntry] of lexicon.entries.entries()) {
         if (otherItem === item || otherEntry.pos !== entry.pos) continue;
-        const f = (lexicon.forms.get(otherItem) ?? [])[0];
-        if (f && f.toLowerCase() !== correctForm.toLowerCase() && !distractors.includes(f)) {
-          distractors.push(f);
-          if (distractors.length >= 3) break;
-        }
+        pushDistractor(alignedForm(otherItem));
+        if (distractors.length >= 3) break;
       }
     }
 
-    // 仍不足时从全词表中任取不重复的形式
+    // 仍不足时从全词表中任取同屈折位置的形式
     if (distractors.length < 3) {
       for (const formsList of lexicon.forms.values()) {
-        const f = formsList[0];
-        if (f && f.toLowerCase() !== correctForm.toLowerCase() && !distractors.includes(f)) {
-          distractors.push(f);
-          if (distractors.length >= 3) break;
-        }
+        pushDistractor(formsList[matchedIndex] ?? null);
+        if (distractors.length >= 3) break;
       }
     }
 

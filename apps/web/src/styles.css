@@ -319,11 +319,7 @@ button:disabled { opacity: .55; }
 .rail-tip svg { flex-shrink: 0; margin-top: 2px; }
 .rail-tip p { font-size: 9px; line-height: 1.95; margin: 0; color: #89957b; }
 .watch-bottom-note { display: flex; justify-content: center; align-items: center; gap: 7px; color: #8c987d; font-size: 9px; margin: 20px 0; }
-.completion-card { padding: 42px 25px 30px; text-align: center; }
 .completion-symbol { width: 75px; height: 75px; display: inline-grid; place-items: center; background: #e9f0da; border: 1px solid #d9e4c5; border-radius: 50%; color: #8ca66b; margin-bottom: 25px; }
-.completion-card .eyebrow { font-size: 8px; }
-.completion-card h2 { font-size: 24px; font-weight: 550; letter-spacing: -.5px; margin: 16px 0; }
-.completion-card > p { color: #819071; font-size: 12px; line-height: 2; }
 .completion-stats { display: grid; grid-template-columns: repeat(2, 1fr); margin: 26px auto; max-width: 370px; padding: 20px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .completion-stats .stat { gap: 10px; }
 .completion-stats .stat-icon { display: none; }
@@ -814,9 +810,6 @@ button:disabled { opacity: .55; }
   .clue-art { min-height: 135px; max-height: 170px; }
   .pick-question { font-size: 22px; margin-top: 21px; }
   .question-caption { font-size: 10px; margin-bottom: 21px; }
-  .completion-card { padding: 32px 18px 26px; }
-  .completion-card h2 { font-size: 21px; }
-  .completion-card > p { font-size: 11px; }
   .completion-buttons { gap: 11px; flex-direction: column; }
   .completion-buttons .button { min-height: 44px; }
   .completion-stats .stat { padding: 0; }

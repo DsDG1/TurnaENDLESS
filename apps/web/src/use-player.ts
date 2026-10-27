@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { episodeCompletion, getScenes, projectSession, type PlayerCommand } from '@endless/player';
-import { adoptRevision, applyPlayerCommand, assertNoSecrets, attachVolume, bridge, buildBackup, buildGenerationContext, buildVolume, cancelTicket, commitTicketResult, createWorkspace, detachVolume, markTicketFailed, markTicketSubmitted, parseBackup, previewRevision, purgeContent, purgePreview, reserveTicket, restoreContent, suggestVolumes, switchBranch, trashContent, updateDisplay, waiveObligation, type ApiStatus, type ArchiveVolume, type ContentEntry, type ContentRevision, type GenerationRequest, type ImportPreview, type RevisionPreview, type Workspace, type GenerationTicket, type FillerCard } from '@endless/content';
+import { adoptRevision, applyPlayerCommand, assertNoSecrets, attachVolume, bridge, buildBackup, buildGenerationContext, buildVolume, cancelTicket, commitTicketResult, createWorkspace, detachVolume, markTicketFailed, markTicketSubmitted, parseBackup, previewRevision, purgeContent, purgePreview, reserveTicket, restoreContent, suggestVolumes, switchBranch, trashContent, updateDisplay, waiveObligation, type ApiStatus, type ArchiveVolume, type ContentEntry, type ContentRevision, type GenerationRequest, type ImportPreview, type RevisionPreview, type Workspace, type GenerationTicket } from '@endless/content';
 import { content } from './content/catalog.js';
 import { WorkspaceRepository } from './storage.js';
 import { SessionCommitter } from './session-writer.js';
@@ -331,20 +331,12 @@ export function usePlayer() {
       return [];
     }
   }, [session, library, readyForGeneration]);
-  const fillerCard = useMemo<FillerCard | null>(() => {
-    if (!session || !library) return null;
-    try {
-      return content.deriveFiller(session, library);
-    } catch {
-      return null;
-    }
-  }, [session, library]);
   const unavailable = async (..._args: unknown[]): Promise<never> => { throw new Error('本机模式不提供云端操作'); };
   return {
     workspace, session, view, library, loading, failure, notice, saving, dispatch,
     api, apiError, refreshApi, generate, generating, phase, ticket: currentTicket.current,
     cancelGeneration, readyForGeneration, apiKey, setApiKey, canUseModel,
-    learningNotes, nextWords, runtime, obligations, fillerCard,
+    learningNotes, nextWords, runtime, obligations,
     entries: workspace?.entries ?? [], branches: workspace?.branches ?? [], volumes: workspace?.volumes ?? [], activeBranchId: workspace?.activeBranchId,
     switchBranchTo: (id: string) => manage(ws => switchBranch(ws, id)), editDisplay, trash, restore, waive, purge, purgeInfo, previewEdit, adoptEdit,
     archive, unarchive, suggestions, backup, previewImport, importBackup,

@@ -5,7 +5,7 @@ import { BACKDROP_LABEL_BY_ID, CHARACTER_LABEL_BY_ID, Character, PROP_LABEL_BY_I
 import { Brand, Icon, type IconName } from './components/icons.js';
 import { SceneRenderer } from './components/scenes.js';
 import { EntryMenu, LibraryPage } from './components/library.js';
-import { IntermissionBridge } from './components/intermission.js';
+import { IntermissionBridge, Stat } from './components/intermission.js';
 import { EditionPage } from './edition/page.js';
 import { CloudRoute, CloudReadBanner, PlayerScope, cloudEnabled, cloudHash, parseRoute, type AppRoute, type Page } from './integration.js';
 import { downloadSession } from './downloads.js';
@@ -16,10 +16,6 @@ const seriesOf = (episode: Episode) =>
   creativeSeries[(episode.presentation?.series ?? 'duck_detective') as CreativeSeriesId] ?? creativeSeries.duck_detective;
 const isPilotStory = (episode: Episode) => !episode.presentation || episode.presentation.series === 'duck_detective';
 const localDay = (date: string | Date) => new Date(date).toLocaleDateString('sv-SE');
-
-function Stat({ icon, value, label }: { icon: IconName; value: number | string; label: string }) {
-  return <div className="stat"><span className="stat-icon"><Icon name={icon} size={20} /></span><div><strong>{value}</strong><span>{label}</span></div></div>;
-}
 
 function InstallDialog({ onClose, pwa }: { onClose(): void; pwa: ReturnType<typeof usePwa> }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -445,7 +441,7 @@ function StoryApp({ route, player }: { route: AppRoute; player: Player }) {
                 onToggleAutoAdvance={toggleAutoAdvance}
                 onSelectNext={() => nextEpisodeId && void select({ id: nextEpisodeId })}
                 onReview={() => setReviewIndex(0)}
-                onGenerate={() => void generate()}
+                onViewProgress={() => go('progress')}
               />
               {!player.cloudMode && !player.generating && (player.readyForGeneration || player.ticket) && !nextEpisodeId && <GenerationPanel player={player} onGenerate={() => void generate()} />}
             </>}

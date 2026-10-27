@@ -58,7 +58,6 @@ describe('无限流阅读队列与幕间微过渡 (IntermissionBridge)', () => {
       nextWords: [],
       runtime: null,
       obligations: null,
-      fillerCard: null,
       entries: [],
       branches: [],
       volumes: [],
@@ -109,7 +108,7 @@ describe('无限流阅读队列与幕间微过渡 (IntermissionBridge)', () => {
         onToggleAutoAdvance: vi.fn(),
         onSelectNext: vi.fn(),
         onReview: vi.fn(),
-        onGenerate: vi.fn(),
+        onViewProgress: vi.fn(),
       }),
     );
 
@@ -135,7 +134,7 @@ describe('无限流阅读队列与幕间微过渡 (IntermissionBridge)', () => {
         onToggleAutoAdvance: vi.fn(),
         onSelectNext: vi.fn(),
         onReview: vi.fn(),
-        onGenerate: vi.fn(),
+        onViewProgress: vi.fn(),
       }),
     );
 
@@ -146,11 +145,16 @@ describe('无限流阅读队列与幕间微过渡 (IntermissionBridge)', () => {
   });
 
   it('后台正在生成下一集时，嵌入派生填缝卡与生成阶段脉冲状态', () => {
-    const fillerCard = content.deriveFiller({ events: [] } as any, library);
+    // 组件只从真实读过的场景取材：模拟 pilot-1 前三个场景都真实 advance 过的会话
+    const readSession = {
+      events: Object.keys(view.episodes[episode.id]!.scenes).map((scene) => ({
+        type: 'advance' as const, episode: episode.id, scene, skip: false, at: '2026-10-24T08:00:00.000Z',
+      })),
+    } as unknown as NonNullable<Player['session']>;
     const player = createMockPlayer({
+      session: readSession,
       generating: true,
       phase: '正在规划场景与对白',
-      fillerCard,
     });
 
     const html = renderToStaticMarkup(
@@ -165,7 +169,7 @@ describe('无限流阅读队列与幕间微过渡 (IntermissionBridge)', () => {
         onToggleAutoAdvance: vi.fn(),
         onSelectNext: vi.fn(),
         onReview: vi.fn(),
-        onGenerate: vi.fn(),
+        onViewProgress: vi.fn(),
       }),
     );
 
@@ -193,7 +197,7 @@ describe('无限流阅读队列与幕间微过渡 (IntermissionBridge)', () => {
         onToggleAutoAdvance: vi.fn(),
         onSelectNext: vi.fn(),
         onReview: vi.fn(),
-        onGenerate: vi.fn(),
+        onViewProgress: vi.fn(),
       }),
     );
 

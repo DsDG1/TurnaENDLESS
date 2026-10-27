@@ -515,20 +515,45 @@ export function createContent(lexiconText: string) {
 
   /**
    * 零延迟派生填缝卡：在等待 AI 生成时即时生成 1 道基于前文原句的挖空填词互动。
+   * 取材只限真实阅读过的场景（advance 且未跳过）；错题回插按最近答错排序，只保留最近 10 个条目。
    */
   function deriveFiller(session: PlayerSession, library: Library, options?: { wrongItems?: string[] }): FillerCard | null {
-    const wrong = session.events
-      .filter((e): e is import('@endless/player').PlayerEvent & { type: 'answer'; choice: number } => e.type === 'answer')
-      .map((e) => {
-        const episode = library.episodes.find((ep) => ep.id === e.episode);
-        const scene = episode ? getScenes(episode).find((s) => s.id === e.scene) : null;
-        const optionsList = scene ? getOptions(scene) : [];
-        const isWrong = optionsList[e.choice] && !optionsList[e.choice]?.correct;
-        const item = scene && 'evidence' in scene && scene.evidence?.item ? scene.evidence.item : undefined;
-        return isWrong && item ? item : null;
-      })
-      .filter((item): item is string => !!item);
-    return deriveFillerCard(library, lexicon, { wrongItems: options?.wrongItems ?? wrong });
+    // 事件里只有 episode/scene id，先建一次索引，避免每个事件都线性找集找景
+    const scenesByEpisode = new Map<string, Map<string, { options: ReturnType<typeof getOptions>; item?: string }>>();
+    const sceneIndex = (episodeId: string) => {
+      let index = scenesByEpisode.get(episodeId);
+      if (!index) {
+        index = new Map();
+        const episode = library.episodes.find((ep) => ep.id === episodeId);
+        if (episode) {
+          for (const scene of getScenes(episode)) {
+            index.set(scene.id, {
+              options: getOptions(scene),
+              item: 'evidence' in scene && scene.evidence?.item ? scene.evidence.item : undefined,
+            });
+          }
+        }
+        scenesByEpisode.set(episodeId, index);
+      }
+      return index;
+    };
+
+    const readScenes = new Set<string>();
+    const lastWrongAt = new Map<string, number>();
+    session.events.forEach((event, index) => {
+      if (event.type === 'advance') {
+        if (!event.skip) readScenes.add(`${event.episode}.${event.scene}`);
+        return;
+      }
+      if (event.type !== 'answer') return;
+      const scene = sceneIndex(event.episode).get(event.scene);
+      if (!scene) return;
+      const chosen = scene.options[event.choice];
+      if (chosen && !chosen.correct && scene.item) lastWrongAt.set(scene.item, index);
+    });
+    const wrong = [...lastWrongAt.entries()].sort((a, b) => b[1] - a[1]).map(([item]) => item).slice(0, 10);
+
+    return deriveFillerCard(library, lexicon, { wrongItems: options?.wrongItems ?? wrong, readScenes });
   }
 
   return { pilot, lexicon, pilotContext, historyKey, snapshot, stateContext, plan, planCreative, compileDraft, verifyCreation, creativeContext, creativePresentation, learningIssues, learningNotes, validatePlayable, exerciseScenes, deriveFiller, restore, accept, validatePathsCreative };

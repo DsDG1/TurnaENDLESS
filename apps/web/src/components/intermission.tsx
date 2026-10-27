@@ -1,17 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Episode, Library, PlayerView } from '@endless/player';
 import type { FillerCard } from '@endless/content';
 import { Icon, type IconName } from './icons.js';
+import { content } from '../content/catalog.js';
 import type { Player } from '../player-model.js';
 
 export function Stat({ icon, value, label }: { icon: IconName; value: number | string; label: string }) {
-  return (
-    <div className="stat">
-      <span className="stat-icon"><Icon name={icon} /></span>
-      <strong>{value}</strong>
-      <span>{label}</span>
-    </div>
-  );
+  return <div className="stat"><span className="stat-icon"><Icon name={icon} /></span><div><strong>{value}</strong><span>{label}</span></div></div>;
 }
 
 export function FillerBridgeCard({
@@ -30,7 +25,7 @@ export function FillerBridgeCard({
   const isCorrect = chosen !== null && filler.options[chosen]?.correct;
 
   return (
-    <div className="filler-bridge-card" role="region" aria-label="等待时的剧情小回顾">
+    <div className="filler-bridge-card" role="region" aria-label="线索回顾小关卡">
       <div className="filler-bridge-header">
         <span className="eyebrow">线索回顾 · 派生小关卡</span>
         <span className="source-badge">回顾自：{filler.sourceEpisodeTitle}</span>
@@ -77,7 +72,7 @@ export function FillerBridgeCard({
             ? '✨ 下一集故事已准备就绪，可以随时启程！'
             : generating
             ? `AI 正在根据你的进展续写下一集（${phase || '构思剧情中…'}）`
-            : '已保存当前进度。'}
+            : '已读完现有全部内容，可以随时回看。'}
         </span>
       </div>
     </div>
@@ -95,7 +90,7 @@ export function IntermissionBridge({
   onToggleAutoAdvance,
   onSelectNext,
   onReview,
-  onGenerate,
+  onViewProgress,
 }: {
   episode: Episode;
   episodeNumber: number;
@@ -107,29 +102,49 @@ export function IntermissionBridge({
   onToggleAutoAdvance(): void;
   onSelectNext(): void;
   onReview(): void;
-  onGenerate(): void;
+  onViewProgress(): void;
 }) {
   const [countdown, setCountdown] = useState<number>(3);
   const [isPaused, setIsPaused] = useState<boolean>(false);
+  // 回调经由 ref 转发：App 传入的是内联箭头，身份随渲染变化，
+  // 直接放进依赖会让倒计时 interval 被反复重建拖慢。
+  const selectNextRef = useRef(onSelectNext);
+  const firedRef = useRef(false);
 
-  // 当存在下一集且开启了自动连播时，启动 3 秒倒计时
+  useEffect(() => {
+    selectNextRef.current = onSelectNext;
+  }, [onSelectNext]);
+
+  // 倒计时 interval 只负责递减；真正的换集触发在下面的独立 effect 里。
   useEffect(() => {
     if (!nextEpisodeId || !autoAdvanceEnabled || isPaused) {
       setCountdown(3);
+      firedRef.current = false;
       return;
     }
     const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          onSelectNext();
-          return 0;
-        }
-        return prev - 1;
-      });
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
     return () => clearInterval(timer);
-  }, [nextEpisodeId, autoAdvanceEnabled, isPaused, onSelectNext]);
+  }, [nextEpisodeId, autoAdvanceEnabled, isPaused]);
+
+  // 走到 0 才触发；保存/同步进行中先等待（与手动按钮的 busy 保护一致）。
+  // firedRef 兼容 StrictMode 下同一渲染的 effect 双跑，避免连点两次换集。
+  useEffect(() => {
+    if (countdown !== 0 || !nextEpisodeId || !autoAdvanceEnabled || isPaused || player.busy || firedRef.current) return;
+    firedRef.current = true;
+    selectNextRef.current();
+  }, [countdown, nextEpisodeId, autoAdvanceEnabled, isPaused, player.busy]);
+
+  // 填缝卡只在幕间（结算态）挂载时才派生，避免每次作答/推进都全量重算词库与历史
+  const fillerCard = useMemo<FillerCard | null>(() => {
+    if (player.cloudMode || !player.session) return null;
+    try {
+      return content.deriveFiller(player.session, library);
+    } catch {
+      return null;
+    }
+  }, [player.cloudMode, player.session, library]);
 
   const episodeWords = [...new Set(episode.ast.targets.map((t) => t.itemId))]
     .map((id) => library.glossary[id])
@@ -186,9 +201,9 @@ export function IntermissionBridge({
         <Stat icon="chat" value={answeredScenes} label="互动尝试" />
       </div>
 
-      {player.fillerCard && (!nextEpisodeId || player.generating) && (
+      {fillerCard && (!nextEpisodeId || player.generating) && (
         <FillerBridgeCard
-          filler={player.fillerCard}
+          filler={fillerCard}
           generating={player.generating}
           phase={player.phase}
           nextReady={!!nextEpisodeId}
@@ -237,7 +252,7 @@ export function IntermissionBridge({
         </div>
       ) : (
         <div className="completion-buttons">
-          <button className="button button-dark" onClick={() => (window.location.hash = '#progress')}>
+          <button className="button button-dark" onClick={onViewProgress}>
             <Icon name="book" size={17} />
             <span>查看阅读记录</span>
             <Icon name="arrow" size={17} />
