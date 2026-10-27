@@ -8,7 +8,8 @@
  * 全部校验（创作绑定、哈希前缀、可玩路径），不在此另建一套规则。
  */
 import { contentHash, stableStringify } from '@endless/esl';
-import { episodeCompletion, getScenes, SessionSchema, transition, type Library, type PlayerCommand, type PlayerSession } from '@endless/player';
+import { applyReadingCommand } from './reading-command.js';
+import { SessionSchema, type Library, type PlayerCommand, type PlayerSession } from '@endless/player';
 import {
   assertWorkspace, newId,
   WorkspaceSchema,
@@ -175,40 +176,9 @@ export function applyPlayerCommand(
   if (openTicket(workspace)) throw new Error('生成任务进行中，请先完成或取消该任务');
   const branch = activeBranch(workspace);
   if (runtime.branch.id !== branch.id) throw new Error('运行时分支与当前分支不一致');
-  const nextSession = transition(branch.session, command, runtime.library, at.toISOString());
-  if (nextSession === branch.session) return workspace;
-  const byEpisode = new Map(branch.adopted.map((adopted) => {
-    const revision = workspace.revisions.find((r) => r.id === adopted.revisionId)!;
-    return [episodeIdOf(revision), adopted] as const;
-  }));
-  const events = nextSession.events.map((event, index) => {
-    if (index < branch.session.events.length) return event;
-    const adopted = byEpisode.get(event.episode);
-    return adopted ? { ...event, contentId: adopted.contentId, revisionId: adopted.revisionId } : event;
-  });
-  let next = checked(replaceBranch(workspace, { ...branch, session: { ...nextSession, events } }));
-  // 真正读完一集才自动解除其阅读义务（跳过会推进 cursor，不能算读完）
-  if (next.obligations.some((o) => !o.waivedAt)) {
-    const view = content.stateContext(nextSession, runtime.library).view;
-    const time = at.toISOString();
-    const fulfilled = new Set(
-      next.obligations.filter((o) => {
-        if (o.waivedAt) return false;
-        const revision = next.revisions.find((r) => r.id === o.revisionId);
-        if (!revision) return false;
-        const episode = runtime.library.episodes.find((e) => e.id === episodeIdOf(revision));
-        if (!episode) return false;
-        return episodeCompletion(view.episodes[episode.id], getScenes(episode).length).read;
-      }).map((o) => `${o.contentId}|${o.revisionId}`));
-    if (fulfilled.size) {
-      next = checked({
-        ...next,
-        obligations: next.obligations.map((o) =>
-          !o.waivedAt && fulfilled.has(`${o.contentId}|${o.revisionId}`) ? { ...o, waivedAt: time } : o),
-      });
-    }
-  }
-  return next;
+  const result = applyReadingCommand(content, branch, workspace.revisions, workspace.obligations, runtime.library, command, at);
+  if (result.branch === branch) return workspace;
+  return checked({ ...replaceBranch(workspace, result.branch), obligations: result.obligations });
 }
 
 // ---------- 展示信息（不改正文） ----------

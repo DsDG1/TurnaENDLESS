@@ -1,20 +1,43 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin, type ProxyOptions } from 'vite';
+import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // 云 API 与本机 API 是两个独立进程：/api/cloud 必须先于 /api 匹配。
 // 云端默认端口 4178，可用 ENDLESS_CLOUD_WEB_TARGET 指到别的开发实例。
 const cloudTarget = process.env.ENDLESS_CLOUD_WEB_TARGET ?? 'http://127.0.0.1:4178';
-const proxy = {
-  '/api/cloud': { target: cloudTarget, changeOrigin: true },
-  '/api': { target: 'http://127.0.0.1:4174', changeOrigin: true },
-};
-
-export default defineConfig({
-  server: { proxy, port: 5173, strictPort: true },
-  preview: { proxy, port: 4173, strictPort: true },
+export default defineConfig(({ mode }) => {
+  const connected = mode === 'cloud';
+  const proxy: Record<string, ProxyOptions> = connected ? {
+    '/api/cloud': { target: cloudTarget, changeOrigin: true },
+    '/api': { target: 'http://127.0.0.1:4174', changeOrigin: true },
+  } : {
+    '^/api/(?!cloud(?:/|$))': { target: 'http://127.0.0.1:4174', changeOrigin: true },
+  };
+  const isolation: Plugin = {
+    name: 'endless-runtime-isolation',
+    generateBundle(_options, bundle) {
+      const modules = [...new Set(Object.values(bundle).flatMap(output => output.type === 'chunk' ? Object.keys(output.modules) : []))].sort();
+      const forbidden = connected ? [] : modules.filter(id => /\/src\/cloud\/|\/packages\/cloud-contracts\/|\/content\/src\/(?:cloud[^/]*|reader-index)\.[tj]s/.test(id.replaceAll('\\', '/')));
+      if (forbidden.length) this.error(`Local build contains cloud implementation:\n${forbidden.join('\n')}`);
+      const root = fileURLToPath(new URL('../../', import.meta.url)).replaceAll('\\', '/');
+      const paths = modules.map(id => {
+        const name = id.replaceAll('\\', '/').replaceAll('\0', '');
+        if (name.startsWith(root)) return name.slice(root.length);
+        const dependency = name.indexOf('/node_modules/');
+        return dependency >= 0 ? name.slice(dependency + 1) : `external:${name.split('/').at(-1)}`;
+      });
+      this.emitFile({ type: 'asset', fileName: 'runtime-modules.json', source: JSON.stringify({ profile: connected ? 'cloud' : 'local', modules: paths }, null, 2) });
+    },
+  };
+  return {
+  resolve: { alias: [{ find: /^\.\/integration\.js$/, replacement: fileURLToPath(new URL(connected ? './src/cloud/integration.tsx' : './src/integration.tsx', import.meta.url)) }] },
+  build: { outDir: connected ? 'dist-cloud' : 'dist' },
+  server: { proxy, port: connected ? 5178 : 5173, strictPort: true },
+  preview: { proxy, port: connected ? 4183 : 4173, strictPort: true },
   plugins: [
     react(),
+    isolation,
     VitePWA({
       registerType: 'prompt',
       injectRegister: null,
@@ -46,4 +69,5 @@ export default defineConfig({
       },
     }),
   ],
+  };
 });

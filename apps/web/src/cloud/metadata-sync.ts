@@ -1,5 +1,5 @@
 import type { CloudApiPort } from './client.js';
-import type { WorkspaceRepository } from '../storage.js';
+import type { CloudWorkspaceRepository as WorkspaceRepository } from './repository.js';
 
 /** Each target has at most one durable command. A lost HTTP response or failed IDB acknowledgement retries that exact command. */
 export class MetadataSync {

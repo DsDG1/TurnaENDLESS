@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { buildBackup, reserveTicket, updateDisplay, validateCloudBackup } from '@endless/content';
+import { buildBackup, reserveTicket, updateDisplay } from '@endless/content';
+import { validateCloudBackup } from '@endless/content/cloud';
 import { AuthService, type AuthContext } from '../../src/cloud/auth/service.js';
 import { OutboxMailer, readQueuedMail } from '../../src/cloud/mail.js';
 import { ObjectService } from '../../src/cloud/objects/service.js';

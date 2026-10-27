@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import {
-  applyPlayerCommand, bridge, buildBackup, deriveCloudCopy, parseWorkspace, type Workspace,
-} from '@endless/content';
+import { applyPlayerCommand, bridge, buildBackup, parseWorkspace, type Workspace } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import { getOptions, getScenes, projectSession } from '@endless/player';
 import type {
   CloudImportReceipt, ResolveConflictResponse, SyncBootstrap, SyncRecoveryRequest, SyncChange, SyncConflict, SyncPushReceipt, SyncPushRequest, SyncStreamBinding,
@@ -12,7 +11,8 @@ import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
 import { planOutbox, outgoing, parseSyncState, sidecarKey, type OutboxEntry } from '../src/cloud/outbox.js';
 import { WorkspaceSync } from '../src/cloud/sync.js';
 import { SessionCommitter } from '../src/session-writer.js';
-import { WorkspaceRepository } from '../src/storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from '../src/cloud/repository.js';
+import { WorkspaceRepository as GuestWorkspaceRepository } from '../src/storage.js';
 import { cloudTestContent as content, cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
 
 /**

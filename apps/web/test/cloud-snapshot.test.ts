@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { adoptRevision, applyPlayerCommand, assertReadingObligationProgress, bridge, buildBackup, deriveCloudCopy,
-  deriveReadingObligations, previewRevision, rebuildCloudReading, retainReadingCompletionTimes, updateDisplay,
-  type ContentRevision, type Workspace } from '@endless/content';
+import { adoptRevision, applyPlayerCommand, assertReadingObligationProgress, bridge, buildBackup, deriveReadingObligations, previewRevision, retainReadingCompletionTimes, updateDisplay, type ContentRevision, type Workspace } from '@endless/content';
+import { deriveCloudCopy, rebuildCloudReading } from '@endless/content/cloud';
 import type { CloudImportReceipt, ReadingSnapshot, RevisionRegistration } from '@endless/cloud-contracts';
 import { getOptions, getScenes } from '@endless/player';
 import { cloudTestContent as content, cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
 import { commandOfEvent } from '../src/cloud/outbox.js';
-import { WorkspaceRepository } from '../src/storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from '../src/cloud/repository.js';
+import { WorkspaceRepository as GuestWorkspaceRepository } from '../src/storage.js';
 import { SessionCommitter } from '../src/session-writer.js';
 import { WorkspaceSync } from '../src/cloud/sync.js';
 import { CloudFailure } from '../src/cloud/client.js';

@@ -9,7 +9,10 @@ pnpm install
 pnpm dev        # web 5173 + 本机 AI API 4174（仅回环）
 pnpm test       # 全部单元测试
 pnpm build && pnpm preview   # 生产预览 4173 + API 4174（离线/PWA 用 preview 验证）
+pnpm test:e2e  # 构建云研发版并测试两个生产 profile；先完成上面的本机构建
 ```
+
+默认 Web/桌面使用本机版本（`apps/web/dist`），不打包云客户端、账号协议、同步仓库或控制器，也不代理云 API。云研发需显式运行 `pnpm dev:cloud`（Web 5178、Cloud API 4178，先配置独立云环境）；邮件 Worker 仍单独启动。`pnpm build:cloud` 写入 `apps/web/dist-cloud`，`pnpm -C apps/web preview:cloud` 在 4183 预览。两种 profile 不应同时部署到同一来源，现有 PWA id/scope 和存档协议保持原义。隔离边界与验证见 [云隔离基线](docs/cloud-isolation-review.md)。云生成与付费仍未开放。
 
 - AI 不再输出可执行 JSON：应用生成使用 ENDLESS-DRAFT/1 紧凑创作草稿（learningVersion 4）——模型只写形态、系列与组件正文，程序编译、校验并保存。
 - 四个内容形态（story / daily / social / knowledge）与八个系列（鸭侦探事务所、不可能商店、暖心烘焙坊、海港旧驿站、日常一刻、花房小记、小小留言板、表达小窗口）；组件自由组合，没有固定开场/词卡/收尾套路或题型配额。

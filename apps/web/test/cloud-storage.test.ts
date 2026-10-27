@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { buildBackup, applyPlayerCommand, deriveCloudCopy, type Workspace } from '@endless/content';
+import { buildBackup, applyPlayerCommand, type Workspace } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import { randomUUID } from 'node:crypto';
-import { WorkspaceRepository } from '../src/storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from '../src/cloud/repository.js';
+import { WorkspaceRepository as GuestWorkspaceRepository } from '../src/storage.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
 import { cloudTestContent as content, cloudTestWorkspace, cloudTestTime } from '../../../packages/content/test/cloud-fixture.js';
 import type { CloudImportReceipt } from '@endless/cloud-contracts';
@@ -35,7 +37,7 @@ async function fixture() {
 describe('C2 账号隔离安装与游客保留', () => {
   it('安装不会写游客或其他账号库，失败和登出不删除原库', async () => {
     const f = await fixture();
-    const guest = new WorkspaceRepository(f.factory);
+    const guest = new GuestWorkspaceRepository(f.factory);
     await guest.commit(f.source);
     const own = new WorkspaceRepository(f.factory, cloudNamespace(f.deployment, f.account, f.workspaceId));
     const other = new WorkspaceRepository(f.factory, cloudNamespace(f.deployment, randomUUID(), f.workspaceId));
@@ -43,7 +45,7 @@ describe('C2 账号隔离安装与游客保留', () => {
     expect(canon(await guest.load())).toEqual(canon(f.source));
     expect(await other.load()).toBeNull();
     expect((await own.load())!.entries.map((entry) => entry.id)).toEqual(f.source.entries.map((entry) => entry.id));
-    await expect(guest.installCloudCopy(f.copy, f.receipt, f.device)).rejects.toThrow('游客');
+    expect(() => new WorkspaceRepository(f.factory, 'endless-workspace')).toThrow('游客');
     await Promise.all([guest.close(), own.close(), other.close()]);
   });
 

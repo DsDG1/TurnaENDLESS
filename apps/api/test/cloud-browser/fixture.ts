@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, stat } from 'node:fs/promises';
 import { resolve, relative, sep, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { validateCloudBackup } from '@endless/content';
+import { validateCloudBackup } from '@endless/content/cloud';
 import { createCloudServer } from '../../src/cloud/server.js';
 import { cloudCapabilities } from '../../src/cloud/capabilities.js';
 import { OutboxMailer } from '../../src/cloud/mail.js';
@@ -17,13 +17,15 @@ import { closeServer, cloudFixture, fakeSmtp, listenLoopback, mailText, TEST_MAI
 import { fakeObjectStorage, S3_CREDENTIALS } from '../cloud/object-storage-fixture.js';
 import { cloudTestContent as content } from '../../../../packages/content/test/cloud-fixture.js';
 
-const webRoot = fileURLToPath(new URL('../../../web/dist/', import.meta.url));
+const webRoot = fileURLToPath(new URL('../../../web/dist-cloud/', import.meta.url));
 const mime: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 
 /** Real composition root, PG, SMTP/TLS and signed object protocol, serving the production browser bundle. */
 export async function browserFixture() {
   await stat(resolve(webRoot, 'index.html')).catch(() => { throw new Error('Production web assets missing: run pnpm -C apps/api test:cloud:browser'); });
+  const profile = JSON.parse(await readFile(resolve(webRoot, 'runtime-modules.json'), 'utf8'));
+  if (profile.profile !== 'cloud') throw new Error('Actual API journeys require the explicit cloud Web build');
   // Hold one built version for the whole journey, even if another workspace runner rebuilds dist.
   const assets = new Map<string, Buffer>();
   const loadAssets = async (directory: string): Promise<void> => {

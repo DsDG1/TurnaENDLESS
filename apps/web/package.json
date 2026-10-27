@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:cloud": "vite --mode cloud --host 127.0.0.1",
     "build": "tsc --noEmit -p . && vite build",
+    "build:cloud": "tsc --noEmit -p . && vite build --mode cloud",
     "preview": "vite preview --host 127.0.0.1",
+    "preview:cloud": "vite preview --mode cloud --host 127.0.0.1",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run --config vitest.config.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:local": "playwright test --config playwright.local.config.ts"
   },
   "dependencies": {
     "@endless/cloud-contracts": "workspace:*",

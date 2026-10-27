@@ -5,21 +5,7 @@
  * 云端排队、重启或跨过复习到期点时，不能改用 Worker 当时的 new Date()。
  */
 import { projectSession, type Library, type PlayerEvent, type PlayerSession } from '@endless/player';
-import type { Content } from './index.js';
-
-export interface VerifiedPrefix {
-  source: 'local-saved-player' | 'cloud-history';
-  session: PlayerSession;
-  library: Library;
-  /** 重建学习任务的时间。旧文档里它仍写在 generatedAt。 */
-  plannedAt: string;
-  completePrefix: true;
-}
-
-export function localVerifiedPrefix(session: PlayerSession, library: Library, plannedAt: string): VerifiedPrefix {
-  projectSession(session, library);
-  return { source: 'local-saved-player', session, library, plannedAt, completePrefix: true };
-}
+import type { VerifiedPrefix } from './generation-prefix.js';
 
 export function cloudVerifiedPrefix(input: {
   events: readonly PlayerEvent[];
@@ -43,13 +29,4 @@ export function cloudVerifiedPrefix(input: {
     source: 'cloud-history', session, library: input.library,
     plannedAt: input.plannedAt, completePrefix: true,
   };
-}
-
-export function planAtFrozenTime(content: Content, prefix: VerifiedPrefix) {
-  return content.planCreative(prefix.session, prefix.library, new Date(prefix.plannedAt));
-}
-
-/** 旧校验信封的 generatedAt 保持「用于重建学习计划的时间」。真实落稿时间另存，不改已有文档。 */
-export function legacyEnvelopeGeneratedAt(plannedAt: string): string {
-  return plannedAt;
 }

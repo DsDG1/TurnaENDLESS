@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./cloud": "./src/cloud.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run"

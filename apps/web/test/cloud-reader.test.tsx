@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { CloudReadBanner } from '../src/cloud/reader.js';
-import type { CloudReadView } from '../src/use-player.js';
+import type { CloudReadView } from '../src/cloud/use-player.js';
 import type { MetadataState } from '../src/cloud/metadata.js';
 import type { ArchiveView } from '../src/cloud/archives.js';
 

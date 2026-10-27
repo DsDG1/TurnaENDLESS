@@ -1,11 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { stableStringify } from '@endless/esl';
-import { adoptRevision, applyPlayerCommand, bridge, buildBackup, deriveCloudCopy, previewRevision, type ContentRevision } from '@endless/content';
+import { adoptRevision, applyPlayerCommand, bridge, buildBackup, previewRevision, type ContentRevision } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import { getScenes } from '@endless/player';
 import type { RevisionPreviewRequest, RevisionPreviewReceipt, RevisionAdoptionCommand, RevisionAdoptionReceipt, RevisionRegistration } from '@endless/cloud-contracts';
 import { cloudTestContent as content, cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
-import { workspaceRows } from './workspace-seed.js';
+import { cloudWorkspaceRows } from './workspace-seed.js';
 
 const digest = (value: unknown) => createHash('sha256').update(stableStringify(value)).digest('hex');
 const at = new Date('2026-10-27T08:00:00.000Z');
@@ -103,6 +104,7 @@ for (const read of [false, true]) test(`云修订${read ? '已读分叉' : '未�
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(['meta', 'revisions', 'branches', 'objects'], 'readwrite');
         tx.objectStore('meta').put(rows.meta, 'workspace');
+        tx.objectStore('meta').put(rows.readerIndex, 'cloud-reader-index');
         tx.objectStore('meta').put({ receipt: { id: crypto.randomUUID(), workspaceId, sourceLocalId: copy.identity.workspaceId,
           sourceProfileId: copy.profile.id, sourceRepositoryRevision: 0, sourceObjectId: crypto.randomUUID(), sourceDigest: 'a'.repeat(64),
           snapshotDigest: 'b'.repeat(64), copyDigest: 'c'.repeat(64), copyCreatedAt: copy.profile.createdAt, validationBinding: 'd'.repeat(64),
@@ -112,7 +114,7 @@ for (const read of [false, true]) test(`云修订${read ? '已读分叉' : '未�
         for (const key of ['revisions', 'branches', 'objects'] as const) for (const row of rows[key]) tx.objectStore(key).put(row, row.id);
         tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(tx.error);
       }); db.close();
-    }, { namespace, rows: workspaceRows(copy), copy, workspaceId, deviceId: target === page ? deviceId : crypto.randomUUID() });
+    }, { namespace, rows: await cloudWorkspaceRows(copy, namespace), copy, workspaceId, deviceId: target === page ? deviceId : crypto.randomUUID() });
     await target.goto(`/#cloud-read/${deploymentId}/${accountId}/${workspaceId}`);
     await expect(target.getByRole('button', { name: '立即同步' })).toBeEnabled();
   }

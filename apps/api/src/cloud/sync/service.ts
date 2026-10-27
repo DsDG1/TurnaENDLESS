@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { stableStringify } from '@endless/esl';
-import { rebuildCloudReading, type Workspace, type Content } from '@endless/content';
+import { type Workspace, type Content } from '@endless/content';
+import { rebuildCloudReading } from '@endless/content/cloud';
 import {
   CLOUD_LIMITS, UuidSchema, ReadingSnapshotRequestSchema, ReadingSnapshotSchema, type ReadingSnapshot, type ReadingSnapshotRequest,
   ResolveConflictRequestSchema, SyncBranchManifestSchema, SyncRecoveryRequestSchema, type SyncRecoveryRequest,

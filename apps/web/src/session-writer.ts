@@ -1,6 +1,4 @@
 import type { Workspace } from '@endless/content';
-import type { ResolveConflictResponse } from '@endless/cloud-contracts';
-import type { PendingPreservation } from './cloud/conflict.js';
 
 /**
  * 写入协调层：只负责「内存工作区 → 递增 repositoryRevision → 原子提交 → 推进基线」。
@@ -20,23 +18,20 @@ export interface CommitOutcome {
 
 export interface CommitOptions {
   closingTicketId?: string;
-  /** 远端已确认的事件身份：重放云端变更时不再产生 Outbox 回环。 */
-  remote?: { streamId: string; startSeq: number; eventIds: readonly string[]; prefixStreamId?: string };
-  preservation?: { plan: PendingPreservation; result: ResolveConflictResponse };
 }
 
-export interface WorkspaceCommitter {
-  commit(next: Workspace, options?: CommitOptions): Promise<void | CommitOutcome>;
+export interface WorkspaceCommitter<Options extends CommitOptions = CommitOptions> {
+  commit(next: Workspace, options?: Options): Promise<void | CommitOutcome>;
 }
 
 export type CommitResult =
   | { ok: true; workspace: Workspace }
   | { ok: false; error: string };
 
-export class SessionCommitter {
+export class SessionCommitter<Options extends CommitOptions = CommitOptions> {
   private revision: number;
 
-  constructor(private committer: WorkspaceCommitter, initialRevision: number) {
+  constructor(private committer: WorkspaceCommitter<Options>, initialRevision: number) {
     this.revision = initialRevision;
   }
 
@@ -50,7 +45,7 @@ export class SessionCommitter {
     return { ...workspace, identity: { ...workspace.identity, repositoryRevision: this.revision + 1 } };
   }
 
-  async commit(next: Workspace, options: CommitOptions = {}): Promise<CommitResult> {
+  async commit(next: Workspace, options?: Options): Promise<CommitResult> {
     const committed = this.bump(next);
     try {
       await this.committer.commit(committed, options);

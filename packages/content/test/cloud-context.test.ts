@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEpisode, createSession, projectSession, transition, type Library } from '@endless/player';
-import {
-  cloudVerifiedPrefix, legacyEnvelopeGeneratedAt, localVerifiedPrefix, parseWorkspace, planAtFrozenTime,
-} from '../src/index.js';
+import { parseWorkspace } from '../src/index.js';
+import { cloudVerifiedPrefix } from '../src/cloud.js';
+import { legacyEnvelopeGeneratedAt, localVerifiedPrefix, planAtFrozenTime } from '../src/index.js';
 import { cloudTestContent as content } from './cloud-fixture.js';
 
 const item = 'lx:under#prep.location';

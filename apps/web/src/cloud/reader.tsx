@@ -1,5 +1,5 @@
 import { Icon } from '../components/icons.js';
-import type { CloudReadView } from '../use-player.js';
+import type { CloudReadView } from './use-player.js';
 import type { MetadataState } from './metadata.js';
 import type { LifecycleState } from './lifecycle.js';
 import type { ArchiveView } from './archives.js';

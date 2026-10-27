@@ -241,6 +241,7 @@ describe('C3 actual cloud API + PG + production browser (isolated loopback HTTPS
       await page.getByLabel('云端内容草稿', { exact: true }).fill(originalRevision.draft.replace('@title Cloud fixture', `@title ${revisedTitle}`));
       await page.getByRole('button', { name: '提交编译预览', exact: true }).click();
       await page.getByText(/云端与本机编译校验通过/).waitFor();
+      await page.getByText(/云端与本机编译校验通过/).filter({ hasText: `标题「${revisedTitle}」` }).waitFor();
       expect((await snapshot(page, namespace)).revisions).toHaveLength(beforeRevision.revisions.length);
       await fixture.db.app.withTenant(me.account.id, async (q) => {
         expect((await q.query('SELECT * FROM revision_registrations WHERE workspace_id = $1', [workspaceId])).rows).toHaveLength(0);
@@ -256,8 +257,8 @@ describe('C3 actual cloud API + PG + production browser (isolated loopback HTTPS
       expect(confirming.revision.pending.confirmation).toBeTruthy();
       expect(confirming.revisions).toHaveLength(beforeRevision.revisions.length);
       await page.reload();
-      await page.getByRole('heading', { name: revisedTitle, exact: true }).waitFor();
       await expect.poll(async () => (await snapshot(page, namespace)).revision.installed.length).toBe(1);
+      await page.getByRole('heading', { name: revisedTitle, exact: true }).waitFor();
       await syncReader(other, namespace);
       const adopted = await snapshot(page, namespace), adoptedB = await snapshot(other, namespace);
       const registration = adopted.revision.installed[0];

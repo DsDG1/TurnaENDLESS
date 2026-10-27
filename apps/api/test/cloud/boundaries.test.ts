@@ -15,7 +15,7 @@ async function sources(directory: string): Promise<string[]> {
 
 it('云端源文件不得导入本机 API 或实验应用，只使用明确依赖', async () => {
   // player 只给服务端检查点做与本机相同的重放。仍禁止导入回环 API、实验应用和本机任务文件。
-  const allowed = new Set(['pg', 'zod', 'nodemailer', '@endless/cloud-contracts', '@endless/esl', '@endless/content', '@endless/player', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner']);
+  const allowed = new Set(['pg', 'zod', 'nodemailer', '@endless/cloud-contracts', '@endless/esl', '@endless/content', '@endless/content/cloud', '@endless/player', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner']);
   for (const file of await sources(root)) {
     const source = ts.createSourceFile(file, await readFile(file, 'utf8'), ts.ScriptTarget.Latest, true);
     for (const statement of source.statements) {

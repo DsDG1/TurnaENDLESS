@@ -10,6 +10,7 @@ node_modules/
 
 # build output
 dist/
+dist-cloud/
 build/
 out/
 .next/

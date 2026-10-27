@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { applyPlayerCommand, bridge, buildBackup, validateCloudBackup, type Workspace } from '@endless/content';
+import { applyPlayerCommand, bridge, buildBackup, type Workspace } from '@endless/content';
+import { validateCloudBackup } from '@endless/content/cloud';
 import { exportReplay, getOptions, getScenes, libraryLoader, replayEvents, type PlayerEvent } from '@endless/player';
 import { AuthService, type AuthContext } from '../../src/cloud/auth/service.js';
 import { cloudCapabilities } from '../../src/cloud/capabilities.js';

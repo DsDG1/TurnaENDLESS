@@ -1,4 +1,4 @@
-import type { WorkspaceRepository } from '../storage.js';
+import type { CloudWorkspaceRepository as WorkspaceRepository } from './repository.js';
 import { CloudFailure, type CloudApiPort } from './client.js';
 import type { Content } from '@endless/content';
 

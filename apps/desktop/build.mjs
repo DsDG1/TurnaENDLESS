@@ -1,4 +1,4 @@
-import { cp, mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { build } from 'esbuild';
@@ -6,6 +6,8 @@ import metadata from './package.json' with { type: 'json' };
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const dist = join(root, 'dist');
+const webProfile = JSON.parse(await readFile(new URL('../web/dist/runtime-modules.json', import.meta.url), 'utf8'));
+if (webProfile.profile !== 'local') throw new Error('Desktop requires the isolated local Web build; run pnpm build first.');
 await mkdir(dist, { recursive: true });
 await build({
   entryPoints: [join(root, 'src/main.ts')],

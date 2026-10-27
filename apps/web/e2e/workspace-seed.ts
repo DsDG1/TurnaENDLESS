@@ -1,5 +1,9 @@
 import { expect, type Page } from '@playwright/test';
 import { contentHash } from '@endless/esl';
+import { stableStringify } from '@endless/esl';
+import { createHash } from 'node:crypto';
+import { parseWorkspace } from '@endless/content';
+import { projectReaderIndex } from '@endless/content/cloud';
 import { applyPlayerCommand, createWorkspace, type Workspace } from '@endless/content';
 import { getOptions, getScenes } from '@endless/player';
 import { content } from '../../api/test/fixtures.js';
@@ -36,6 +40,24 @@ export function workspaceRows(ws: Workspace) {
       ...ws.tickets.map((t) => ({ kind: 'ticket', ...t })),
     ],
   };
+}
+
+/** Direct cloud IDB fixtures must include the same native index as a current installation.
+ * Missing-index legacy copies intentionally remain rejected by production code. */
+export async function cloudReaderIndex(rows: ReturnType<typeof workspaceRows>, namespace: string) {
+  const workspace = parseWorkspace({
+    ...rows.meta, revisions: rows.revisions, branches: rows.branches,
+    volumes: rows.objects.filter(row => row.kind === 'volume'),
+    checkpoints: rows.objects.filter(row => row.kind === 'checkpoint'),
+    tickets: rows.objects.filter(row => row.kind === 'ticket'),
+  });
+  return projectReaderIndex(content, workspace, namespace, async value =>
+    createHash('sha256').update(stableStringify(value)).digest('hex'));
+}
+
+export async function cloudWorkspaceRows(ws: Workspace, namespace: string) {
+  const rows = workspaceRows(ws);
+  return { ...rows, readerIndex: await cloudReaderIndex(rows, namespace) };
 }
 
 /** 打开（必要时创建）endless-workspace 库并写入全部行。 */

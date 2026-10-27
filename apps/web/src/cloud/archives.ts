@@ -17,7 +17,7 @@ export function parseArchives(raw: unknown, workspaceId: string): ArchiveView {
   return { ...state, known: state.known ? nativeArchiveState(state.known) : null };
 }
 export const initialArchives = (workspace: Workspace): ArchiveView => ({ ...emptyArchives(), known: nativeArchiveState({ version: 0, volumes: workspace.volumes }) });
-export function rememberArchives(outbox: ArchiveView, state: ArchiveState, workspace: Workspace, historical = false): ArchiveView {
+export function rememberArchives(outbox: ArchiveView, state: ArchiveState, workspace: { volumes: ArchiveVolume[] }, historical = false): ArchiveView {
   const next = nativeArchiveState(state);
   if (outbox.known && state.version < outbox.known.version) {
     if (!historical) throw new Error('归档版本回退，原件保留');

@@ -1,5 +1,7 @@
 import { UuidSchema } from '@endless/cloud-contracts';
 import { cloudNamespace } from './local.js';
+import { PAGES, type Page, type AppRoute, type CloudTarget } from '../navigation.js';
+export { PAGES, type Page, type AppRoute, type CloudTarget } from '../navigation.js';
 
 /**
  * 路由解析（纯函数）。云阅读使用深链：
@@ -10,23 +12,9 @@ import { cloudNamespace } from './local.js';
  * 刷新、书签、另开标签都能重新落到同一个副本。
  */
 
-export const PAGES = ['home', 'watch', 'progress', 'library', 'edition', 'settings', 'cloud'] as const;
-export type Page = typeof PAGES[number];
 
 /** Cloud library exposes only the implemented display and recycle commands. */
 export const CLOUD_PAGES = ['home', 'watch', 'progress', 'library'] as const;
-
-export interface CloudTarget {
-  deploymentId: string;
-  accountId: string;
-  workspaceId: string;
-  /** 由三个 ID 推出的 IndexedDB 命名空间，打开仓库时用它。 */
-  namespace: string;
-}
-
-export type AppRoute =
-  | { shell: 'local'; page: Page }
-  | { shell: 'cloud'; page: Page; target: CloudTarget };
 
 const asPage = (value: string | undefined): Page | null =>
   value && (PAGES as readonly string[]).includes(value) ? value as Page : null;

@@ -1,10 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const port = Number(process.env.PLAYWRIGHT_PORT ?? 4173);
+const port = Number(process.env.PLAYWRIGHT_PORT ?? 4183);
 const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: '**/local-profile.spec.ts',
   fullyParallel: false,
   workers: 1,
   use: {
@@ -18,8 +19,8 @@ export default defineConfig({
     { name: 'mobile', use: { ...devices['Pixel 7'] } },
   ],
   webServer: {
-    command: `pnpm preview --port ${port} --strictPort`,
+    command: `pnpm preview:cloud --port ${port} --strictPort`,
     url: baseURL,
-    reuseExistingServer: !process.env.CI && !process.env.PLAYWRIGHT_PORT,
+    reuseExistingServer: false,
   },
 });

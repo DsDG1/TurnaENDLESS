@@ -27,10 +27,8 @@ export * from './materials.js';
 export * from './application-contract.js';
 export * from './archive.js';
 export * from './backup.js';
-export * from './cloud-import.js';
-export * from './cloud-context.js';
-export * from './cloud-catalog.js';
 export * from './context.js';
+export * from './generation-prefix.js';
 export * from './lifecycle.js';
 export * from './revision.js';
 export * from './workspace.js';
@@ -517,5 +515,4 @@ export function createContent(lexiconText: string) {
 }
 
 export type Content = ReturnType<typeof createContent>;
-export { rebuildCloudReading } from './cloud-reading.js';
 export { assertReadingObligationProgress, deriveReadingObligations, retainReadingCompletionTimes } from './reading-obligations.js';

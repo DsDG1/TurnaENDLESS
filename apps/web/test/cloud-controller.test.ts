@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
-import { applyPlayerCommand, buildBackup, deriveCloudCopy, parseBackup, type Workspace } from '@endless/content';
+import { applyPlayerCommand, buildBackup, parseBackup, type Workspace } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import type {
   CloudCapabilities, CloudImportPreview, CloudImportReceipt, MeResponse, WorkspaceInstallation,
 } from '@endless/cloud-contracts';
@@ -8,7 +9,8 @@ import { CLOUD_LIMITS } from '@endless/cloud-contracts';
 import { CloudController } from '../src/cloud/controller.js';
 import { CloudFailure, type CloudApiPort } from '../src/cloud/client.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
-import { WorkspaceRepository } from '../src/storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from '../src/cloud/repository.js';
+import { WorkspaceRepository as GuestWorkspaceRepository } from '../src/storage.js';
 import { cloudTestContent, cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
 
 /**
@@ -234,7 +236,7 @@ describe('第二设备领取', () => {
   it('副本写入账号隔离命名空间，游客库原样保留，回执用本机持久键', async () => {
     const h = harness({ signedIn: true });
     await h.controller.refresh();
-    const guest = new WorkspaceRepository(h.factory);
+    const guest = new GuestWorkspaceRepository(h.factory);
     await guest.commit(source);
     expect(await h.controller.claim(workspaceId)).toBe(true);
     const cloud = new WorkspaceRepository(h.factory, cloudNamespace(deployment, account, workspaceId));

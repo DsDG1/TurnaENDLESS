@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { CloudApi } from './client.js';
 import { CloudController } from './controller.js';
-import { WorkspaceRepository } from '../storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from './repository.js';
 import { content } from '../content/catalog.js';
 
 /**
@@ -15,7 +15,7 @@ const hex = (buffer: ArrayBuffer) =>
 export function createCloudController() {
   return new CloudController({
     api: new CloudApi(),
-    openRepository: (namespace) => new WorkspaceRepository(globalThis.indexedDB, namespace),
+    openRepository: (namespace) => new WorkspaceRepository(globalThis.indexedDB, namespace, content),
     content,
     digest: async (bytes) => hex(await globalThis.crypto.subtle.digest('SHA-256', bytes)),
     key: () => globalThis.crypto.randomUUID(),

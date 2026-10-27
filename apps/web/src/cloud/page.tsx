@@ -3,7 +3,7 @@ import { CLOUD_LIMITS, type CloudImportPreview } from '@endless/cloud-contracts'
 import type { CloudState } from './controller.js';
 import { useCloud } from './use-cloud.js';
 import { Icon } from '../components/icons.js';
-import { downloadSession } from '../storage.js';
+import { downloadSession } from '../downloads.js';
 
 /**
  * 云端页面（计划 §15.1 的最小入口，不是 C8 的完整客户端）。

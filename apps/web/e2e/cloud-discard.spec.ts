@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
-import { applyPlayerCommand, buildBackup, deriveCloudCopy } from '@endless/content';
+import { applyPlayerCommand, buildBackup } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import { stableStringify } from '@endless/esl';
 import { getScenes } from '@endless/player';
 import { CLOUD_LIMITS, type ResolveConflictResponse, type SyncConflict, type SyncEventEntry } from '@endless/cloud-contracts';

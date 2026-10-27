@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { applyPlayerCommand, adoptRevision, previewRevision, attachVolume, bridge, buildBackup, buildVolume, deriveCloudCopy, restoreContent, trashContent, updateDisplay } from '@endless/content';
+import { applyPlayerCommand, adoptRevision, previewRevision, attachVolume, bridge, buildBackup, buildVolume, restoreContent, trashContent, updateDisplay } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import { getScenes } from '@endless/player';
 import type { ArchiveCommand, ArchiveReceipt, CloudImportReceipt, LifecycleCommand, LifecycleEntry, LifecycleReceipt, ManagementChange, MetadataCommand, MetadataEntry, MetadataReceipt, RevisionRegistration } from '@endless/cloud-contracts';
-import { WorkspaceRepository } from '../src/storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from '../src/cloud/repository.js';
+import { WorkspaceRepository as GuestWorkspaceRepository } from '../src/storage.js';
 import { SessionCommitter } from '../src/session-writer.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
 import { CloudFailure } from '../src/cloud/client.js';

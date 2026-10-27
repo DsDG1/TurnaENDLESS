@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { contentHash } from '@endless/esl';
 import { exportProjection, projectSession } from '@endless/player';
-import {
-  applyPlayerCommand, attachVolume, bridge, buildBackup, buildVolume, newId, reserveTicket,
-  deriveCloudCopy, validateCloudBackup,
-} from '../src/index.js';
+import { applyPlayerCommand, attachVolume, bridge, buildBackup, buildVolume, newId, reserveTicket } from '../src/index.js';
+import { deriveCloudCopy, validateCloudBackup } from '../src/cloud.js';
 import { cloudTestContent as content, cloudTestTime, cloudTestWorkspace } from './cloud-fixture.js';
 
 describe('C2 原件完整校验与显式领取副本', () => {

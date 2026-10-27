@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { buildBackup, deriveCloudCopy, updateDisplay } from '@endless/content';
+import { buildBackup, updateDisplay } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import type { CloudImportReceipt, MetadataCommand, MetadataEntry, MetadataReceipt } from '@endless/cloud-contracts';
-import { WorkspaceRepository } from '../src/storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from '../src/cloud/repository.js';
+import { WorkspaceRepository as GuestWorkspaceRepository } from '../src/storage.js';
 import { SessionCommitter } from '../src/session-writer.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
 import { MetadataSync } from '../src/cloud/metadata-sync.js';

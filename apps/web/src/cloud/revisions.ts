@@ -4,7 +4,7 @@ import { adoptRevision, bridge, ContentRevisionSchema, parseWorkspace, previewRe
 import { CLOUD_LIMITS, RevisionOutboxSchema, type RevisionOutbox, RevisionCatalogSchema,
   RevisionPreviewReceiptSchema,
   type RevisionCatalog, type RevisionPreviewReceipt, type RevisionRegistration } from '@endless/cloud-contracts';
-import type { WorkspaceRepository } from '../storage.js';
+import type { CloudWorkspaceRepository as WorkspaceRepository } from './repository.js';
 import { CloudFailure, type CloudApiPort } from './client.js';
 import { cloudDigest } from './local.js';
 import { sameMetadata } from './metadata.js';

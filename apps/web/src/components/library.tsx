@@ -4,11 +4,9 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { adoptedRevision, type ContentEntry, type ContentRevision, type RevisionPreview } from '@endless/content';
-import { downloadSession } from '../storage.js';
+import { downloadSession } from '../downloads.js';
 import { Icon } from './icons.js';
-import type { usePlayer } from '../use-player.js';
-
-type Player = ReturnType<typeof usePlayer>;
+import type { Player } from '../player-model.js';
 
 function Dialog({ title, onClose, children }: { title: string; onClose(): void; children: React.ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -72,6 +70,23 @@ function CloudDraftEditor({ entry, player, onClose }: { entry: ContentEntry; pla
   const held = player.cloudRevisions?.pending;
   const pending = held?.request.contentId === entry.id ? held : null;
   const [draft, setDraft] = useState(pending?.request.draft ?? (head && head.origin !== 'bundled' ? head.draft : ''));
+  const [draftLoading, setDraftLoading] = useState(!pending && !head);
+  const [draftError, setDraftError] = useState('');
+  useEffect(() => {
+    if (pending?.request.draft || head) return;
+    let live = true;
+    void player.loadCloudDraft(entry.id).then((text) => {
+      if (!live) return;
+      if (text == null) throw new Error('未找到可编辑的草稿');
+      setDraft(text);
+      setDraftLoading(false);
+    }).catch(() => {
+      if (!live) return;
+      setDraftError('草稿读取失败，原正文保留。请关闭编辑器后重试。');
+      setDraftLoading(false);
+    });
+    return () => { live = false; };
+  }, [entry.id]);
   const preview = pending?.preview;
   const ready = preview?.outcome === 'ready' ? preview : null;
   const revision = ready?.artifact.revision as ContentRevision | undefined;
@@ -84,10 +99,12 @@ function CloudDraftEditor({ entry, player, onClose }: { entry: ContentEntry; pla
   }, [pending, player.cloudRevisions]);
   return <Dialog title="编辑云端内容" onClose={onClose}>
     <p className="section-footnote">修改草稿后提交云端编译预览，检查结果后再确认采用。已有阅读记录时会建立修订分支，原分支保留。</p>
-    <textarea aria-label="云端内容草稿" className="draft-editor" value={draft} readOnly={!!pending} maxLength={120000} rows={16} spellCheck={false}
+    {draftLoading && <p role="status">正在读取草稿…</p>}
+    {draftError && <p role="alert">{draftError}</p>}
+    <textarea aria-label="云端内容草稿" className="draft-editor" value={draft} readOnly={!!pending} disabled={draftLoading || !!draftError} maxLength={120000} rows={16} spellCheck={false}
       onChange={(event) => setDraft(event.target.value)} />
     <div className="button-row">
-      {!pending && !installed && <button className="button button-outline" disabled={player.busy || !draft.trim() || !!held || !player.cloudRevisionAvailable}
+      {!pending && !installed && <button className="button button-outline" disabled={draftLoading || !!draftError || player.busy || !draft.trim() || !!held || !player.cloudRevisionAvailable}
         onClick={() => void player.cloudRevisionAction({ queue: { contentId: entry.id, draft } })}>提交编译预览</button>}
       {pending && !preview && <p role="status">预览请求已保存在本机，等待云端响应。断网或刷新后继续恢复同一请求。</p>}
       {ready && !pending?.confirmation && <button className="button button-dark" disabled={player.busy}
@@ -184,7 +201,7 @@ export function LibraryPage({ player }: { player: Player }) {
         <p className="muted-copy">选择要成卷的内容。摘要与引用由已确认的阅读记录生成；离线时先保存请求，同步确认后才加入归档。</p>
         <label>归档名称<input value={archiveTitle} maxLength={100} onChange={(event) => setArchiveTitle(event.target.value)} /></label>
         <fieldset disabled={player.busy || !!player.cloudArchives?.pending}><legend>选择归档内容</legend>
-          {player.workspace?.branches.find((b) => b.id === player.workspace?.activeBranchId)?.adopted.map((adopted) => player.entries.find((e) => e.id === adopted.contentId))
+          {player.branches.find((b) => b.id === player.activeBranchId)?.adopted.map((adopted) => player.entries.find((e) => e.id === adopted.contentId))
             .filter((entry): entry is ContentEntry => !!entry && entry.lifecycle === 'active' && !entry.archiveVolumeId).map((entry) => <label key={entry.id}>
               <input type="checkbox" checked={archiveMembers.includes(entry.id)} disabled={!!player.cloudLifecycle?.pending[entry.id] || !!player.cloudMetadata?.pending[entry.id]}
                 onChange={(event) => setArchiveMembers((held) => event.target.checked ? [...held, entry.id] : held.filter((id) => id !== entry.id))} />{entry.display.title}
@@ -225,8 +242,8 @@ export function LibraryPage({ player }: { player: Player }) {
     </section>}
     <section className="surface"><div className="section-heading"><h2>分支</h2></div>
       {player.branches.map((b) => <div key={b.id} className="volume-row">
-        <div><strong>{b.label}</strong><small>{b.session.events.length} 条事件{b.id === player.workspace?.activeBranchId ? ' · 当前' : ''}</small></div>
-        {b.id !== player.workspace?.activeBranchId && <button className="text-button" onClick={() => void player.switchBranchTo(b.id)}>切换到此分支</button>}
+        <div><strong>{b.label}</strong><small>{b.session.events.length} 条事件{b.id === player.activeBranchId ? ' · 当前' : ''}</small></div>
+        {b.id !== player.activeBranchId && <button className="text-button" onClick={() => void player.switchBranchTo(b.id)}>切换到此分支</button>}
       </div>)}
     </section>
   </>;

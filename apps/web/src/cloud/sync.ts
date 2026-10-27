@@ -1,7 +1,8 @@
 import { stableStringify } from '@endless/esl';
 import { applyPlayerCommand, parseWorkspace, switchBranch, type Content, type Workspace } from '@endless/content';
 import { CLOUD_LIMITS, type ReadingSnapshot, type ReadingSnapshotRequest, type ResolveConflictResponse, type SyncBootstrap, type SyncRecoveryRequest, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
-import { SessionCommitter, type CommitOptions, type CommitOutcome } from '../session-writer.js';
+import { SessionCommitter, type CommitOutcome } from '../session-writer.js';
+import type { CloudCommitOptions as CommitOptions } from './commit.js';
 import { preservedWorkspace, type PendingPreservation } from './conflict.js';
 import { CloudFailure } from './client.js';
 import { commandOfEvent, emptySyncState, outgoing, type CloudSyncState, type OutboxEntry, type SidecarEntry } from './outbox.js';

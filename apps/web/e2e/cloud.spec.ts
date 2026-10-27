@@ -2,8 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { stableStringify } from '@endless/esl';
 import type { ArchiveCommand, ArchiveReceipt, LifecycleCommand, LifecycleEntry, LifecycleReceipt, ManagementChange, MetadataCommand, MetadataReceipt, MetadataSnapshot } from '@endless/cloud-contracts';
-import { bridge, buildBackup, buildVolume, deriveCloudCopy } from '@endless/content';
-import { workspaceRows } from './workspace-seed.js';
+import { bridge, buildBackup, buildVolume } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
+import { cloudReaderIndex, cloudWorkspaceRows } from './workspace-seed.js';
 import { cloudTestContent, cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
 
 /**
@@ -129,10 +130,23 @@ test('展示信息冲突刷新后可显式保留本机，丢响应后恢复原�
       tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(tx.error);
     });
     db.close();
-    return { entries, lifecycle: original.meta.entries.map((e: any) => ({ contentId: e.id, sourceKind: e.sourceKind, version: 0,
+    return { original, entries, lifecycle: original.meta.entries.map((e: any) => ({ contentId: e.id, sourceKind: e.sourceKind, version: 0,
       value: { lifecycle: e.lifecycle, trashedAt: e.trashedAt, archiveVolumeId: e.archiveVolumeId }, updatedAt: e.updatedAt })),
       streams: original.branches.map((b: any) => ({ streamId: b.id, branchId: b.id, eventSeq: 0, lastEventId: null })) };
   }, { namespace, workspaceId, deviceId });
+  const readerIndex = await cloudReaderIndex(seeded.original, namespace);
+  await page.evaluate(async ({ namespace, readerIndex }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(namespace, 2);
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('meta', 'readwrite');
+      tx.objectStore('meta').put(readerIndex, 'cloud-reader-index');
+      tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { namespace, readerIndex });
   const snapshot: MetadataSnapshot = { workspaceId, entries: seeded.entries };
   const requests: MetadataCommand[] = [];
   const receipts = new Map<string, MetadataReceipt>();
@@ -229,7 +243,7 @@ test('两浏览器离线归档、取消归档与回收恢复，丢响应刷新�
   const archiveRequests: ArchiveCommand[] = [];
   let archive = { version: 0, volumes: structuredClone(copy.volumes) }, loseArchiveResponse = false;
   const streams = copy.branches.map((b) => ({ streamId: b.id, branchId: b.id, eventSeq: b.session.events.length, lastEventId: crypto.randomUUID() }));
-  const rows = workspaceRows(copy), importId = crypto.randomUUID();
+  const rows = await cloudWorkspaceRows(copy, namespace), importId = crypto.randomUUID();
   const offline = new Set<Page>();
   const receipt = { id: importId, workspaceId, sourceLocalId: copy.identity.workspaceId, sourceProfileId: copy.profile.id,
     sourceRepositoryRevision: 0, sourceObjectId: crypto.randomUUID(), sourceDigest: 'a'.repeat(64), snapshotDigest: 'b'.repeat(64),
@@ -302,6 +316,7 @@ test('两浏览器离线归档、取消归档与回收恢复，丢响应刷新�
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(['meta', 'revisions', 'branches', 'objects'], 'readwrite');
         tx.objectStore('meta').put(rows.meta, 'workspace');
+        tx.objectStore('meta').put(rows.readerIndex, 'cloud-reader-index');
         tx.objectStore('meta').put({ receipt, acknowledgements: [{ deviceId: crypto.randomUUID(), key: crypto.randomUUID() }] }, 'cloud-installation');
         for (const name of ['revisions', 'branches', 'objects'] as const) for (const row of rows[name]) tx.objectStore(name).put(row, row.id);
         tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(tx.error);

@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { adoptRevision, applyPlayerCommand, bridge, buildBackup, deriveCloudCopy, previewRevision, updateDisplay,
-  type ContentRevision, type Workspace } from '@endless/content';
+import { adoptRevision, applyPlayerCommand, bridge, buildBackup, previewRevision, updateDisplay, type ContentRevision, type Workspace } from '@endless/content';
+import { deriveCloudCopy } from '@endless/content/cloud';
 import { getScenes } from '@endless/player';
 import type { CloudImportReceipt, RevisionAdoptionCommand, RevisionAdoptionReceipt, RevisionCatalog,
   RevisionPreviewReceipt, RevisionPreviewRequest, RevisionRegistration, SyncChange } from '@endless/cloud-contracts';
-import { WorkspaceRepository } from '../src/storage.js';
+import { CloudWorkspaceRepository as WorkspaceRepository } from '../src/cloud/repository.js';
+import { WorkspaceRepository as GuestWorkspaceRepository } from '../src/storage.js';
 import { SessionCommitter } from '../src/session-writer.js';
 import { RevisionSync } from '../src/cloud/revisions.js';
 import { WorkspaceSync } from '../src/cloud/sync.js';

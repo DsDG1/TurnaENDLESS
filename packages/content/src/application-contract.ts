@@ -432,7 +432,13 @@ const fail = (code: string, message: string): never => {
  *
  * 只做结构一致性；内容正确性（词汇/素材/来源/学习证据）由 `index.ts` 的编译验收负责。
  */
-export function assertWorkspace(data: Workspace): Workspace {
+export type WorkspaceGraphRevision = Pick<BundledRevision, 'id' | 'contentId' | 'parentRevisionId' | 'ordinal' | 'origin' | 'episodeId'>
+  | Pick<ContentRevision, 'id' | 'contentId' | 'parentRevisionId' | 'ordinal' | 'origin' | 'episodeId' | 'learningVersion' | 'basis'>;
+export type WorkspaceGraph = Omit<Workspace, 'revisions' | 'checkpoints'> & { revisions: WorkspaceGraphRevision[];
+  checkpoints: Pick<ProjectionCheckpoint, 'id' | 'branchId' | 'eventPrefix'>[] };
+
+/** Reference validation is shared with the explicitly typed body-free reading view. */
+export function assertWorkspaceGraph<T extends WorkspaceGraph>(data: T): T {
   const sections: [string, { id: string }[]][] = [
     ['entries', data.entries],
     ['revisions', data.revisions],
@@ -612,12 +618,27 @@ export function assertWorkspace(data: Workspace): Workspace {
   return data;
 }
 
+export function assertWorkspace(data: Workspace): Workspace { return assertWorkspaceGraph(data); }
+
 function branchExists(id: string, branches: Map<string, Branch>) {
   return branches.has(id);
 }
 
-/** 解析并校验工作区：任何入口都先过这里，失败必须保留原始数据而不是静默初始化。 */
+/** 解析并校验工作区：任何入口都先过这里，失败必须保留原始数据而不是静默初始化。
+ * 阅读目录和缺正文的修订头都不是工作区，不能被当成一份完整存档收下。 */
 export function parseWorkspace(raw: unknown): Workspace {
+  if (raw && typeof raw === 'object') {
+    const format = (raw as { format?: unknown }).format;
+    if (format === 'cloud-reading-view/1' || format === 'cloud-reader-index/1') {
+      fail('E-CONTRACT-FORMAT', '缺少正文的阅读目录不是完整工作区，原记录保留');
+    }
+    const revisions = (raw as { revisions?: unknown }).revisions;
+    if (Array.isArray(revisions) && revisions.some((revision) => revision && typeof revision === 'object'
+      && (revision as { origin?: unknown }).origin !== 'bundled'
+      && !('draft' in (revision as object)) && !('batch' in (revision as object)))) {
+      fail('E-CONTRACT-FORMAT', '缺少正文的阅读目录不是完整工作区，原记录保留');
+    }
+  }
   const parsed = WorkspaceSchema.safeParse(raw);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];

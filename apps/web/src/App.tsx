@@ -6,11 +6,9 @@ import { Brand, Icon, type IconName } from './components/icons.js';
 import { SceneRenderer } from './components/scenes.js';
 import { EntryMenu, LibraryPage } from './components/library.js';
 import { EditionPage } from './edition/page.js';
-import { CloudRoute } from './cloud/page.js';
-import { CloudReadBanner } from './cloud/reader.js';
-import { cloudHash, parseRoute, type AppRoute, type Page } from './cloud/routes.js';
-import { downloadSession } from './storage.js';
-import { usePlayer } from './use-player.js';
+import { CloudRoute, CloudReadBanner, PlayerScope, cloudEnabled, cloudHash, parseRoute, type AppRoute, type Page } from './integration.js';
+import { downloadSession } from './downloads.js';
+import type { Player } from './player-model.js';
 import { usePwa } from './use-pwa.js';
 
 const seriesOf = (episode: Episode) =>
@@ -43,7 +41,7 @@ function InstallDialog({ onClose, pwa }: { onClose(): void; pwa: ReturnType<type
   </dialog>;
 }
 
-function GenerationPanel({ player, onGenerate }: { player: ReturnType<typeof usePlayer>; onGenerate(): void }) {
+function GenerationPanel({ player, onGenerate }: { player: Player; onGenerate(): void }) {
   return <section className="surface generation-panel" aria-label="AI 内容续写">
     <div className="section-heading"><div><span className="eyebrow">AI STORY</span><h2>AI 生成新内容</h2></div><Icon name="spark" /></div>
     <p>每次点生成都会得到一份新内容，类型由 AI 自行选择，包含系列故事、生活对话、社交短帖和有出处的词条卡片。生成结果先经过校验再保存，不会改写已经看过的内容。</p>
@@ -83,7 +81,7 @@ function GenerationPanel({ player, onGenerate }: { player: ReturnType<typeof use
 
 function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
   view: PlayerView; current: Episode; busy: boolean; onSelect(episode: { id: string }): void;
-  library: Library; player: ReturnType<typeof usePlayer>; onGenerate(): void;
+  library: Library; player: Player; onGenerate(): void;
 }) {
   const entryOf = (episodeId: string) => player.runtime?.owners.get(episodeId)?.entry;
   const cursor = view.episodes[current.id]?.cursor ?? 0;
@@ -134,7 +132,7 @@ function Home({ view, current, busy, onSelect, library, player, onGenerate }: {
 }
 
 function Progress({ view, onDiscover, notes }: {
-  view: PlayerView; onDiscover(): void; notes: ReturnType<typeof usePlayer>['learningNotes'];
+  view: PlayerView; onDiscover(): void; notes: Player['learningNotes'];
 }) {
   const qualified = view.answers.filter((answer) => answer.qualified);
   return <>
@@ -163,13 +161,10 @@ export default function App() {
   }, []);
   // 游客存档与云副本是两个独立的 IndexedDB 库：换库时整棵界面重建，
   // 不把上一个库的会话、光标或未提交状态带进来。
-  return <StoryApp key={route.shell === 'cloud' ? route.target.namespace : 'local'} route={route} />;
+  return <PlayerScope key={route.shell === 'cloud' ? route.target.namespace : 'local'} route={route}>{player => <StoryApp route={route} player={player} />}</PlayerScope>;
 }
 
-function StoryApp({ route }: { route: AppRoute }) {
-  const player = usePlayer(route.shell === 'cloud'
-    ? { namespace: route.target.namespace, workspaceId: route.target.workspaceId }
-    : undefined);
+function StoryApp({ route, player }: { route: AppRoute; player: Player }) {
   const pwa = usePwa();
   const page = route.page;
   const [installOpen, setInstallOpen] = useState(false);
@@ -257,7 +252,7 @@ function StoryApp({ route }: { route: AppRoute }) {
 
   return <div className={`app-shell${session.largeText ? ' large-text' : ''}`}>
     <a href="#main-content" className="skip-link" onClick={(event) => { event.preventDefault(); heading.current?.focus(); }}>跳到主要内容</a>
-    <aside className="sidebar"><a href={hrefFor('home')} className="brand-link" aria-label="ENDLESS 首页"><Brand /></a><span className="sidebar-caption">STAY FOR THE STORY.</span><nav aria-label="主要导航">{(navItems as readonly (readonly [Page, IconName, string])[]).map(([destination, icon, label]) => <a key={destination} href={hrefFor(destination)} className={`nav-link${page === destination || (destination === 'home' && page === 'watch') ? ' active' : ''}`} aria-current={page === destination || (destination === 'home' && page === 'watch') ? 'page' : undefined}><Icon name={icon} /><span>{label}</span>{destination === 'home' && <span className="nav-dot" />}</a>)}</nav>
+    <aside className="sidebar"><a href={hrefFor('home')} className="brand-link" aria-label="ENDLESS 首页"><Brand /></a><span className="sidebar-caption">STAY FOR THE STORY.</span><nav aria-label="主要导航">{(navItems as readonly (readonly [Page, IconName, string])[]).filter(([destination]) => cloudEnabled || destination !== 'cloud').map(([destination, icon, label]) => <a key={destination} href={hrefFor(destination)} className={`nav-link${page === destination || (destination === 'home' && page === 'watch') ? ' active' : ''}`} aria-current={page === destination || (destination === 'home' && page === 'watch') ? 'page' : undefined}><Icon name={icon} /><span>{label}</span>{destination === 'home' && <span className="nav-dot" />}</a>)}</nav>
       <div className="sidebar-bottom"><div className="sidebar-note"><span className="little-spark"><Icon name="spark" size={24} /></span><p>读一个故事<br />看它怎么结束。</p><span>NO STREAKS. JUST STORIES.</span></div><button className="install-sidebar" onClick={() => setInstallOpen(true)}><Icon name="download" size={18} /><span>{pwa.installed ? '已安装到此设备' : '安装到桌面'}</span><Icon name="arrow" size={16} /></button>
         {route.shell === 'cloud'
           ? <a className="local-status cloud-exit" href="#cloud"><span className="status-dot" />退出云端阅读</a>
@@ -272,7 +267,7 @@ function StoryApp({ route }: { route: AppRoute }) {
           metadata={player.cloudMetadata} onResolveMetadata={(id, decision, commandId, version) => void player.resolveMetadata(id, decision, commandId, version)}
           lifecycle={player.cloudLifecycle} onResolveLifecycle={(id, decision, commandId, version) => void player.resolveLifecycle(id, decision, commandId, version)}
           archives={player.cloudArchives} onResolveArchive={(decision, commandId, version) => void player.resolveArchive(decision, commandId, version)}
-          branches={player.branches} activeBranchId={player.workspace?.activeBranchId} onBranch={(id) => { setReviewIndex(null); void player.switchBranchTo(id); }} />}
+          branches={player.branches} activeBranchId={player.activeBranchId} onBranch={(id) => { setReviewIndex(null); void player.switchBranchTo(id); }} />}
         {pwa.updateAvailable && <div className="notice"><Icon name="spark" size={18} /><span>有新版本可用。当前进度已保存后再更新。</span><button className="text-button" disabled={player.saving} onClick={() => void pwa.update()?.catch(() => {})}>更新应用<Icon name="arrow" size={15} /></button></div>}
         {page === 'home' && <Home view={view} current={episode} busy={player.busy} onSelect={(selected) => void select(selected)} library={library} player={player} onGenerate={() => void generate()} />}
         {page === 'library' && <LibraryPage player={player} />}
@@ -284,9 +279,9 @@ function StoryApp({ route }: { route: AppRoute }) {
           <section className="surface settings-surface"><div className="section-heading"><h2>阅读与设备</h2><Icon name="settings" /></div><div className="setting-row"><div><strong>更大的文字</strong><p>让对白和选项再清楚一点。</p></div><button role="switch" aria-checked={session.largeText} aria-label="更大的文字" className={`toggle${session.largeText ? ' on' : ''}`} disabled={player.saving} onClick={() => void player.dispatch({ type: 'text', large: !session.largeText })}><span /></button></div>
             <div className="setting-row"><div><strong>离线内容</strong><p>{pwa.workerError ? '离线缓存注册失败，请检查浏览器设置后刷新。' : pwa.ready ? '试播内容和界面已缓存，断网也可以继续。' : import.meta.env.DEV ? '开发模式不启用离线缓存，请使用生产构建预览验证。' : '正在准备缓存，请保持联网。'}</p></div><span className={`subtle-badge${pwa.ready ? ' badge-ready' : ''}`}>{pwa.ready ? '已就绪' : pwa.workerError ? '待重试' : '准备中'}</span></div>
             <div className="setting-row"><div><strong>独立应用窗口</strong><p>固定到桌面或任务栏，下次直接继续。</p></div><button className="text-button" onClick={() => setInstallOpen(true)}>{pwa.installed ? '查看安装说明' : '安装说明'}<Icon name="arrow" size={16} /></button></div>
-            <div className="setting-row"><div><strong>云端副本</strong><p>手动把当前存档复制到云端，或在另一台设备领取同一份副本。</p></div><button className="text-button" onClick={() => go('cloud')}>打开云端副本<Icon name="arrow" size={16} /></button></div>
+            {cloudEnabled && <div className="setting-row"><div><strong>云端副本</strong><p>手动把当前存档复制到云端，或在另一台设备领取同一份副本。</p></div><button className="text-button" onClick={() => go('cloud')}>打开云端副本<Icon name="arrow" size={16} /></button></div>}
           </section>
-          <section className="surface settings-surface"><div className="section-heading"><h2>你的数据，由你保管</h2><Icon name="desktop" /></div><p className="muted-copy">进度和已生成内容保存在当前浏览器。点击 AI 生成时，会将剧情与进度记录发送到本机服务，所需上下文会发送给模型供应商；服务端缓存生成任务与结果。本机模式不会自动跨设备同步；可在「云端副本」页手动导入到已启用的云服务，再由另一台设备领取和同步。云端生成与付费尚未开放。清理站点数据会移除本地存档，可以先下载备份。</p><button className="button button-outline" onClick={() => { const b = player.backup(); if (b) downloadSession(b); }}><Icon name="download" size={17} />导出完整备份</button><p className="section-footnote">备份包含 AI 内容原件、修订、分支事件与归档；在「内容管理」页可导入恢复。</p></section>
+          <section className="surface settings-surface"><div className="section-heading"><h2>你的数据，由你保管</h2><Icon name="desktop" /></div><p className="muted-copy">进度和已生成内容保存在当前浏览器。点击 AI 生成时，会将剧情与进度记录发送到本机服务，所需上下文会发送给模型供应商；服务端缓存生成任务与结果。本机模式不会自动跨设备同步。{cloudEnabled && <>可在「云端副本」页手动导入到已启用的云服务，再由另一台设备领取和同步。云端生成与付费尚未开放。</>}清理站点数据会移除本地存档，可以先下载备份。</p><button className="button button-outline" onClick={() => { const b = player.backup(); if (b) downloadSession(b); }}><Icon name="download" size={17} />导出完整备份</button><p className="section-footnote">备份包含 AI 内容原件、修订、分支事件与归档；在「内容管理」页可导入恢复。</p></section>
           <GenerationPanel player={player} onGenerate={() => void generate()} />
           <div className="about-pilot"><Brand small /><span>LOCAL AI MVP · 本机 AI 续写版</span><p>三个预置故事作为起点。后续由 AI 续写，校验后保存；生成新内容需要联网并运行本机服务。</p></div>
         </>}

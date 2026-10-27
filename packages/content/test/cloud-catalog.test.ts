@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getScenes } from '@endless/player';
-import { checked, memoryCatalogCache, newId, openCloudCatalog, type ContentRevision, type Workspace } from '../src/index.js';
+import { checked, newId, type ContentRevision, type Workspace } from '../src/index.js';
+import { memoryCatalogCache, openCloudCatalog } from '../src/cloud.js';
 import { cloudTestContent as content, cloudTestWorkspace } from './cloud-fixture.js';
 
 function withUnreadSequel(workspace: Workspace): { workspace: Workspace; firstId: string; laterId: string } {
