@@ -1,5 +1,6 @@
 import {
   RevisionPreviewReceiptSchema, RevisionAdoptionReceiptSchema, RevisionCatalogSchema,
+  ReadingSnapshotSchema, type ReadingSnapshot, type ReadingSnapshotRequest,
   type RevisionPreviewRequest, type RevisionPreviewReceipt, type RevisionAdoptionCommand, type RevisionAdoptionReceipt, type RevisionCatalog,
   CLOUD_API_PREFIX, CLOUD_LIMITS, ChallengeResponseSchema, CloudCapabilitiesSchema, MetadataReceiptSchema, MetadataSnapshotSchema,
   type MetadataCommand, type MetadataReceipt, type MetadataSnapshot,
@@ -122,6 +123,7 @@ export interface CloudApiPort {
   install(workspaceId: string, input: InstallWorkspaceRequest, key: string): Promise<WorkspaceInstallation>;
   bootstrap(workspaceId: string): Promise<SyncBootstrap>;
   recoverSync(input: SyncRecoveryRequest): Promise<SyncBootstrap>;
+  readingSnapshot(input: ReadingSnapshotRequest): Promise<ReadingSnapshot>;
   registerStream(input: RegisterStreamRequest): Promise<SyncStreamBinding>;
   push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
   pull(workspaceId: string, cursor: string | null, limit?: number): Promise<SyncPullResponse>;
@@ -133,6 +135,11 @@ export interface CloudApiPort {
 
 export class CloudApi implements CloudApiPort {
   constructor(private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {}
+  async readingSnapshot(input: ReadingSnapshotRequest): Promise<ReadingSnapshot> {
+    return parse(ReadingSnapshotSchema, await request(this.fetcher, '/sync/snapshot', {
+      method: 'POST', contentType: 'application/json', body: JSON.stringify(input),
+    }));
+  }
   async revisionPreview(input: RevisionPreviewRequest): Promise<RevisionPreviewReceipt> {
     return parse(RevisionPreviewReceiptSchema, await request(this.fetcher, '/sync/revisions/preview', { method: 'POST', contentType: 'application/json', body: JSON.stringify(input) }));
   }

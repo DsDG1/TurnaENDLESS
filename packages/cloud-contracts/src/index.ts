@@ -12,3 +12,4 @@ export * from './metadata.js';
 export * from './management.js';
 export * from './archives.js';
 export * from './revisions.js';
+export * from './snapshots.js';

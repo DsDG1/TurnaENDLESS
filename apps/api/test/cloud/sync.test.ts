@@ -153,6 +153,78 @@ async function imported(workspace: Workspace, session = a) {
 const cursorOf = (workspaceId: string, seq = 0) => encodeSyncCursor(workspaceId, seq, 1);
 
 describe('C3 增量同步：真实 PostgreSQL', () => {
+  it('裁剪变更日志后固定快照截止点，完整事件/身份保留且随后新增仍可补拉', async () => {
+    const local = cloudTestWorkspace(), { workspaceId, bootstrap, receipt } = await imported(local);
+    const all = entries(play(local, { limit: 3 }));
+    const streamId = streamOf(local);
+    for (const e of all.slice(0, 2)) await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: '1',
+      streams: [{ streamId, baseSeq: e.seq - 1, baseEventId: e.seq === 1 ? null : all[e.seq - 2]!.eventId, events: [e] }] });
+    await withClient(fixture.cluster.adminDsn, async (q) => {
+      await q.query('DELETE FROM workspace_changes WHERE workspace_id = $1 AND change_seq <= 1', [workspaceId]);
+      await q.query('UPDATE workspace_change_heads SET retained_from = 1 WHERE workspace_id = $1', [workspaceId]);
+    });
+    await expect(sync.pull(second, workspaceId, bootstrap.cursor)).rejects.toMatchObject({ code: 'CURSOR_EXPIRED' });
+    const cut = await sync.snapshot(second, { workspaceId, cloudVersion: '1', streams: bootstrap.streams });
+    expect(cut.sourceDigest).toBe(receipt.copyDigest);
+    expect(cut.changeSeq).toBe(2);
+    expect(cut.histories[0]!.events).toEqual(all.slice(0, 2));
+    expect((await sync.bootstrap(second, workspaceId)).retainedFrom).toBe(1);
+    await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: cut.cloudVersion,
+      streams: [{ streamId, baseSeq: 2, baseEventId: all[1]!.eventId, events: [all[2]!] }] });
+    expect((await sync.pull(second, workspaceId, cut.cursor)).changes.flatMap((c) => c.events)).toEqual([all[2]!]);
+    expect((await sync.snapshot(a, { workspaceId, cloudVersion: '0', streams: [] })).histories[0]!.events).toEqual(all);
+    await expect(fixture.app.withTenant(a.accountId, (q) => q.query('UPDATE workspace_change_heads SET retained_from = 0 WHERE workspace_id = $1', [workspaceId]))).rejects.toThrow('watermarks');
+    await expect(sync.snapshot(second, { workspaceId, cloudVersion: '999', streams: [] })).rejects.toMatchObject({ code: 'BASIS_CHANGED' });
+    await expect(sync.snapshot(second, { workspaceId, cloudVersion: '1', streams: [{ ...bootstrap.streams[0]!, eventSeq: 1, lastEventId: randomUUID() }] })).rejects.toMatchObject({ code: 'BASIS_CHANGED' });
+  });
+
+  it('快照经原生编译恢复缺失的修订和新分支，不借裁剪重新解释原历史', async () => {
+    const prepared = await confirmation();
+    const applied = await sync.management.revisionPreviews.adopt(a, prepared.command);
+    expect(applied.outcome).toBe('applied');
+    const snapshot = await sync.snapshot(second, { workspaceId: prepared.workspaceId, cloudVersion: '0', streams: [] });
+    expect(snapshot.revisionCatalog.registrations).toHaveLength(1);
+    expect(snapshot.revisionCatalog.registrations[0]!.artifact).toEqual(prepared.preview.artifact);
+    expect(snapshot.histories.some((h) => h.branch.adopted.some((a) => a.revisionId === prepared.preview.artifact.branch.adopted.at(-1)!.revisionId))).toBe(true);
+    const denied = await request('/sync/snapshot', 'POST', { workspaceId: prepared.workspaceId, cloudVersion: '0', streams: [], source: {} });
+    expect(denied.status).toBe(400);
+    const response = await request('/sync/snapshot', 'POST', { workspaceId: prepared.workspaceId, cloudVersion: '0', streams: [] });
+    expect(response.status).toBe(200);
+    expect(response.body.digest).toBe(snapshot.digest);
+    expect((await request('/sync/snapshot', 'POST', { workspaceId: prepared.workspaceId, cloudVersion: '0', streams: [] }, cookieB)).status).toBe(404);
+    const endpoint = `${base}/api/cloud/v1/sync/snapshot`, body = JSON.stringify({ workspaceId: prepared.workspaceId, cloudVersion: '0', streams: [] });
+    expect((await fetch(endpoint, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body })).status).toBe(403);
+    const key = await fetch(endpoint, { method: 'POST', headers: { cookie, origin: ORIGIN, 'content-type': 'application/json', 'X-Endless-Provider-Key': 'synthetic-rejected-key' }, body });
+    expect(key.status).toBe(403); expect(key.headers.get('cache-control')).toContain('no-store');
+    expect((await request('/sync/snapshot', 'POST', JSON.parse(body), '')).status).toBe(401);
+  });
+
+  it('快照与推送竞争时库存/水位属于同一提交，截止点后的事件不会漏拉', async () => {
+    const local = cloudTestWorkspace(), { workspaceId, bootstrap } = await imported(local);
+    const all = entries(play(local, { limit: 2 })), streamId = streamOf(local);
+    await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: '1', streams: [{ streamId, baseSeq: 0, baseEventId: null, events: [all[0]!] }] });
+    const [snapshots] = await Promise.all([
+      Promise.all(Array.from({ length: 8 }, () => sync.snapshot(second, { workspaceId, cloudVersion: bootstrap.cloudVersion, streams: bootstrap.streams }))),
+      sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: '1', streams: [{ streamId, baseSeq: 1, baseEventId: all[0]!.eventId, events: [all[1]!] }] }),
+    ]);
+    for (const cut of snapshots) {
+      expect(cut.histories[0]!.events).toEqual(all.slice(0, cut.changeSeq));
+      const tail = await sync.pull(second, workspaceId, cut.cursor);
+      expect([...cut.histories[0]!.events, ...tail.changes.flatMap((c) => c.events)]).toEqual(all);
+    }
+  });
+
+  it('快照拒绝重算摘要后的非法事件命令、缺失库存和超限，不删除任何历史', async () => {
+    const local = cloudTestWorkspace(), { workspaceId } = await imported(local);
+    const all = entries(play(local, { limit: 1 }));
+    await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: '1', streams: [{ streamId: streamOf(local), baseSeq: 0, baseEventId: null, events: all }] });
+    await withClient(fixture.cluster.adminDsn, (q) => q.query("UPDATE event_objects SET command = '{\"type\":\"reveal\",\"scene\":\"forged\"}' WHERE workspace_id = $1", [workspaceId]));
+    await expect(sync.snapshot(second, { workspaceId, cloudVersion: '0', streams: [] })).rejects.toMatchObject({ code: 'CONTENT_REJECTED' });
+    await withClient(fixture.cluster.adminDsn, (q) => q.query('UPDATE sync_streams SET event_seq = 10001 WHERE workspace_id = $1', [workspaceId]));
+    await expect(sync.snapshot(second, { workspaceId, cloudVersion: '0', streams: [] })).rejects.toMatchObject({ code: 'STORAGE_QUOTA' });
+    expect((await fixture.app.withTenant(a.accountId, (q) => q.query('SELECT event_id FROM event_objects WHERE workspace_id = $1', [workspaceId]))).rows).toHaveLength(1);
+  });
+
   async function revisionPreview(local = cloudTestWorkspace(true)) {
     const { workspaceId, bootstrap } = await imported(local);
     const entry = local.entries.find((e) => e.sourceKind === 'generated')!;
@@ -992,6 +1064,7 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
       last = chunk.at(-1)!.eventId;
     }
     await expect(sync.resolve(second, f.workspaceId, f.conflict.id, f.input)).rejects.toMatchObject({ code: 'STORAGE_QUOTA', status: 413 });
+    await expect(sync.snapshot(second, { workspaceId: f.workspaceId, cloudVersion: '1', streams: [] })).rejects.toMatchObject({ code: 'STORAGE_QUOTA', status: 413 });
     expect((await sync.conflicts(second, f.workspaceId)).conflicts[0]).toEqual(f.conflict);
     await fixture.app.withTenant(a.accountId, async (q) => {
       expect(Number((await q.query<{ count: string }>('SELECT count(*) AS count FROM stream_events WHERE workspace_id = $1', [f.workspaceId])).rows[0]!.count)).toBe(5501);

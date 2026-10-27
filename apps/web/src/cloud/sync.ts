@@ -1,6 +1,6 @@
 import { stableStringify } from '@endless/esl';
 import { applyPlayerCommand, parseWorkspace, switchBranch, type Content, type Workspace } from '@endless/content';
-import { CLOUD_LIMITS, type ResolveConflictResponse, type SyncBootstrap, type SyncRecoveryRequest, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
+import { CLOUD_LIMITS, type ReadingSnapshot, type ReadingSnapshotRequest, type ResolveConflictResponse, type SyncBootstrap, type SyncRecoveryRequest, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
 import { SessionCommitter, type CommitOptions, type CommitOutcome } from '../session-writer.js';
 import { preservedWorkspace, type PendingPreservation } from './conflict.js';
 import { CloudFailure } from './client.js';
@@ -21,6 +21,7 @@ export interface SyncRepository {
   pendingOutbox(): Promise<OutboxEntry[]>;
   saveSyncState(state: CloudSyncState): Promise<void>;
   reanchorSync(expected: CloudSyncState, boot: SyncBootstrap): Promise<void>;
+  acceptReadingSnapshot(content: Content, expected: CloudSyncState, snapshot: ReadingSnapshot, seedCursor?: string): Promise<void>;
   acknowledgePush(receipt: SyncPushReceipt, keys: readonly string[]): Promise<void>;
   pendingPreservation(): Promise<PendingPreservation | null>;
   preparePreservation(conflict: SyncConflict, streamId: string | null): Promise<PendingPreservation>;
@@ -32,6 +33,7 @@ export interface SyncRepository {
 export interface SyncApiPort {
   bootstrap(workspaceId: string): Promise<SyncBootstrap>;
   recoverSync(input: SyncRecoveryRequest): Promise<SyncBootstrap>;
+  readingSnapshot(input: ReadingSnapshotRequest): Promise<ReadingSnapshot>;
   registerStream(input: { workspaceId: string; streamId: string; parentStreamId: string; forkAtSeq: number }): Promise<SyncStreamBinding>;
   push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
   pull(workspaceId: string, cursor: string | null, limit?: number): Promise<{
@@ -274,6 +276,7 @@ export class WorkspaceSync {
 
   private async bootstrap(state: CloudSyncState): Promise<CloudSyncState | null> {
     const boot = await this.deps.api.bootstrap(this.deps.workspaceId);
+    if (boot.retainedFrom) return this.snapshot(state, boot.origin?.cursor);
     const streams: CloudSyncState['streams'] = {};
     for (const stream of boot.origin?.streams ?? boot.streams) streams[stream.streamId] = { seq: stream.eventSeq, eventId: stream.lastEventId };
     const next: CloudSyncState = {
@@ -283,6 +286,16 @@ export class WorkspaceSync {
     };
     await this.deps.repo.saveSyncState(next);
     return next;
+  }
+
+  private async snapshot(state: CloudSyncState, seedCursor?: string): Promise<CloudSyncState> {
+    const snapshot = await this.deps.api.readingSnapshot({ workspaceId: this.deps.workspaceId,
+      cloudVersion: state.cloudVersion ?? '0', streams: Object.entries(state.streams).map(([id, head]) => ({
+        streamId: id, branchId: id, eventSeq: head.seq, lastEventId: head.eventId,
+      })) });
+    await this.deps.repo.acceptReadingSnapshot(this.deps.content, state, snapshot, seedCursor);
+    await this.deps.revisions?.prepare();
+    return this.deps.repo.syncState();
   }
 
   async pullOnce(): Promise<SyncReport> {
@@ -312,15 +325,20 @@ export class WorkspaceSync {
           if (!rebootstrapped && !pending && !fresh.pendingPush && !fresh.conflicts.length && !fresh.needsRebase.length
             && fresh.cloudVersion !== null && Object.keys(fresh.streams).length) {
             try {
-              const boot = await this.deps.api.recoverSync({
-                workspaceId: this.deps.workspaceId,
-                cloudVersion: fresh.cloudVersion,
-                streams: Object.entries(fresh.streams).map(([id, head]) => ({
-                  streamId: id as SyncStreamBinding['streamId'], branchId: id as SyncStreamBinding['branchId'],
-                  eventSeq: head.seq, lastEventId: head.eventId,
-                })),
-              });
-              await this.deps.repo.reanchorSync(fresh, boot);
+              try {
+                const boot = await this.deps.api.recoverSync({
+                  workspaceId: this.deps.workspaceId,
+                  cloudVersion: fresh.cloudVersion,
+                  streams: Object.entries(fresh.streams).map(([id, head]) => ({
+                    streamId: id as SyncStreamBinding['streamId'], branchId: id as SyncStreamBinding['branchId'],
+                    eventSeq: head.seq, lastEventId: head.eventId,
+                  })),
+                });
+                await this.deps.repo.reanchorSync(fresh, boot);
+              } catch (cause) {
+                if (!(cause instanceof CloudFailure) || cause.code !== 'UNSUPPORTED_CONTRACT') throw cause;
+                await this.snapshot(fresh);
+              }
               state = await this.deps.repo.syncState();
               cursor = state.cursor!;
               rebootstrapped = true;

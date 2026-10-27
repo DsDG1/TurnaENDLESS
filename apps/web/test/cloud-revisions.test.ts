@@ -268,7 +268,7 @@ describe('云端修订：持久预览、显式采用与原子接收', () => {
       events: [{ seq: request.baseSeq, eventId, event, digest: await cloudDigest(event), at: event.at, command: commandOfEvent(event) }] };
     const reading = new WorkspaceSync({ repo: a.repo, content, workspaceId: f.workspaceId, deviceId: f.deviceId,
       digest: cloudDigest, newBatchId: () => crypto.randomUUID(), revisions: a.sync,
-      api: { bootstrap: vi.fn(), recoverSync: vi.fn(), push: vi.fn(), registerStream: vi.fn(), conflicts: async () => ({ conflicts: [] }), resolveConflict: vi.fn(),
+      api: { bootstrap: vi.fn(), recoverSync: vi.fn(), readingSnapshot: vi.fn(), push: vi.fn(), registerStream: vi.fn(), conflicts: async () => ({ conflicts: [] }), resolveConflict: vi.fn(),
         pull: async (_id, cursor) => ({ fromChangeSeq: Number(cursor), changeSeq: 1, changes: cursor === '0' ? [change] : [],
           nextCursor: '1', hasMore: false, cloudVersion: '1' }) } });
     const save = a.repo.saveSyncState.bind(a.repo);

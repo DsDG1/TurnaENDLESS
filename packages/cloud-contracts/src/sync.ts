@@ -127,6 +127,8 @@ export const SyncBootstrapSchema = z.object({
   changeSeq: z.number().int().nonnegative(),
   /** 当前头部的拉取游标；首次安装的原始副本从 origin 导入基线开始补拉。 */
   cursor: z.string().min(1).max(512),
+  /** Largest compacted reading change. A seed install must use a verified snapshot when nonzero. */
+  retainedFrom: z.number().int().nonnegative().optional(),
   streams: z.array(SyncStreamBindingSchema),
   origin: z.object({
     cursor: z.string().min(1).max(512),

@@ -225,6 +225,9 @@ importers:
 
   packages/content:
     dependencies:
+      '@endless/cloud-contracts':
+        specifier: workspace:*
+        version: link:../cloud-contracts
       '@endless/esl':
         specifier: workspace:*
         version: link:../esl

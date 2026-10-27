@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@endless/cloud-contracts": "workspace:*",
     "@endless/esl": "workspace:*",
     "@endless/learning": "workspace:*",
     "@endless/player": "workspace:*",

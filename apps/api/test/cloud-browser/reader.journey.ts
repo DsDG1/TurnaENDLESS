@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { Page } from 'playwright';
@@ -9,8 +9,8 @@ import { withClient } from '../cloud/embedded-pg.js';
 import { browserFixture } from './fixture.js';
 
 let fixture: Awaited<ReturnType<typeof browserFixture>>;
-beforeAll(async () => { fixture = await browserFixture(); });
-afterAll(async () => { await fixture?.close(); });
+beforeEach(async () => { fixture = await browserFixture(); });
+afterEach(async () => { await fixture?.close(); });
 
 async function seedGuest(page: Page, workspace: Workspace) {
   await page.goto(`${fixture.origin}/#home`);
@@ -324,10 +324,14 @@ describe('C3 actual cloud API + PG + production browser (isolated loopback HTTPS
       expect(restored.branches.find((v: any) => v.id === active).session.events).toEqual(paused.branches.find((v: any) => v.id === active).session.events);
       for (const item of paused.outbox) expect(restored.ids.some((i: any) => i.eventId === item.eventId)).toBe(true);
       await expect.poll(() => page.getByRole('button', { name: '立即同步', exact: true }).isEnabled()).toBe(true);
-      stage = 'reading/management cursor epoch recovery';
+      stage = 'pruned reading snapshot / management epoch recovery';
       const beforeRecovery = await snapshot(other, namespace);
-      await withClient(fixture.db.cluster.adminDsn, (q) => q.query('UPDATE workspaces SET sync_epoch = sync_epoch + 1 WHERE id = $1', [workspaceId]));
-      const recovery = other.waitForResponse((r) => r.url().endsWith('/api/cloud/v1/sync/recover'));
+      await withClient(fixture.db.cluster.adminDsn, async (q) => {
+        await q.query('DELETE FROM workspace_changes WHERE workspace_id = $1', [workspaceId]);
+        await q.query('UPDATE workspace_change_heads SET retained_from = change_seq WHERE workspace_id = $1', [workspaceId]);
+        await q.query('UPDATE workspaces SET sync_epoch = sync_epoch + 1 WHERE id = $1', [workspaceId]);
+      });
+      const recovery = other.waitForResponse((r) => r.url().endsWith('/api/cloud/v1/sync/snapshot'));
       await other.getByRole('button', { name: '立即同步', exact: true }).click();
       expect((await recovery).status()).toBe(200);
       await expect.poll(async () => (await snapshot(other, namespace)).lifecycle.cursor).not.toBe(beforeRecovery.lifecycle.cursor);
@@ -338,6 +342,22 @@ describe('C3 actual cloud API + PG + production browser (isolated loopback HTTPS
       expect(afterRecovery.meta.activeBranchId).toBe(root);
       expect(afterRecovery.branches.find((v: any) => v.id === active).session.events).toEqual(restored.branches.find((v: any) => v.id === active).session.events);
       expect(afterRecovery.branches.find((v: any) => v.id === root).session.events).toEqual(beforeRecovery.branches.find((v: any) => v.id === root).session.events);
+      stage = 'fresh installation after journal pruning';
+      const freshDevice = await fixture.device(true);
+      try {
+        const freshPage = await freshDevice.context.newPage();
+        freshPage.on('pageerror', (e) => errors.push(e.message));
+        await withClient(fixture.db.cluster.adminDsn, (q) => q.query("UPDATE auth_challenges SET created_at = now() - interval '2 minutes'"));
+        expect((await login(freshPage, email)).account.id).toBe(me.account.id);
+        await claim(freshPage, workspaceId);
+        await expect.poll(async () => (await snapshot(freshPage, namespace)).revision?.installed.length).toBe(1);
+        await syncReader(freshPage, namespace);
+        const fresh = await snapshot(freshPage, namespace);
+        expect(fresh.revision.installed).toEqual(afterRecovery.revision.installed);
+        expect(fresh.meta.activeBranchId).toBe(root);
+        expect(fresh.outbox).toEqual([]);
+        for (const branch of afterRecovery.branches) expect(fresh.branches.find((b: any) => b.id === branch.id)?.session.events).toEqual(branch.session.events);
+      } finally { await freshDevice.context.close(); }
       stage = 'logout/account isolation';
       const beforeSwitch = await snapshot(page, namespace);
       await page.getByRole('button', { name: '退出登录', exact: true }).click();

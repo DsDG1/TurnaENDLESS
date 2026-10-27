@@ -47,6 +47,9 @@ interface Recorded {
 
 /** 内存云端：只实现协议，不做学习重放。 */
 class CloudSim {
+  async readingSnapshot(_input: unknown): Promise<import('@endless/cloud-contracts').ReadingSnapshot> {
+    throw new CloudFailure('UNSUPPORTED_CONTRACT', 409, '该协议夹具未提供快照');
+  }
   discardReceipts = new Map<string, ResolveConflictResponse>();
   preservationReceipts = new Map<string, ResolveConflictResponse>();
   receipts = new Map<string, { receipt: SyncPushReceipt }>();

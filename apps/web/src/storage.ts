@@ -1,11 +1,12 @@
 import { candidateFor, emptyRevisions, parseRevisions, revisionFrozen, validatePreview, type RevisionState } from './cloud/revisions.js';
 import { RevisionAdoptionReceiptSchema, RevisionPreviewRequestSchema, RevisionRegistrationSchema, type RevisionPreviewReceipt, type RevisionAdoptionReceipt, type RevisionRegistration } from '@endless/cloud-contracts';
 import {
-  ContractError, describeUnsupportedSave, parseWorkspace,
-  buildVolume, bridge, validateArchiveProjection, type Content, type Workspace, type WorkspaceIdentity,
+  ContentRevisionSchema, ContractError, describeUnsupportedSave, parseWorkspace,
+  buildVolume, bridge, rebuildCloudReading, validateArchiveProjection, type Content, type Workspace, type WorkspaceIdentity,
 } from '@endless/content';
 import { MetadataReceiptSchema, MetadataSnapshotSchema, ResolveConflictRequestSchema, SyncBootstrapSchema, type SyncBootstrap, type MetadataReceipt, type MetadataSnapshot, type CloudImportReceipt, type ResolveConflictResponse, type SyncConflict, type SyncPushReceipt, type WorkspaceInstallation } from '@endless/cloud-contracts';
 import { stableStringify } from '@endless/esl';
+import { CLOUD_LIMITS, ReadingSnapshotSchema, type ReadingSnapshot } from '@endless/cloud-contracts';
 import { ArchiveCommandSchema, ArchiveReceiptSchema, type ArchiveCommand, type ArchiveReceipt } from '@endless/cloud-contracts';
 import { acceptArchiveReceipt, archivePositions, emptyArchives, initialArchives, nativeArchiveState, parseArchives, rememberArchives, type ArchiveView } from './cloud/archives.js';
 import { LifecycleReceiptSchema, ManagementBootstrapSchema, ManagementPullSchema, type LifecycleReceipt, type ManagementBootstrap, type ManagementPull } from '@endless/cloud-contracts';
@@ -30,6 +31,16 @@ import {
  */
 
 const SYNC_STORES = ['outbox', 'eventIds', 'sync'] as const;
+
+/** Tolerant parsing is useful for display, but persisted unknown fields are never authority to overwrite. */
+const storedSync = (raw: unknown): CloudSyncState => {
+  const state = parseSyncState(raw);
+  const canonical = { ...(raw as Record<string, unknown>) };
+  // Existing writers explicitly clear this known optional field with undefined; IDB preserves that property.
+  if (canonical.pendingPush === undefined) delete canonical.pendingPush;
+  if (raw !== undefined && !sameMetadata(canonical, state)) throw new Error('未知或损坏的同步状态保留，不能覆盖');
+  return state;
+};
 
 /** 把工作区分支裁剪成纯规划输入：只要身份相关字段，避免把整份存档塞进闭包。 */
 const slices = (branches: readonly { id: string; parentBranchId: string | null; forkAtEventCount: number | null; session: { events: readonly unknown[] } }[]): BranchSlice[] =>
@@ -281,7 +292,10 @@ export class WorkspaceRepository {
         }
         step();
       };
-      tx.objectStore('sync').get('sync').onsuccess = (e) => { syncState = parseSyncState((e.target as IDBRequest).result); step(); };
+      tx.objectStore('sync').get('sync').onsuccess = (e) => {
+        try { syncState = storedSync((e.target as IDBRequest).result); step(); }
+        catch { error = '未知或损坏的同步状态保留，不能提交'; tx.abort(); }
+      };
       tx.objectStore('sync').get('preservation').onsuccess = (e) => { preservation = (e.target as IDBRequest).result ?? null; step(); };
       tx.objectStore('sync').get('metadata').onsuccess = (e) => {
         try { metadataState = parseMetadata((e.target as IDBRequest).result, syncing ? this.namespace.split(':')[3] : undefined); step(); }
@@ -710,7 +724,7 @@ export class WorkspaceRepository {
     const value = (key: string) => before.sync.find((row: any) => row.key === key)?.value;
     const original = this.assemble(before.meta, before.revisions, before.branches, before.objects, before.meta?.management ?? []);
     let workspace = original, state = parseRevisions(value('revisions'), workspaceId);
-    let display = parseMetadata(value('metadata'), workspaceId), sync = parseSyncState(value('sync'));
+    let display = parseMetadata(value('metadata'), workspaceId), sync = storedSync(value('sync'));
     const life = parseLifecycle(value('lifecycle'), workspaceId), archive = parseArchives(value('archives'), workspaceId);
     if (value('preservation') || original.tickets.some((t) => ['reserved', 'submitted'].includes(t.status))) throw new Error('进行中的任务尚未完成，修订请求保留');
     const stage: { key: string; value: unknown }[] = [], identities: { key: string; value: SidecarEntry }[] = [];
@@ -955,7 +969,7 @@ export class WorkspaceRepository {
             for (const volume of volumes) store.put({ kind: 'volume', ...volume }, volume.id);
           }
           sync.put(display, 'metadata'); sync.put(life, 'lifecycle'); sync.put(archive, 'archives');
-          if ('pull' in action || 'bootstrap' in action) sync.put({ ...parseSyncState(requests.sync.result), lastSyncedAt: new Date().toISOString() }, 'sync');
+          if ('pull' in action || 'bootstrap' in action) sync.put({ ...storedSync(requests.sync.result), lastSyncedAt: new Date().toISOString() }, 'sync');
         } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
       };
       for (const request of Object.values(requests)) request.onsuccess = step;
@@ -1028,7 +1042,7 @@ export class WorkspaceRepository {
             identity: { ...meta.result.identity, repositoryRevision: meta.result.identity.repositoryRevision + 1 },
           }, 'workspace');
           store.put(state, 'metadata');
-          if ('snapshot' in action) store.put({ ...parseSyncState(sync.result), lastSyncedAt: new Date().toISOString() }, 'sync');
+          if ('snapshot' in action) store.put({ ...storedSync(sync.result), lastSyncedAt: new Date().toISOString() }, 'sync');
         } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
       };
       metadata.onsuccess = meta.onsuccess = preservation.onsuccess = objects.onsuccess = sync.onsuccess = revision.onsuccess = step;
@@ -1043,7 +1057,7 @@ export class WorkspaceRepository {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('sync', 'readonly');
       const request = tx.objectStore('sync').get('sync');
-      tx.oncomplete = () => resolve(parseSyncState(request.result));
+      tx.oncomplete = () => { try { resolve(storedSync(request.result)); } catch (cause) { reject(cause); } };
       tx.onabort = tx.onerror = () => reject(new Error('无法读取同步状态；本机存档未被修改'));
     });
   }
@@ -1104,7 +1118,7 @@ export class WorkspaceRepository {
             return;
           }
           if (meta.result?.identity.repositoryRevision !== workspace.identity.repositoryRevision) throw new Error('另一个窗口已更新进度，请刷新后处理冲突');
-          if (parseSyncState(sync.result).pendingPush) throw new Error('仍有结果未知的推送，请先恢复同一批次，不能改换冲突历史');
+          if (storedSync(sync.result).pendingPush) throw new Error('仍有结果未知的推送，请先恢复同一批次，不能改换冲突历史');
           if (revisionFrozen(parseRevisions(revision.result, this.namespace.split(':')[3]!))) throw new Error('修订确认尚未完成，请先恢复同一请求，不能改换冲突历史');
           for (let index = conflict.baseSeq; index < branch.session.events.length; index++) {
             if (!identities[index] || stableStringify(identities[index]!.event) !== stableStringify(branch.session.events[index])) {
@@ -1114,7 +1128,7 @@ export class WorkspaceRepository {
           if (conflict.events.some((entry) => identities[entry.seq - 1]?.eventId !== entry.eventId)) {
             throw new Error('冲突候选的事件身份与本机不一致，完整冲突包已保留');
           }
-          const confirmed = parseSyncState(sync.result).streams[branch.id];
+          const confirmed = storedSync(sync.result).streams[branch.id];
           const baseEventId = conflict.baseSeq
             ? identities[conflict.baseSeq - 1]?.eventId ?? (confirmed?.seq === conflict.baseSeq ? confirmed.eventId : null)
             : null;
@@ -1145,15 +1159,19 @@ export class WorkspaceRepository {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('sync', 'readwrite');
       const store = tx.objectStore('sync');
-      if (state.pendingPush) {
-        const pending = store.get('preservation');
-        pending.onsuccess = () => {
-          if (pending.result) { tx.abort(); return; }
+      const current = store.get('sync'), pending = store.get('preservation');
+      let left = 2, error = '同步状态尚未保存';
+      const done = () => {
+        if (--left) return;
+        try {
+          storedSync(current.result);
+          if (state.pendingPush && pending.result) throw new Error('同步状态尚未保存：冲突处理尚未完成，不能创建竞争推送');
           store.put(state, 'sync');
-        };
-      } else store.put(state, 'sync');
+        } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
+      };
+      current.onsuccess = pending.onsuccess = done;
       tx.oncomplete = () => resolve();
-      tx.onabort = tx.onerror = () => reject(new Error('同步状态尚未保存'));
+      tx.onabort = tx.onerror = () => reject(new Error(error));
     });
   }
 
@@ -1176,7 +1194,7 @@ export class WorkspaceRepository {
       const step = () => {
         if (--left) return;
         try {
-          const current = parseSyncState(state.result);
+          const current = storedSync(state.result);
           if (stableStringify(current) !== stableStringify(expected)) throw new Error('另一窗口已更新同步状态，请重试恢复');
           if (outbox.result || current.pendingPush || current.conflicts.length || current.needsRebase.length || pending.result) {
             throw new Error('仍有未同步事件或冲突请求，不能重新定位阅读游标');
@@ -1187,6 +1205,143 @@ export class WorkspaceRepository {
       state.onsuccess = outbox.onsuccess = pending.onsuccess = step;
       tx.oncomplete = () => resolve();
       tx.onabort = tx.onerror = () => reject(new Error(error));
+    });
+  }
+
+  /** Reconstruct before opening a transaction, then atomically CAS the complete read set and snapshot cut. */
+  async acceptReadingSnapshot(content: Content, expected: CloudSyncState, raw: ReadingSnapshot, seedCursor?: string): Promise<void> {
+    this.requireSync();
+    const snapshot = ReadingSnapshotSchema.parse(raw), workspaceId = this.namespace.split(':')[3]!;
+    const before = await this.rawSnapshot() as any;
+    const installation = await this.cloudInstallation();
+    const value = (key: string) => before.sync.find((r: any) => r.key === key)?.value;
+    const sync = storedSync(value('sync'));
+    const original = this.assemble(before.meta, before.revisions, before.branches, before.objects, before.meta?.management ?? []);
+    let revisions = parseRevisions(value('revisions'), workspaceId), display = parseMetadata(value('metadata'), workspaceId);
+    parseLifecycle(value('lifecycle'), workspaceId); parseArchives(value('archives'), workspaceId);
+    if (!installation || snapshot.workspaceId !== workspaceId || snapshot.sourceDigest !== installation.receipt.copyDigest
+      || new TextEncoder().encode(JSON.stringify(snapshot)).length > CLOUD_LIMITS.uploadObjectBytes - 4096
+      || !sameMetadata(expected, sync) || (sync.cloudVersion !== null && BigInt(snapshot.cloudVersion) < BigInt(sync.cloudVersion))) throw new Error('阅读快照与安装回执或已确认版本不一致，原数据保留');
+    const seedOnly = !!seedCursor && before.outbox.length > 0 && sync.cloudVersion === null && Object.keys(sync.streams).length === 0 && !revisions.installed.length;
+    if ((before.outbox.length && !seedOnly) || sync.pendingPush || sync.conflicts.length || sync.needsRebase.length || value('preservation')
+      || original.tickets.some((t) => ['reserved', 'submitted'].includes(t.status))) throw new Error('仍有未同步事件、冲突或未知任务，不能用快照替换阅读状态');
+    if (before.sync.some((r: any) => !['sync', 'metadata', 'lifecycle', 'archives', 'revisions', 'preservation'].includes(r.key))) throw new Error('未知同步 sidecar 保留，不能猜测快照恢复');
+    const remote = await rebuildCloudReading(content, snapshot, cloudDigest);
+    const catalog = snapshot.revisionCatalog.registrations;
+    if (catalog.length < revisions.installed.length || revisions.installed.some((r, i) => !sameMetadata(r, catalog[i]))) throw new Error('快照修订登记早于或不同于已安装记录');
+    const byId = new Map(snapshot.histories.map((h) => [h.stream.streamId, h]));
+    if (seedOnly) {
+      const seed = parseWorkspace(snapshot.source), identities: { key: string; value: SidecarEntry }[] = [];
+      if (revisionFrozen(revisions) || original.revisions.length !== seed.revisions.length
+        || original.revisions.some((r) => !seed.revisions.some((s) => s.id === r.id && sameMetadata(r, s)))) throw new Error('本机不再是该导入种子的追加，不能猜测初始同步绑定');
+      const streams: CloudSyncState['streams'] = {};
+      for (const b of seed.branches) {
+        const local = original.branches.find((v) => v.id === b.id), h = byId.get(b.id)!;
+        if (!local || !sameMetadata(local.adopted, b.adopted) || b.session.events.some((e, i) => !sameMetadata(e, local.session.events[i]))) throw new Error('本机导入前缀不同，不能建立初始同步绑定');
+        streams[b.id] = { seq: b.session.events.length, eventId: h.events[b.session.events.length - 1]?.eventId ?? null };
+        b.session.events.forEach((event, i) => {
+          const key = sidecarKey(b.id, i + 1), held = before.eventIds.find((r: any) => r.key === key)?.value;
+          const value = { eventId: h.events[i]!.eventId, event };
+          if (held && !sameMetadata(held, value)) throw new Error('初始前缀事件身份不同，原记录保留');
+          identities.push({ key, value });
+        });
+        for (let i = b.session.events.length; i < local.session.events.length; i++) {
+          const queued = before.outbox.find((r: any) => r.value.streamId === b.id && r.value.seq === i + 1)?.value;
+          const held = before.eventIds.find((r: any) => r.key === sidecarKey(b.id, i + 1))?.value;
+          if (!queued || !held || queued.eventId !== held.eventId || !sameMetadata(queued.event, local.session.events[i]) || !sameMetadata(held.event, queued.event)) throw new Error('本机待提交事件缺少完整排队身份，不能建立初始绑定');
+        }
+      }
+      // This is only an import-prefix binding. No snapshot event, revision, cursor cut or queue ack is installed.
+      return this.commitReadingRecovery(before, installation, (tx) => {
+        tx.objectStore('sync').put({ ...sync, cloudVersion: snapshot.cloudVersion, streams, cursor: seedCursor, lastError: null }, 'sync');
+        for (const row of identities) tx.objectStore('eventIds').put(row.value, row.key);
+      });
+    }
+    for (const [id, head] of Object.entries(sync.streams)) {
+      const h = byId.get(id);
+      if (!h || h.events.length < head.seq || (h.events[head.seq - 1]?.eventId ?? null) !== head.eventId) throw new Error('快照缺少本机已确认前缀，原数据保留');
+    }
+    for (const b of original.branches) {
+      const h = byId.get(b.id);
+      if (!h) { if (sync.streams[b.id]) throw new Error('快照缺少已绑定分支'); continue; }
+      if (b.session.events.some((e, i) => !sameMetadata(e, h.events[i]?.event))) throw new Error('快照会覆盖本机历史，必须先显式处理分叉');
+    }
+    for (const r of original.revisions) if (!remote.revisions.some((p) => p.id === r.id && sameMetadata(p, r))) throw new Error('快照会替换原始修订，原件保留');
+    for (const r of before.eventIds) {
+      const split = String(r.key).lastIndexOf(':'), id = String(r.key).slice(0, split), seq = Number(String(r.key).slice(split + 1));
+      const h = byId.get(id);
+      if (h && (!Number.isInteger(seq) || seq < 1 || r.value.eventId !== h.events[seq - 1]?.eventId || !sameMetadata(r.value.event, h.events[seq - 1]?.event))) throw new Error('快照事件身份与本机记录不同，原件保留');
+    }
+    const seed = parseWorkspace(snapshot.source), previously = revisions.installed.at(-1)?.obligations ?? seed.obligations;
+    if (!sameMetadata(original.obligations, previously)) throw new Error('本机义务与已验证登记不同，不能用快照覆盖');
+    const additions = catalog.slice(revisions.installed.length);
+    const pending = revisions.pending;
+    const own = pending?.confirmation ? additions.find((r) => r.commandId === pending.confirmation!.commandId) : undefined;
+    if (revisionFrozen(revisions) && !own) throw new Error('修订确认结果未知，先恢复同一请求');
+    if (own && (!pending || own.previewRequestId !== pending.request.requestId || pending.preview?.outcome !== 'ready'
+      || !sameMetadata(own.artifact, pending.preview.artifact)
+      || (pending.result && (pending.result.outcome !== 'applied' || !sameMetadata(pending.result.registration, own))))) throw new Error('快照修订与原确认请求不一致');
+    for (const r of additions) display = mergeDisplayChanges(display, [r.display], original.entries);
+    const entries = original.entries.map((e) => {
+      const r = remote.entries.find((r) => r.id === e.id)!;
+      if (!r) throw new Error('快照缺少原条目');
+      const changed = e.headRevisionId !== r.headRevisionId;
+      return { ...e, revisionIds: r.revisionIds, headRevisionId: r.headRevisionId,
+        ...(changed ? { updatedAt: r.updatedAt, display: { ...e.display, title: r.display.title, subtitle: r.display.subtitle, description: r.display.description } } : {}) };
+    });
+    const management = [...original.management];
+    for (const r of additions) if (!management.some((m) => m.id === `mge_${r.commandId}`)) management.push({
+      id: `mge_${r.commandId}`, sequence: management.length, op: 'adopt-revision', at: ContentRevisionSchema.parse(r.artifact.revision).authoredAt,
+      branchId: r.artifact.binding.streamId, targets: [r.entry.contentId, r.entry.headRevisionId],
+    });
+    const branches = remote.branches.map((b) => {
+      const held = original.branches.find((old) => old.id === b.id);
+      return held ? { ...b, session: { ...b.session, revision: held.session.revision + 1, current: held.session.current, largeText: held.session.largeText } } : b;
+    }).concat(original.branches.filter((b) => !byId.has(b.id)));
+    const workspace = parseWorkspace({ ...original, entries: metadataEntries(entries, display), revisions: remote.revisions, obligations: remote.obligations,
+      branches, management, identity: { ...original.identity, repositoryRevision: original.identity.repositoryRevision + 1 } });
+    for (const b of workspace.branches) bridge(content, workspace, b.id);
+    revisions = { ...revisions, installed: catalog, pending: own ? null : pending };
+    const nextSync = { ...sync, cursor: snapshot.cursor, cloudVersion: snapshot.cloudVersion, lastError: null,
+      streams: Object.fromEntries(snapshot.histories.map((h) => [h.stream.streamId, { seq: h.stream.eventSeq, eventId: h.stream.lastEventId }])), lastSyncedAt: new Date().toISOString() };
+    const rows = this.rows(workspace);
+    return this.commitReadingRecovery(before, installation, (tx) => {
+      tx.objectStore('meta').put({ ...rows.meta, management: rows.management }, 'workspace');
+      for (const r of rows.revisions) tx.objectStore('revisions').put(r, r.id);
+      for (const b of rows.branches) tx.objectStore('branches').put(b, b.id);
+      tx.objectStore('sync').put(nextSync, 'sync'); tx.objectStore('sync').put(revisions, 'revisions'); tx.objectStore('sync').put(display, 'metadata');
+      for (const h of snapshot.histories) for (const e of h.events) tx.objectStore('eventIds').put({ eventId: e.eventId, event: e.event }, sidecarKey(h.stream.streamId, e.seq));
+      // Existing staging rows remain untouched; do not recursively embed earlier recovery packages.
+      const recoveryKey = `reading-snapshot:${snapshot.digest}`, saved = tx.objectStore('staging').get(recoveryKey);
+      saved.onsuccess = () => { if (!saved.result) tx.objectStore('staging').put({ format: 'reading-snapshot-recovery/1', snapshotDigest: snapshot.digest,
+        previous: { ...before, staging: [] }, retainedStagingCount: before.staging.length }, recoveryKey); };
+      if (own) tx.objectStore('staging').put(pending, `revision-result:${own.commandId}`);
+    });
+  }
+
+  private async commitReadingRecovery(before: any, installation: CloudLocalInstallation, write: (tx: IDBTransaction) => void): Promise<void> {
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['meta', 'revisions', 'branches', 'objects', 'staging', ...SYNC_STORES], 'readwrite');
+      const actual: any = {}, names = ['revisions', 'branches', 'objects', 'staging', ...SYNC_STORES];
+      let left = names.length + 2, error = '快照接收失败，原数据与游标保留，可重新读取';
+      const install = tx.objectStore('meta').get('cloud-installation');
+      const done = () => {
+        if (--left) return;
+        try {
+          if (!sameMetadata(actual, before) || !sameMetadata(install.result, installation)) throw new Error('另一窗口或同步已更新存档，快照未接收');
+          write(tx);
+        } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
+      };
+      install.onsuccess = done;
+      const meta = tx.objectStore('meta').get('workspace'); meta.onsuccess = () => { actual.meta = meta.result ?? null; done(); };
+      for (const name of names) {
+        if ((SYNC_STORES as readonly string[]).includes(name)) {
+          const cursor = tx.objectStore(name).openCursor(), values: any[] = []; actual[name] = values;
+          cursor.onsuccess = () => { const row = cursor.result; if (row) { values.push({ key: row.key, value: row.value }); row.continue(); } else done(); };
+        } else { const req = tx.objectStore(name).getAll(); req.onsuccess = () => { actual[name] = req.result; done(); }; }
+      }
+      tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(new Error(error));
     });
   }
 
@@ -1220,7 +1375,7 @@ export class WorkspaceRepository {
       const request = store.get('sync');
       request.onsuccess = () => {
         try {
-          const state = parseSyncState(request.result);
+          const state = storedSync(request.result);
           const streams = { ...state.streams };
           for (const stream of receipt.streams) streams[stream.streamId] = { seq: stream.eventSeq, eventId: stream.lastEventId };
           store.put({

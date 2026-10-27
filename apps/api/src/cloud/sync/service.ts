@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { stableStringify } from '@endless/esl';
-import type { Workspace, Content } from '@endless/content';
+import { rebuildCloudReading, type Workspace, type Content } from '@endless/content';
 import {
-  CLOUD_LIMITS, UuidSchema, ResolveConflictRequestSchema, SyncBranchManifestSchema, SyncRecoveryRequestSchema, type SyncRecoveryRequest,
+  CLOUD_LIMITS, UuidSchema, ReadingSnapshotRequestSchema, ReadingSnapshotSchema, type ReadingSnapshot, type ReadingSnapshotRequest,
+  ResolveConflictRequestSchema, SyncBranchManifestSchema, SyncRecoveryRequestSchema, type SyncRecoveryRequest,
   type DeviceStreamState, type PutDeviceStreamStateRequest, type ResolveConflictRequest,
   type SyncBootstrap, type SyncChange, type SyncCommand, type SyncConflict, type SyncEventEntry,
   type SyncPullResponse, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding,
@@ -155,7 +156,7 @@ export class SyncService {
   constructor(
     private readonly app: CloudPool,
     private readonly source?: (ctx: AuthContext, workspaceId: string) => Promise<Workspace>,
-    content?: Content,
+    private readonly content?: Content,
   ) {
     this.metadata = new MetadataService(app, source);
     this.management = new ManagementService(app, this.metadata, source, content);
@@ -213,6 +214,42 @@ export class SyncService {
     return rows.rows.map(binding);
   }
 
+  /** Source object reads happen before the retried transaction. One workspace lock fixes the whole cut. */
+  async snapshot(ctx: AuthContext, raw: ReadingSnapshotRequest): Promise<ReadingSnapshot> {
+    const input = ReadingSnapshotRequestSchema.parse(raw);
+    await this.app.withTenant(ctx.accountId, (q) => workspaceRow(q, ctx, input.workspaceId, false));
+    if (!this.source || !this.content) throw new CloudError(409, 'UNSUPPORTED_CONTRACT', 'sync', '缺少快照验证上下文，本机数据保留', 'contact_support');
+    const source = await this.source(ctx, input.workspaceId);
+    return this.app.withTenant(ctx.accountId, async (q) => {
+      await lockAccount(q, ctx.accountId);
+      const workspace = await workspaceRow(q, ctx, input.workspaceId, true);
+      if (BigInt(workspace.cloud_version) < BigInt(input.cloudVersion)) throw new CloudError(409, 'BASIS_CHANGED', 'sync', '云端版本早于本机已确认版本，不能恢复快照', 'contact_support');
+      const streams = await this.streams(q, ctx, input.workspaceId);
+      if (!streams.length || streams.length > 64 || streams.reduce((n, s) => n + s.eventSeq, 0) > 10_000) {
+        throw new CloudError(413, 'STORAGE_QUOTA', 'sync', '完整阅读快照超过当前容量，历史保留且不截断', 'contact_support');
+      }
+      const histories: ReadingSnapshot['histories'] = [];
+      for (const stream of streams) histories.push(await this.history(q, ctx, input.workspaceId, stream.streamId,
+        source.branches.some((b) => b.id === stream.streamId) ? manifestOf(source.branches.find((b) => b.id === stream.streamId)!) : undefined));
+      for (const prefix of input.streams) {
+        const h = histories.find((h) => h.stream.streamId === prefix.streamId);
+        if (!h || h.events.length < prefix.eventSeq || (h.events[prefix.eventSeq - 1]?.eventId ?? null) !== prefix.lastEventId) {
+          throw new CloudError(409, 'BASIS_CHANGED', 'sync', '快照不能证明本机已确认前缀，完整历史保留', 'contact_support');
+        }
+      }
+      const head = (await q.query<{ change_seq: string }>('SELECT change_seq FROM workspace_change_heads WHERE account_id = $1 AND workspace_id = $2', [ctx.accountId, input.workspaceId])).rows[0]!;
+      const body = { format: 'cloud-reading-snapshot/1' as const, workspaceId: input.workspaceId,
+        cloudVersion: String(workspace.cloud_version), changeSeq: Number(head.change_seq),
+        cursor: encodeSyncCursor(input.workspaceId, Number(head.change_seq), Number(workspace.sync_epoch)),
+        source, sourceDigest: sha(stableStringify(source)), histories, revisionCatalog: await revisionCatalog(q, ctx, input.workspaceId) };
+      const result = ReadingSnapshotSchema.parse({ ...body, digest: sha(stableStringify(body)) });
+      if (Buffer.byteLength(JSON.stringify(result)) > CLOUD_LIMITS.uploadObjectBytes - 4096) throw new CloudError(413, 'STORAGE_QUOTA', 'sync', '完整阅读快照超过当前字节容量，历史保留且不截断', 'contact_support');
+      try { await rebuildCloudReading(this.content!, result, async (value) => sha(stableStringify(value))); }
+      catch { throw new CloudError(409, 'CONTENT_REJECTED', 'contract', '云端快照未通过原生内容与历史重放，完整本机数据保留', 'contact_support'); }
+      return result;
+    });
+  }
+
   async bootstrap(ctx: AuthContext, workspaceId: string, recovery?: SyncRecoveryRequest): Promise<SyncBootstrap> {
     return this.app.withTenant(ctx.accountId, async (q) => {
       const workspace = await workspaceRow(q, ctx, workspaceId, true);
@@ -235,8 +272,8 @@ export class SyncService {
           }
         }
       }
-      const head = (await q.query<{ change_seq: string }>(
-        'SELECT change_seq FROM workspace_change_heads WHERE account_id = $1 AND workspace_id = $2',
+      const head = (await q.query<{ change_seq: string; retained_from: string }>(
+        'SELECT change_seq, retained_from FROM workspace_change_heads WHERE account_id = $1 AND workspace_id = $2',
         [ctx.accountId, workspaceId],
       )).rows[0];
       if (recovery) {
@@ -268,6 +305,7 @@ export class SyncService {
       return {
         workspaceId, cloudVersion: String(workspace.cloud_version),
         changeSeq: head ? Number(head.change_seq) : 0,
+        ...(Number(head?.retained_from ?? 0) > 0 ? { retainedFrom: Number(head!.retained_from) } : {}),
         cursor: encodeSyncCursor(workspaceId, head ? Number(head.change_seq) : 0, Number(workspace.sync_epoch)),
         streams: await this.streams(q, ctx, workspaceId),
         origin: {
@@ -555,17 +593,17 @@ export class SyncService {
   async pull(ctx: AuthContext, workspaceId: string, cursor: string | null, limit: number = CLOUD_LIMITS.listPageDefault): Promise<SyncPullResponse> {
     const page = Math.min(Math.max(limit, 1), CLOUD_LIMITS.listPageMax);
     return this.app.withTenant(ctx.accountId, async (q) => {
-      const workspace = await workspaceRow(q, ctx, workspaceId, false);
+      const workspace = await workspaceRow(q, ctx, workspaceId, true);
       const epoch = Number(workspace.sync_epoch);
       const position = cursor ? decodeSyncCursor(cursor, workspaceId) : { seq: 0, epoch };
       if (position.epoch !== epoch) throw cursorExpired();
-      const head = (await q.query<{ change_seq: string }>(
-        'SELECT change_seq FROM workspace_change_heads WHERE account_id = $1 AND workspace_id = $2',
+      const head = (await q.query<{ change_seq: string; retained_from: string }>(
+        'SELECT change_seq, retained_from FROM workspace_change_heads WHERE account_id = $1 AND workspace_id = $2',
         [ctx.accountId, workspaceId],
       )).rows[0];
       const headSeq = head ? Number(head.change_seq) : 0;
       // 游标超前（库被回滚或恢复）只能重新引导，不能猜一个位置继续读。
-      if (position.seq > headSeq) throw cursorExpired();
+      if (position.seq > headSeq || position.seq < Number(head?.retained_from ?? 0)) throw cursorExpired();
 
       const rows = await q.query<{
         change_seq: string; batch_id: string; device_id: string; stream_id: string;
@@ -577,6 +615,8 @@ export class SyncService {
         [ctx.accountId, workspaceId, position.seq, page + 1],
       );
       const pageRows = rows.rows.slice(0, page);
+      if (pageRows.some((r, i) => Number(r.change_seq) !== position.seq + i + 1)
+        || (!pageRows.length && position.seq < headSeq)) throw cursorExpired();
       const ids = pageRows.flatMap((row) => row.event_ids);
       const events = ids.length ? (await q.query<{ event_id: string; digest: string; body: unknown; command: unknown; occurred_at: Date }>(
         `SELECT event_id, digest, body, command, occurred_at FROM event_objects

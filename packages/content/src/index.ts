@@ -517,3 +517,4 @@ export function createContent(lexiconText: string) {
 }
 
 export type Content = ReturnType<typeof createContent>;
+export { rebuildCloudReading } from './cloud-reading.js';
