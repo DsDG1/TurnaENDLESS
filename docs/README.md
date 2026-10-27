@@ -1,16 +1,33 @@
-# ENDLESS 文档索引
+# ENDLESS 文档体系与全局索引
 
 ENDLESS 是一个以「无尽内容流」为形态的 AI 原生语言学习产品构想：AI 负责导演娱乐节目，学习系统负责控制节目里的语言，SRS 是唯一由算法而不是 AI 决定的部分。
 
-| 文档 | 管什么 |
+---
+
+## 1. 核心架构与隔离基线（当前活跃规范）
+
+| 文档 | 作用与管辖范围 |
 |---|---|
-| [`../README.md`](../README.md) | 仓库实现状态：实验 0 建设（Day 1–7）完成 + Day 8 试跑完成（提示词 v16、20 批真实冒烟 90%），快速开始与偏差记录 |
-| [`edition-design.md`](./edition-design.md) | Edition 有限专题出版物的目标设计与实施审计：M0 契约基线到 M5 第二等级的工程能力（含本机 SQLite 编纂、抓取安全设施、20×10 规模夹具）；阶段出口未全部达到，证据与遗漏见 §21 |
-| [`research/oss-reuse.md`](./research/oss-reuse.md) | 可复用或借鉴的开源项目：取什么、不取什么、许可证、Web 到 React Native 的迁移成本 |
-| [`../reference/ai-mini-app-research/`](../reference/ai-mini-app-research/README.md) | 竞品研究：AI 生成型小程序的形态、创作流程与实现约定（Sekai），含能力目录、可编辑清单与样本矩阵 |
-| [`research/reference-borrowing-plan.md`](./research/reference-borrowing-plan.md) | 参考调研（ScrollToStudy 产品与无限机制、Sekai 小程序）与实验 0 的结合计划：借什么、改成什么样、怎么判断、什么时候做 |
-| [`experiments/exp-00-director-loop.md`](./experiments/exp-00-director-loop.md) | 实验 0：离线导演循环。验证内容能否持续好看、世界是否一致、学习任务是否真实执行，含 ESL v0 规范 |
+| [`../AGENTS.md`](../AGENTS.md) | Agent 行为准则与核心红线：Key 内存安全、契约互斥隔离、单事务提交 CAS、双 Profile 构建与运行速查。 |
+| [`cloud-isolation-review.md`](./cloud-isolation-review.md) | 依赖方向与运行时模块隔离基线（I-01～I-04）：原生核心解耦、游客与云端 Hook/仓库拆分、静态架构图守卫与模块证据。 |
+| [`cloud-baseline.md`](./cloud-baseline.md) | 云端全量工程存证与演进基线：覆盖 C0～C4 各分轮切片（事件身份、Outbox、冲突保留、修订采用、快照恢复与真实 API 验收旅程）。 |
+| [`edition-design.md`](./edition-design.md) | Edition 有限专题出版物子系统规范：M0 契约基线到 M5 第二等级工程能力、独立 SQLite 编纂流水线、安全抓取器与版权规则。 |
 
-> **关于 `reference/` 的链接**：该目录是本地参考材料（三份竞品调研原文），已按 `.gitignore` 排除、**不入库**。clone 本仓库后，上表第 3 行与 `research/reference-borrowing-plan.md` 头部的 `reference/...` 链接会失效——这是预期行为，不是文档错误。调研要点已提炼进 `reference-borrowing-plan.md` 正文与溯源表（第 7 节），不依赖原文也能读。
+---
 
-技术栈：TypeScript。先做移动端 Web App（PWA），以后迁到 React Native；实验工具与 app 共用同一组核心包（`packages/` 下已实现：esl / world / learning / director）。
+## 2. 调研与参考（机制与开源借鉴）
+
+| 文档 | 作用与管辖范围 |
+|---|---|
+| [`research/reference-borrowing-plan.md`](./research/reference-borrowing-plan.md) | 竞品（ScrollToStudy、Sekai）机制提炼与落地结合计划。 |
+| [`research/oss-reuse.md`](./research/oss-reuse.md) | 开源项目借鉴分析：许可证、复用边界与移动端迁移考量。 |
+| [`../reference/`](../reference/) | （本地参考材料目录，按 `.gitignore` 排除不入库，要点已在上述调研中提炼）。 |
+
+---
+
+## 3. 历史与归档区（Archive）
+
+| 目录/文件 | 说明 |
+|---|---|
+| [`archive/2026-10-25-bugfix-plan.md`](./archive/2026-10-25-bugfix-plan.md) | 2026-10-25 缺陷修复与代码质量实施计划（P0~P3 项已全部修复并通过自动化测试闭环）。 |
+| [`archive/experiments/`](./archive/experiments/) | 早期实验 0（Day 1~8 离线导演循环与批量提示词验证）的过程记录、验收审计与结果报告。 |
