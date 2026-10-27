@@ -19,7 +19,7 @@ export async function openCloudRuntime(config: CloudConfig) {
   const app = CloudPool.connect(config.appDsn);
   try {
     await Promise.all([
-      assertMigrationLevel(auth, 13), assertMigrationLevel(app, 13),
+      assertMigrationLevel(auth, 14), assertMigrationLevel(app, 14),
       assertCloudRole(auth, 'endless_auth'), assertCloudRole(app, 'endless_app'),
     ]);
     const [deployment, business] = await Promise.all([

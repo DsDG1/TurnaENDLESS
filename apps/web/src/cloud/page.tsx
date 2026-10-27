@@ -26,6 +26,7 @@ export interface CloudActions {
   pauseSync(paused: boolean): void;
   discardConflict(conflictId: string): void;
   keepConflict(conflictId: string): void;
+  rebaseBranch(streamId: string): void;
   exportConflict(): void;
 }
 
@@ -111,6 +112,12 @@ function SyncCard({ sync, enabled, busy, actions }: {
     {!!sync.needsRebase.length && <p className="error-text" role="alert">
       有 {sync.needsRebase.length} 个分支的本机历史被整体替换过，已停止推送：不会把替换后的历史当成「追加」上传。
     </p>}
+    {!!sync.needsRebase.length && <ul className="cloud-list" aria-label="待恢复分支">
+      {sync.needsRebase.map((streamId) => <li key={streamId}>
+        <span>待核对分支 {short(streamId)}</span>
+        <button className="text-button" disabled={busy || !enabled} onClick={() => actions.rebaseBranch(streamId)}>接受云端并恢复推送</button>
+      </li>)}
+    </ul>}
     {!!sync.conflicts.length && <ul className="cloud-list" aria-label="同步冲突">
       {sync.conflicts.map((conflict) => <li key={conflict.id}>
         <span>冲突 · 分支 {short(conflict.streamId)}</span>
@@ -122,7 +129,7 @@ function SyncCard({ sync, enabled, busy, actions }: {
     {!!sync.conflicts.length && <button className="button button-outline" disabled={busy} onClick={() => actions.exportConflict()}>下载本机完整冲突包</button>}
     <p className="section-footnote">
       阅读记录来自实际阅读操作，同一批次只会生效一次，重试沿用同一个请求。
-      可把离线阅读冲突保留为独立分支并恢复云端主线。打开阅读器可同步展示信息、回收站和归档，并处理并发修改；归档摘要依照已确认的阅读记录生成，采用修订尚未接入。回收不删除历史或解除阅读义务。
+      离线阅读冲突可保留为独立分支，也可采用云端历史并保留本机候选备份。打开阅读器可同步展示信息、回收站和归档；内容修改先预览，再由你确认采用。回收不删除历史或解除阅读义务。
       保留中断后可点「立即同步」恢复同一请求，不会重新创建分支。
     </p>
   </section>;
@@ -247,7 +254,7 @@ export function CloudPage({ state, actions, backup }: {
               && <button className="text-button" disabled={state.busy} onClick={() => actions.open(workspace.id)}>打开云端副本</button>}
           </li>)}</ul>}
         {state.installation && <p className="generation-phase" role="status">安装回执已保存：{new Date(state.installation.installedAt).toLocaleString('zh-CN')} · 设备 {short(state.installation.deviceId)}</p>}
-        <p className="section-footnote">领取会把同一份副本写进这台设备的独立云库，不覆盖游客存档，也不覆盖本机后续进度。领取后可用「打开云端副本」继续阅读，同步阅读进度、展示信息、回收站和归档；采用修订尚未接入。</p>
+        <p className="section-footnote">领取会把同一份副本写进这台设备的独立云库，不覆盖游客存档，也不覆盖本机后续进度。领取后可用「打开云端副本」继续阅读，同步阅读进度、展示信息、回收站、归档和已确认的内容修订。</p>
       </section>
 
       {state.sync && <SyncCard sync={state.sync} enabled={!!state.capabilities?.features.sync} busy={state.busy} actions={actions} />}
@@ -275,6 +282,7 @@ export function CloudRoute({ backup }: { backup(): unknown | null }) {
     pauseSync: (paused) => void controller.setSyncPaused(paused),
     discardConflict: (conflictId) => void controller.discardConflict(conflictId),
     keepConflict: (conflictId) => void controller.keepConflict(conflictId),
+    rebaseBranch: (streamId) => void controller.rebaseBranch(streamId),
     exportConflict: () => void controller.conflictPackage().then((value) => {
       if (value) downloadSession(value, 'endless-cloud-conflict.json');
     }),

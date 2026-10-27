@@ -59,6 +59,18 @@ describe('云客户端请求形状', () => {
       .rejects.toMatchObject({ code: 'STORAGE_QUOTA' });
     expect(huge).not.toHaveBeenCalled();
   });
+
+  it('阅读恢复只发送已确认前缀，使用同源会话与 no-store，不上传存档正文', async () => {
+    const workspaceId = crypto.randomUUID(), streamId = `brn_${crypto.randomUUID()}`;
+    const input = { workspaceId, cloudVersion: '0', streams: [{ streamId, branchId: streamId, eventSeq: 0, lastEventId: null }] };
+    const boot = { workspaceId, streams: input.streams, changeSeq: 0, cloudVersion: '0', cursor: 'head', origin: { cursor: 'origin', streams: input.streams } };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json(boot));
+    expect(await api(fetcher).recoverSync(input)).toEqual(boot);
+    const [path, options] = fetcher.mock.calls[0]!;
+    expect(path).toBe(`${CLOUD_API_PREFIX}/sync/recover`);
+    expect(options).toMatchObject({ method: 'POST', credentials: 'same-origin', cache: 'no-store', body: JSON.stringify(input) });
+    expect(new Headers(options!.headers).has('x-endless-provider-key')).toBe(false);
+  });
 });
 
 describe('云客户端错误分类', () => {

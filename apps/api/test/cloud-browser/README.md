@@ -1,0 +1,11 @@
+# Real cloud reader browser acceptance
+
+Run `pnpm -C apps/api test:cloud:browser` from the repository root. This first builds the production PWA, then runs two complete journeys with real cloud HTTP routes and a disposable PostgreSQL cluster. Install Playwright Chromium first (`pnpm -C apps/api exec playwright install chromium`), or set `PLAYWRIGHT_CHANNEL=msedge` on Windows. Missing infrastructure fails the suite; these journeys are separate from the default unit tests.
+
+Each journey uses two isolated browser contexts, one desktop and one mobile viewport. Only the initial guest workspace is seeded directly. Login, import, claim, reading, offline conflict resolution, display edits, revision adoption, archives, lifecycle, pause, session expiry and account isolation use the production UI and API. Lost responses are injected after the real server has returned; retries must recover the persisted result. Cursor recovery changes the epoch of a fully retained feed; it does not prove recovery after feed pruning.
+
+SMTP delivery uses the real encrypted mail outbox and MailWorker with a loopback TLS SMTP fixture. Object operations use the real S3 client against a loopback SigV4-checking fixture. These are not real provider or deployment acceptance. Synthetic OTP timestamps are advanced between deliberate logins to avoid waiting through the resend interval; authentication still consumes real single-use challenges.
+
+The same-origin HTTPS gateway serves an immutable snapshot of the actual production assets. Its certificate is temporary and trusted only by these browser contexts. A context-scoped asset relay fetches the same bytes through the context's certificate exception because Chromium's service-worker loader does not inherit the page exception. `/api/*` always passes through to the real server; the relay never supplies cloud business responses. Offline asset misses fail, so the cold reload exercises the actual service-worker cache. No system trust or global TLS settings change.
+
+Failure screenshots go to a unique `out/cloud-browser-*` directory. Build and other preview suites should run sequentially: a preview serving `dist` during a rebuild can observe missing assets. No production credentials, real mail, model calls, payments or user data are used.

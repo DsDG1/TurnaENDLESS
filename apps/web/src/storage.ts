@@ -4,14 +4,14 @@ import {
   ContractError, describeUnsupportedSave, parseWorkspace,
   buildVolume, bridge, validateArchiveProjection, type Content, type Workspace, type WorkspaceIdentity,
 } from '@endless/content';
-import { MetadataReceiptSchema, MetadataSnapshotSchema, ResolveConflictRequestSchema, type MetadataReceipt, type MetadataSnapshot, type CloudImportReceipt, type ResolveConflictResponse, type SyncConflict, type SyncPushReceipt, type WorkspaceInstallation } from '@endless/cloud-contracts';
+import { MetadataReceiptSchema, MetadataSnapshotSchema, ResolveConflictRequestSchema, SyncBootstrapSchema, type SyncBootstrap, type MetadataReceipt, type MetadataSnapshot, type CloudImportReceipt, type ResolveConflictResponse, type SyncConflict, type SyncPushReceipt, type WorkspaceInstallation } from '@endless/cloud-contracts';
 import { stableStringify } from '@endless/esl';
 import { ArchiveCommandSchema, ArchiveReceiptSchema, type ArchiveCommand, type ArchiveReceipt } from '@endless/cloud-contracts';
 import { acceptArchiveReceipt, archivePositions, emptyArchives, initialArchives, nativeArchiveState, parseArchives, rememberArchives, type ArchiveView } from './cloud/archives.js';
 import { LifecycleReceiptSchema, ManagementBootstrapSchema, ManagementPullSchema, type LifecycleReceipt, type ManagementBootstrap, type ManagementPull } from '@endless/cloud-contracts';
 import { emptyMetadata, enqueueMetadata, initialMetadata, mergeDisplayChanges, mergeMetadata, metadataEntries, parseMetadata, receiveMetadata, sameMetadata, type MetadataState } from './cloud/metadata.js';
 import { emptyLifecycle, enqueueLifecycle, initialLifecycle, lifecycleEntries, mergeLifecycle, parseLifecycle, receiveLifecycle, type LifecycleState } from './cloud/lifecycle.js';
-import { checkPreservation, type PendingPreservation } from './cloud/conflict.js';
+import { checkPreservation, readPreservation, type PendingPreservation } from './cloud/conflict.js';
 import { cloudDigest, isCloudNamespace, parseCloudInstallation, type CloudLocalInstallation } from './cloud/local.js';
 import {
   emptySyncState, parseSyncState, planOutbox, sidecarKey,
@@ -485,9 +485,9 @@ export class WorkspaceRepository {
           // 事件身份与 Outbox 在同一事务内落库：业务提交成功而身份丢失不可能发生。
           const plan = planOutbox({
             stored: slices(branches as Parameters<typeof slices>[0]).filter((branch) => !options.preservation
-              || ![options.preservation.plan.conflict.streamId, options.preservation.plan.request.streamId].includes(branch.id)),
+              || ![options.preservation.plan.conflict.streamId, options.preservation.plan.request.decision === 'keep-branch' ? options.preservation.plan.request.streamId : null].includes(branch.id)),
             next: slices(rows.branches).filter((branch) => !options.preservation
-              || ![options.preservation.plan.conflict.streamId, options.preservation.plan.request.streamId].includes(branch.id)),
+              || ![options.preservation.plan.conflict.streamId, options.preservation.plan.request.decision === 'keep-branch' ? options.preservation.plan.request.streamId : null].includes(branch.id)),
             sidecar, remote: options.remote,
             newId: () => globalThis.crypto.randomUUID(),
           });
@@ -504,13 +504,18 @@ export class WorkspaceRepository {
             const history = resolved.history!;
             const kept = resolved.preserved!;
             const sourceId = saved.conflict.streamId;
+            tx.objectStore('staging').put({ plan: saved, result: resolved, sync: syncState }, `sync-resolution:${saved.conflict.id}`);
             for (const key of sidecar.keys()) if (key.startsWith(`${sourceId}:`)) {
+              const original = outboxStore.get(key);
+              original.onsuccess = () => {
+                if (original.result !== undefined) tx.objectStore('staging').put({ key, value: original.result }, `sync-resolution-outbox:${saved.conflict.id}:${key}`);
+              };
               idStore.delete(key);
               outboxStore.delete(key);
             }
             for (const entry of history.events) idStore.put({ eventId: entry.eventId, event: entry.event }, sidecarKey(sourceId, entry.seq));
             const oldBranch = saved.workspace.branches.find((branch) => branch.id === sourceId)!;
-            for (let index = 0; index < oldBranch.session.events.length; index++) {
+            for (let index = 0; saved.request.decision === 'keep-branch' && index < oldBranch.session.events.length; index++) {
               const identity = index < saved.conflict.baseSeq
                 ? { eventId: history.events[index]!.eventId, event: history.events[index]!.event }
                 : saved.identities[index]!;
@@ -531,7 +536,7 @@ export class WorkspaceRepository {
               streams: {
                 ...syncState.streams,
                 [sourceId]: { seq: history.stream.eventSeq, eventId: history.stream.lastEventId },
-                [kept.streamId]: { seq: kept.eventSeq, eventId: kept.lastEventId },
+                ...(saved.request.decision === 'keep-branch' ? { [kept.streamId]: { seq: kept.eventSeq, eventId: kept.lastEventId } } : {}),
               },
               conflicts: syncState.conflicts.filter((entry) => entry.streamId !== sourceId),
               needsRebase: syncState.needsRebase.filter((id) => id !== sourceId),
@@ -1060,19 +1065,22 @@ export class WorkspaceRepository {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('sync', 'readonly');
       const request = tx.objectStore('sync').get('preservation');
-      tx.oncomplete = () => resolve(request.result ?? null);
+      tx.oncomplete = () => {
+        try { resolve(readPreservation(request.result, this.namespace.split(':')[3]!)); }
+        catch (cause) { reject(cause); }
+      };
       tx.onabort = tx.onerror = () => reject(new Error('无法读取冲突恢复请求；完整历史保留'));
     });
   }
 
-  async preparePreservation(conflict: SyncConflict, streamId: string): Promise<PendingPreservation> {
+  async preparePreservation(conflict: SyncConflict, streamId: string | null): Promise<PendingPreservation> {
     this.requireSync();
     if (conflict.workspaceId !== this.namespace.split(':')[3]) throw new Error('冲突不属于本机云工作区');
     const workspace = await this.load();
     if (!workspace) throw new Error('本机云副本不存在');
     if (workspace.branches.some((branch) => branch.id === streamId)) throw new Error('新分支身份已经存在，未发送保留请求');
     await this.stage(`sync-conflict:${conflict.id}`, { conflict, workspace });
-    checkPreservation(workspace, conflict);
+    checkPreservation(workspace, conflict, streamId === null);
     const db = await this.db();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['meta', 'eventIds', 'sync'], 'readwrite');
@@ -1081,18 +1089,23 @@ export class WorkspaceRepository {
       const meta = tx.objectStore('meta').get('workspace');
       const pending = tx.objectStore('sync').get('preservation');
       const sync = tx.objectStore('sync').get('sync');
+      const revision = tx.objectStore('sync').get('revisions');
       const identities: (SidecarEntry | null)[] = [];
       const branch = workspace.branches.find((entry) => entry.id === conflict.streamId)!;
-      let left = branch.session.events.length + 3;
+      let left = branch.session.events.length + 4;
       const step = () => {
         if (--left) return;
         try {
           if (pending.result) {
-            if (pending.result.conflict.id !== conflict.id) throw new Error('另一份冲突恢复尚未完成，请先恢复同一请求');
-            result = pending.result;
+            const held = readPreservation(pending.result, this.namespace.split(':')[3]!)!;
+            if (held.conflict.id !== conflict.id) throw new Error('另一份冲突恢复尚未完成，请先恢复同一请求');
+            if (held.request.decision !== (streamId === null ? 'discard' : 'keep-branch')) throw new Error('另一窗口已保存不同的冲突决定，请先恢复同一请求');
+            result = held;
             return;
           }
           if (meta.result?.identity.repositoryRevision !== workspace.identity.repositoryRevision) throw new Error('另一个窗口已更新进度，请刷新后处理冲突');
+          if (parseSyncState(sync.result).pendingPush) throw new Error('仍有结果未知的推送，请先恢复同一批次，不能改换冲突历史');
+          if (revisionFrozen(parseRevisions(revision.result, this.namespace.split(':')[3]!))) throw new Error('修订确认尚未完成，请先恢复同一请求，不能改换冲突历史');
           for (let index = conflict.baseSeq; index < branch.session.events.length; index++) {
             if (!identities[index] || stableStringify(identities[index]!.event) !== stableStringify(branch.session.events[index])) {
               throw new Error('本机事件身份不完整，冲突包已保留；不能重新分配历史身份');
@@ -1105,8 +1118,10 @@ export class WorkspaceRepository {
           const baseEventId = conflict.baseSeq
             ? identities[conflict.baseSeq - 1]?.eventId ?? (confirmed?.seq === conflict.baseSeq ? confirmed.eventId : null)
             : null;
-          if (conflict.baseSeq && !baseEventId) throw new Error('共同前缀缺少事件身份，完整冲突包已保留');
-          result = { conflict, request: { workspaceId: this.namespace.split(':')[3]!, decision: 'keep-branch', streamId, baseEventId: baseEventId ?? null }, workspace, identities };
+          if (streamId !== null && conflict.baseSeq && !baseEventId) throw new Error('共同前缀缺少事件身份，完整冲突包已保留');
+          result = { conflict, request: streamId === null
+            ? { workspaceId: this.namespace.split(':')[3]!, decision: 'discard' }
+            : { workspaceId: this.namespace.split(':')[3]!, decision: 'keep-branch', streamId, baseEventId: baseEventId ?? null }, workspace, identities };
           ResolveConflictRequestSchema.parse(result.request);
           tx.objectStore('sync').put(result, 'preservation');
         } catch (cause) {
@@ -1114,7 +1129,7 @@ export class WorkspaceRepository {
           tx.abort();
         }
       };
-      meta.onsuccess = pending.onsuccess = sync.onsuccess = step;
+      meta.onsuccess = pending.onsuccess = sync.onsuccess = revision.onsuccess = step;
       branch.session.events.forEach((_event, index) => {
         const request = tx.objectStore('eventIds').get(sidecarKey(branch.id, index + 1));
         request.onsuccess = () => { identities[index] = request.result ?? null; step(); };
@@ -1129,9 +1144,49 @@ export class WorkspaceRepository {
     const db = await this.db();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('sync', 'readwrite');
-      tx.objectStore('sync').put(state, 'sync');
+      const store = tx.objectStore('sync');
+      if (state.pendingPush) {
+        const pending = store.get('preservation');
+        pending.onsuccess = () => {
+          if (pending.result) { tx.abort(); return; }
+          store.put(state, 'sync');
+        };
+      } else store.put(state, 'sync');
       tx.oncomplete = () => resolve();
       tx.onabort = tx.onerror = () => reject(new Error('同步状态尚未保存'));
+    });
+  }
+
+  /** Re-anchor the cursor without replacing business rows, identities, commands or acknowledged heads. */
+  async reanchorSync(expected: CloudSyncState, raw: SyncBootstrap): Promise<void> {
+    this.requireSync();
+    const boot = SyncBootstrapSchema.parse(raw);
+    if (boot.workspaceId !== this.namespace.split(':')[3] || !boot.origin
+      || (expected.cloudVersion !== null && BigInt(boot.cloudVersion) < BigInt(expected.cloudVersion))
+      || Object.entries(expected.streams).some(([id, head]) => {
+        const current = boot.streams.find((s) => s.streamId === id);
+        return !current || current.eventSeq < head.seq || (current.eventSeq === head.seq && current.lastEventId !== head.eventId);
+      })) throw new Error('恢复引导与本机已确认前缀不一致，原游标与完整历史保留');
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['sync', 'outbox'], 'readwrite');
+      const store = tx.objectStore('sync');
+      const state = store.get('sync'), outbox = tx.objectStore('outbox').count(), pending = store.get('preservation');
+      let left = 3, error = '恢复游标尚未保存，原数据保留';
+      const step = () => {
+        if (--left) return;
+        try {
+          const current = parseSyncState(state.result);
+          if (stableStringify(current) !== stableStringify(expected)) throw new Error('另一窗口已更新同步状态，请重试恢复');
+          if (outbox.result || current.pendingPush || current.conflicts.length || current.needsRebase.length || pending.result) {
+            throw new Error('仍有未同步事件或冲突请求，不能重新定位阅读游标');
+          }
+          store.put({ ...current, cursor: boot.origin!.cursor, lastError: null }, 'sync');
+        } catch (cause) { error = cause instanceof Error ? cause.message : error; tx.abort(); }
+      };
+      state.onsuccess = outbox.onsuccess = pending.onsuccess = step;
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(new Error(error));
     });
   }
 
@@ -1177,39 +1232,6 @@ export class WorkspaceRepository {
       };
       tx.oncomplete = () => resolve();
       tx.onabort = tx.onerror = () => reject(new Error('推送回执尚未保存，可沿原批次重试'));
-    });
-  }
-
-  /** 明确放弃冲突：本机这批事件不再推送，云端前缀改为服务端当前流头。 */
-  async discardConflict(streamId: string, binding: { seq: number; eventId: string | null }): Promise<void> {
-    this.requireSync();
-    const db = await this.db();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['outbox', 'sync'], 'readwrite');
-      const outbox = tx.objectStore('outbox');
-      const cursor = outbox.openCursor();
-      cursor.onsuccess = () => {
-        const current = cursor.result;
-        if (!current) return;
-        if ((current.value as OutboxEntry).streamId === streamId) current.delete();
-        current.continue();
-      };
-      const store = tx.objectStore('sync');
-      const request = store.get('sync');
-      request.onsuccess = () => {
-        try {
-          const state = parseSyncState(request.result);
-          store.put({
-            ...state,
-            streams: { ...state.streams, [streamId]: binding },
-            conflicts: state.conflicts.filter((entry) => entry.streamId !== streamId),
-            needsRebase: [...new Set([...state.needsRebase, streamId])],
-            lastError: null,
-          }, 'sync');
-        } catch { tx.abort(); }
-      };
-      tx.oncomplete = () => resolve();
-      tx.onabort = tx.onerror = () => reject(new Error('放弃冲突的结果尚未保存'));
     });
   }
 

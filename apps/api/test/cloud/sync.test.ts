@@ -5,6 +5,7 @@ import { stableStringify } from '@endless/esl';
 import { applyPlayerCommand, adoptRevision, buildBackup, validateCloudBackup, attachVolume, buildVolume, bridge, trashContent, ContentRevisionSchema, type Workspace } from '@endless/content';
 import { getOptions, getScenes } from '@endless/player';
 import type { ArchiveCommand, ArchiveReceipt, SyncEventEntry, SyncStreamIdSchema } from '@endless/cloud-contracts';
+import { CLOUD_LIMITS } from '@endless/cloud-contracts';
 import type { z } from 'zod';
 import { AuthService, type AuthContext } from '../../src/cloud/auth/service.js';
 import { OutboxMailer, readQueuedMail } from '../../src/cloud/mail.js';
@@ -901,8 +902,102 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     expect(resolved.conflict.events[0]!.eventId).toBe(right[split]!.eventId);
     expect(resolved.stream).toMatchObject({ eventSeq: split + 1, lastEventId: left[split]!.eventId });
     expect((await sync.conflicts(second, workspaceId)).conflicts[0]).toMatchObject({ status: 'discarded' });
-    await expect(sync.resolve(second, workspaceId, open.id, { workspaceId, decision: 'discard' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(resolved.history!.events.map((e) => e.eventId)).toEqual([...prefix, left[split]!].map((e) => e.eventId));
+    const retried = await Promise.all(Array.from({ length: 20 }, () => sync.resolve(second, workspaceId, open.id, { workspaceId, decision: 'discard' })));
+    for (const result of retried) expect(result).toEqual(resolved);
   });
+
+  async function discardCandidate(fork = false) {
+    const local = cloudTestWorkspace(), { workspaceId, bootstrap } = await imported(local);
+    const streamId = fork ? `brn_${randomUUID()}` as StreamId : streamOf(local);
+    if (fork) await sync.registerStream(a, { workspaceId, streamId, parentStreamId: streamOf(local), forkAtSeq: 0 });
+    const left = entries(play(local, { limit: 2 })), right = entries(play(local, { limit: 1, at: () => '2026-10-25T00:00:00.000Z' }));
+    await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId, baseSeq: 0, baseEventId: null, events: left.slice(0, 1) }] });
+    const rejected = { workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId, baseSeq: 0, baseEventId: null, events: right }] };
+    await expect(sync.push(second, rejected)).rejects.toMatchObject({ code: 'SYNC_CONFLICT' });
+    const conflict = (await sync.conflicts(second, workspaceId)).conflicts[0]!;
+    return { workspaceId, streamId, left, right, conflict, rejected, input: { workspaceId, decision: 'discard' as const } };
+  }
+
+  it('同一拒绝批次在换会话设备后并发重试，仍返回第一次候选，不改原作者或接受换文', async () => {
+    const f = await discardCandidate();
+    const retries = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => sync.push(i % 2 ? a : second, f.rejected)));
+    for (const attempt of retries) {
+      expect(attempt.status).toBe('rejected');
+      if (attempt.status === 'rejected') expect(attempt.reason).toMatchObject({ code: 'SYNC_CONFLICT', extras: { conflictId: f.conflict.id } });
+    }
+    expect((await sync.conflicts(a, f.workspaceId)).conflicts).toEqual([f.conflict]);
+    expect(f.conflict.deviceId).toBe(second.deviceId);
+    await expect(sync.push(a, { ...f.rejected, baseVersion: '999' })).rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+  });
+
+  it('并发放弃只裁决一次，云端继续阅读与原件不可读后仍恢复同一完整回执；候选与裁决在 DB 不可变', async () => {
+    const f = await discardCandidate(true);
+    const results = await Promise.all(Array.from({ length: 20 }, () => sync.resolve(second, f.workspaceId, f.conflict.id, f.input)));
+    for (const r of results) expect(r).toEqual(results[0]);
+    const first = results[0]!;
+    expect(first.history!.branch.streamId).toBe(f.streamId);
+    await sync.push(a, { workspaceId: f.workspaceId, batchId: randomUUID(), baseVersion: (await sync.bootstrap(a, f.workspaceId)).cloudVersion,
+      streams: [{ streamId: f.streamId, baseSeq: 1, baseEventId: f.left[0]!.eventId, events: f.left.slice(1) }] });
+    const unavailable = new SyncService(fixture.app, async () => { throw new Error('source unavailable'); }, content);
+    expect(await unavailable.resolve(second, f.workspaceId, f.conflict.id, f.input)).toEqual(first);
+    expect(first.history!.events).toEqual(f.left.slice(0, 1));
+    await expect(sync.resolve(second, f.workspaceId, f.conflict.id, { ...f.input, decision: 'keep-branch', streamId: `brn_${randomUUID()}`, baseEventId: null }))
+      .rejects.toMatchObject({ code: 'IDEMPOTENCY_MISMATCH' });
+    await expect(sync.resolve(b, f.workspaceId, f.conflict.id, f.input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    for (const mutation of ["resolution_receipt = resolution_receipt || '{\"forged\":true}'::jsonb", "payload = '{\"events\":[]}'::jsonb", "status = 'open', resolved_at = NULL"]) {
+      await expect(fixture.app.withTenant(a.accountId, (q) => q.query(`UPDATE sync_conflicts SET ${mutation} WHERE workspace_id = $1 AND id = $2`, [f.workspaceId, f.conflict.id])))
+        .rejects.toThrow('immutable');
+    }
+    expect(await sync.resolve(second, f.workspaceId, f.conflict.id, f.input)).toEqual(first);
+  });
+
+  it('放弃回执落库失败整笔回滚；历史超限不裁决也不截断，原候选保持 open', async () => {
+    const f = await discardCandidate(), original = fixture.app.withTenant.bind(fixture.app);
+    const fail = vi.spyOn(fixture.app, 'withTenant').mockImplementation((account, fn) => original(account, (q) => fn({ query: ((sql, params) => {
+      if (sql.includes('SET resolution_digest')) throw new Error('synthetic discard receipt failure');
+      return q.query(sql, params);
+    }) as Querier['query'] })));
+    try { await expect(sync.resolve(second, f.workspaceId, f.conflict.id, f.input)).rejects.toThrow('synthetic discard'); }
+    finally { fail.mockRestore(); }
+    expect((await sync.conflicts(second, f.workspaceId)).conflicts[0]).toEqual(f.conflict);
+    await fixture.app.withTenant(a.accountId, (q) => q.query('UPDATE sync_streams SET event_seq = 10001 WHERE workspace_id = $1 AND stream_id = $2', [f.workspaceId, f.streamId]));
+    await expect(sync.resolve(second, f.workspaceId, f.conflict.id, f.input)).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTRACT' });
+    expect((await sync.conflicts(second, f.workspaceId)).conflicts[0]).toEqual(f.conflict);
+    await fixture.app.withTenant(a.accountId, (q) => q.query('UPDATE sync_streams SET event_seq = 1 WHERE workspace_id = $1 AND stream_id = $2', [f.workspaceId, f.streamId]));
+    expect((await sync.resolve(second, f.workspaceId, f.conflict.id, f.input)).conflict.status).toBe('discarded');
+  });
+
+  it('旧客户端 discarded 行可一次补齐恢复回执，保留原裁决时间与候选，不重新开放', async () => {
+    const f = await discardCandidate();
+    await fixture.app.withTenant(a.accountId, (q) => q.query("UPDATE sync_conflicts SET status = 'discarded', resolved_at = now() WHERE workspace_id = $1 AND id = $2", [f.workspaceId, f.conflict.id]));
+    const old = (await sync.conflicts(second, f.workspaceId)).conflicts[0]!;
+    const result = await sync.resolve(second, f.workspaceId, f.conflict.id, f.input);
+    expect(result.conflict).toEqual(old); expect(result.history!.events).toEqual(f.left.slice(0, 1));
+    expect(await sync.resolve(second, f.workspaceId, f.conflict.id, f.input)).toEqual(result);
+  });
+
+  it('实际恢复包超出 2 MiB 时不裁决不截断，保留全部 PG 库存（合成传输夹具）', async () => {
+    const f = await discardCandidate();
+    // Valid transport envelopes with distinct IDs, not a learning/player acceptance fixture.
+    const extra = Array.from({ length: 5500 }, (_, index): SyncEventEntry => ({ ...f.left[0]!, seq: index + 2, eventId: randomUUID() }));
+    expect(Buffer.byteLength(JSON.stringify(extra))).toBeGreaterThan(CLOUD_LIMITS.uploadObjectBytes);
+    let last = f.left[0]!.eventId;
+    for (let offset = 0; offset < extra.length; offset += CLOUD_LIMITS.eventsPerBatch) {
+      const chunk = extra.slice(offset, offset + CLOUD_LIMITS.eventsPerBatch);
+      await sync.push(a, { workspaceId: f.workspaceId, batchId: randomUUID(), baseVersion: '1',
+        streams: [{ streamId: f.streamId, baseSeq: offset + 1, baseEventId: last, events: chunk }] });
+      last = chunk.at(-1)!.eventId;
+    }
+    await expect(sync.resolve(second, f.workspaceId, f.conflict.id, f.input)).rejects.toMatchObject({ code: 'STORAGE_QUOTA', status: 413 });
+    expect((await sync.conflicts(second, f.workspaceId)).conflicts[0]).toEqual(f.conflict);
+    await fixture.app.withTenant(a.accountId, async (q) => {
+      expect(Number((await q.query<{ count: string }>('SELECT count(*) AS count FROM stream_events WHERE workspace_id = $1', [f.workspaceId])).rows[0]!.count)).toBe(5501);
+      expect((await q.query('SELECT resolution_receipt FROM sync_conflicts WHERE workspace_id = $1 AND id = $2', [f.workspaceId, f.conflict.id])).rows[0]!.resolution_receipt).toBeNull();
+    });
+  }, 45_000);
 
   it('账号锁内串行：并发推送不会先提交一个更大的序号', async () => {
     const local = cloudTestWorkspace();
@@ -1005,6 +1100,59 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     await expect(sync.pull(a, workspaceId, encodeSyncCursor(workspaceId, 0, 7))).rejects.toMatchObject({ code: 'CURSOR_EXPIRED' });
     await expect(sync.pull(a, workspaceId, 'not-a-cursor')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     await expect(sync.pull(a, workspaceId, encodeSyncCursor(randomUUID(), 0, 1))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('恢复验证每个已确认前缀，在同一锁内绑定新代次和完整保留变更流，不修改历史', async () => {
+    const local = cloudTestWorkspace();
+    const { workspaceId, bootstrap } = await imported(local);
+    const all = entries(play(local, { limit: 2 }));
+    await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: streamOf(local), baseSeq: 0, baseEventId: null, events: all }] });
+    const acknowledged = await sync.bootstrap(a, workspaceId);
+    await fixture.app.withTenant(a.accountId, async (q) => {
+      await q.query('UPDATE workspaces SET sync_epoch = sync_epoch + 1 WHERE id = $1', [workspaceId]);
+    });
+    const input = { workspaceId, cloudVersion: acknowledged.cloudVersion, streams: acknowledged.streams };
+    const recovered = await sync.bootstrap(a, workspaceId, input);
+    expect(recovered.streams).toEqual(acknowledged.streams);
+    expect(recovered.origin!.cursor).not.toBe(acknowledged.origin!.cursor);
+    expect((await sync.pull(a, workspaceId, recovered.origin!.cursor)).changes[0]!.events).toEqual(all);
+    await expect(sync.bootstrap(a, workspaceId, { ...input, streams: [{ ...input.streams[0]!, lastEventId: randomUUID() }] }))
+      .rejects.toMatchObject({ code: 'BASIS_CHANGED' });
+    await expect(sync.bootstrap(a, workspaceId, { ...input, streams: [{ ...input.streams[0]!, eventSeq: 3 }] }))
+      .rejects.toMatchObject({ code: 'BASIS_CHANGED' });
+    await expect(sync.bootstrap(b, workspaceId, input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(sync.bootstrap(a, workspaceId, { ...input, cloudVersion: '99999' })).rejects.toMatchObject({ code: 'BASIS_CHANGED' });
+    const response = await request('/sync/recover', 'POST', input);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(recovered);
+    expect((await request('/sync/recover', 'POST', { ...input, snapshot: local })).status).toBe(400);
+    expect((await request('/sync/recover', 'POST', { ...input, streams: [...input.streams, ...input.streams] })).status).toBe(400);
+    const endpoint = `${base}/api/cloud/v1/sync/recover`;
+    const forbidden = await fetch(endpoint, { method: 'POST', headers: {
+      origin: ORIGIN, cookie, 'content-type': 'application/json', 'x-endless-provider-key': 'synthetic-only',
+    }, body: JSON.stringify(input) });
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.headers.get('cache-control')).toContain('no-store');
+    expect((await fetch(endpoint, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(input) })).status).toBe(403);
+    expect((await request('/sync/recover', 'POST', input, '')).status).toBe(401);
+    expect((await request('/sync/recover', 'POST', input, cookieB)).status).toBe(404);
+  });
+
+  it('云库丢失已确认事件或保留变更流有洞时拒绝恢复，不把回滚当同步成功', async () => {
+    const local = cloudTestWorkspace();
+    const { workspaceId, bootstrap } = await imported(local);
+    const all = entries(play(local, { limit: 1 }));
+    await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: bootstrap.cloudVersion,
+      streams: [{ streamId: streamOf(local), baseSeq: 0, baseEventId: null, events: all }] });
+    const acknowledged = await sync.bootstrap(a, workspaceId);
+    const input = { workspaceId, cloudVersion: acknowledged.cloudVersion, streams: acknowledged.streams };
+    await withClient(fixture.cluster.adminDsn, (q) => q.query('DELETE FROM workspace_changes WHERE workspace_id = $1', [workspaceId]));
+    await expect(sync.bootstrap(a, workspaceId, input)).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTRACT' });
+    await fixture.app.withTenant(a.accountId, async (q) => {
+      await q.query('UPDATE sync_streams SET event_seq = 0, last_event_id = NULL WHERE workspace_id = $1', [workspaceId]);
+    });
+    await expect(sync.bootstrap(a, workspaceId, input)).rejects.toMatchObject({ code: 'BASIS_CHANGED' });
   });
 
   it('前缀冲突掩盖的坏摘要不能通过保留分支入库，整笔创建回滚', async () => {

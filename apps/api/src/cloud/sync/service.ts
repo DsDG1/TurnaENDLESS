@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { stableStringify } from '@endless/esl';
 import type { Workspace, Content } from '@endless/content';
 import {
-  CLOUD_LIMITS, UuidSchema, ResolveConflictRequestSchema, SyncBranchManifestSchema,
+  CLOUD_LIMITS, UuidSchema, ResolveConflictRequestSchema, SyncBranchManifestSchema, SyncRecoveryRequestSchema, type SyncRecoveryRequest,
   type DeviceStreamState, type PutDeviceStreamStateRequest, type ResolveConflictRequest,
   type SyncBootstrap, type SyncChange, type SyncCommand, type SyncConflict, type SyncEventEntry,
   type SyncPullResponse, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding,
@@ -213,13 +213,42 @@ export class SyncService {
     return rows.rows.map(binding);
   }
 
-  async bootstrap(ctx: AuthContext, workspaceId: string): Promise<SyncBootstrap> {
+  async bootstrap(ctx: AuthContext, workspaceId: string, recovery?: SyncRecoveryRequest): Promise<SyncBootstrap> {
     return this.app.withTenant(ctx.accountId, async (q) => {
       const workspace = await workspaceRow(q, ctx, workspaceId, true);
+      if (recovery) {
+        if (!SyncRecoveryRequestSchema.safeParse(recovery).success || recovery.workspaceId !== workspaceId) throw badRequest('恢复前缀格式无效');
+        if (BigInt(workspace.cloud_version) < BigInt(recovery.cloudVersion)) {
+          throw new CloudError(409, 'BASIS_CHANGED', 'sync', '云端版本早于本机已确认版本；完整历史保留，不能重新引导', 'contact_support');
+        }
+        // The workspace lock also serializes push/register/adopt. Never re-anchor over a DB rollback.
+        for (const prefix of recovery.streams) {
+          const row = (await q.query<{ event_seq: string; event_id: string | null }>(
+            `SELECT s.event_seq, e.event_id FROM sync_streams s LEFT JOIN stream_events e
+             ON e.account_id = s.account_id AND e.workspace_id = s.workspace_id
+               AND e.stream_id = s.stream_id AND e.event_seq = $4
+             WHERE s.account_id = $1 AND s.workspace_id = $2 AND s.stream_id = $3`,
+            [ctx.accountId, workspaceId, prefix.streamId, prefix.eventSeq],
+          )).rows[0];
+          if (!row || Number(row.event_seq) < prefix.eventSeq || row.event_id !== prefix.lastEventId) {
+            throw new CloudError(409, 'BASIS_CHANGED', 'sync', '云端不能证明本机已确认的历史前缀；完整历史保留，不能重新引导', 'contact_support');
+          }
+        }
+      }
       const head = (await q.query<{ change_seq: string }>(
         'SELECT change_seq FROM workspace_change_heads WHERE account_id = $1 AND workspace_id = $2',
         [ctx.accountId, workspaceId],
       )).rows[0];
+      if (recovery) {
+        const inventory = (await q.query<{ count: string; first: string | null; last: string | null }>(
+          `SELECT count(*) AS count, min(change_seq) AS first, max(change_seq) AS last
+           FROM workspace_changes WHERE account_id = $1 AND workspace_id = $2`, [ctx.accountId, workspaceId],
+        )).rows[0]!;
+        const end = Number(head?.change_seq ?? 0);
+        if (Number(inventory.count) !== end || (end > 0 && (Number(inventory.first) !== 1 || Number(inventory.last) !== end))) {
+          throw new CloudError(409, 'UNSUPPORTED_CONTRACT', 'sync', '保留的阅读变更流不完整，需要完整快照恢复；本机数据保留', 'contact_support');
+        }
+      }
       const initial = await q.query<StreamRow>(
         `WITH initial AS (
           SELECT s.stream_id, s.branch_id,
@@ -341,10 +370,12 @@ export class SyncService {
       const id = await this.app.withTenant(ctx.accountId, async (q) => {
         await lockAccount(q, ctx.accountId);
         await workspaceRow(q, ctx, input.workspaceId, true);
+        // Like sync_batches, batch identity belongs to the workspace. A new OTP session may rotate
+        // device_id while retrying the same durable Outbox; keep the first candidate and its author.
         const prior = (await q.query<{ id: string; payload: { requestDigest?: string } }>(
           `SELECT id, payload FROM sync_conflicts WHERE account_id = $1 AND workspace_id = $2
-           AND device_id = $3 AND payload->>'batchId' = $4 ORDER BY created_at LIMIT 1`,
-          [ctx.accountId, input.workspaceId, ctx.deviceId, input.batchId],
+           AND payload->>'batchId' = $3 ORDER BY created_at, id LIMIT 1`,
+          [ctx.accountId, input.workspaceId, input.batchId],
         )).rows[0];
         if (prior) {
           if (prior.payload.requestDigest !== digest) throw idempotencyMismatch();
@@ -608,26 +639,49 @@ export class SyncService {
 
   async resolve(ctx: AuthContext, workspaceId: string, conflictId: string, input: ResolveConflictRequest): Promise<ResolveConflictResponse> {
     const parsed = ResolveConflictRequestSchema.safeParse(input);
-    if (!parsed.success || input.workspaceId !== workspaceId) throw badRequest('冲突处理格式无效');
+    if (!parsed.success || input.workspaceId !== workspaceId || !UuidSchema.safeParse(conflictId).success) throw badRequest('冲突处理格式无效');
     if (input.decision === 'keep-branch') return this.preserve(ctx, workspaceId, conflictId, input);
+    const digest = sha(stableStringify(input));
+    const cached = await this.app.withTenant(ctx.accountId, async (q) => {
+      await workspaceRow(q, ctx, workspaceId, false);
+      return (await q.query<{ stream_id: string; resolution_digest: string | null; resolution_receipt: ResolveConflictResponse | null }>(
+        'SELECT stream_id, resolution_digest, resolution_receipt FROM sync_conflicts WHERE account_id = $1 AND workspace_id = $2 AND id = $3',
+        [ctx.accountId, workspaceId, conflictId],
+      )).rows[0];
+    });
+    if (!cached) throw notFound('冲突不存在');
+    if (cached.resolution_receipt) {
+      if (cached.resolution_digest !== digest) throw idempotencyMismatch();
+      return cached.resolution_receipt;
+    }
+    // Verified original reads (only for old streams missing a manifest) stay outside retried transactions.
+    const fallback = await this.fallbackManifest(ctx, workspaceId, cached.stream_id);
     return this.app.withTenant(ctx.accountId, async (q) => {
       await lockAccount(q, ctx.accountId);
       await workspaceRow(q, ctx, workspaceId, true);
-      const updated = await q.query<{ stream_id: string }>(
-        `UPDATE sync_conflicts SET status = 'discarded', resolved_at = now()
-         WHERE account_id = $1 AND workspace_id = $2 AND id = $3 AND status = 'open' RETURNING stream_id`,
+      const held = (await q.query<{ stream_id: string; status: string; resolution_digest: string | null; resolution_receipt: ResolveConflictResponse | null }>(
+        `SELECT stream_id, status, resolution_digest, resolution_receipt FROM sync_conflicts
+         WHERE account_id = $1 AND workspace_id = $2 AND id = $3 FOR UPDATE`,
         [ctx.accountId, workspaceId, conflictId],
-      );
-      if (!updated.rows[0]) throw notFound('冲突不存在或已处理');
-      const stream = (await q.query<StreamRow>(
-        'SELECT stream_id, branch_id, event_seq, last_event_id FROM sync_streams WHERE account_id = $1 AND workspace_id = $2 AND stream_id = $3',
-        [ctx.accountId, workspaceId, updated.rows[0].stream_id],
       )).rows[0];
-      if (!stream) throw notFound('冲突对应的事件流不存在');
+      if (!held) throw notFound('冲突不存在');
+      if (held.resolution_receipt) {
+        if (held.resolution_digest !== digest) throw idempotencyMismatch();
+        return held.resolution_receipt;
+      }
+      if (held.status !== 'open' && held.status !== 'discarded') throw idempotencyMismatch();
+      const history = await this.history(q, ctx, workspaceId, held.stream_id, fallback);
+      await q.query(`UPDATE sync_conflicts SET status = 'discarded', resolved_at = COALESCE(resolved_at, now())
+        WHERE account_id = $1 AND workspace_id = $2 AND id = $3`, [ctx.accountId, workspaceId, conflictId]);
       const listed = await this.listConflicts(q, ctx, workspaceId, conflictId);
       const conflict = listed.conflicts.find((entry) => entry.id === conflictId);
-      if (!conflict) throw notFound('冲突不存在或已处理');
-      return { conflict, stream: binding(stream) };
+      if (!conflict) throw notFound('冲突不存在');
+      const receipt = { conflict, stream: history.stream, history };
+      if (Buffer.byteLength(JSON.stringify(receipt)) > CLOUD_LIMITS.uploadObjectBytes) throw new CloudError(413, 'STORAGE_QUOTA', 'sync',
+        '放弃恢复回执超过当前容量，原候选与历史保留；不能截断恢复', 'contact_support');
+      await q.query(`UPDATE sync_conflicts SET resolution_digest = $4, resolution_receipt = $5
+        WHERE account_id = $1 AND workspace_id = $2 AND id = $3`, [ctx.accountId, workspaceId, conflictId, digest, JSON.stringify(receipt)]);
+      return receipt;
     });
   }
 

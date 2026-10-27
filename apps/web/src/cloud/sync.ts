@@ -1,6 +1,6 @@
 import { stableStringify } from '@endless/esl';
 import { applyPlayerCommand, parseWorkspace, switchBranch, type Content, type Workspace } from '@endless/content';
-import { CLOUD_LIMITS, type ResolveConflictResponse, type SyncBootstrap, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
+import { CLOUD_LIMITS, type ResolveConflictResponse, type SyncBootstrap, type SyncRecoveryRequest, type SyncChange, type SyncConflict, type SyncPushReceipt, type SyncPushRequest, type SyncStreamBinding } from '@endless/cloud-contracts';
 import { SessionCommitter, type CommitOptions, type CommitOutcome } from '../session-writer.js';
 import { preservedWorkspace, type PendingPreservation } from './conflict.js';
 import { CloudFailure } from './client.js';
@@ -20,10 +20,10 @@ export interface SyncRepository {
   syncState(): Promise<CloudSyncState>;
   pendingOutbox(): Promise<OutboxEntry[]>;
   saveSyncState(state: CloudSyncState): Promise<void>;
+  reanchorSync(expected: CloudSyncState, boot: SyncBootstrap): Promise<void>;
   acknowledgePush(receipt: SyncPushReceipt, keys: readonly string[]): Promise<void>;
-  discardConflict(streamId: string, binding: { seq: number; eventId: string | null }): Promise<void>;
   pendingPreservation(): Promise<PendingPreservation | null>;
-  preparePreservation(conflict: SyncConflict, streamId: string): Promise<PendingPreservation>;
+  preparePreservation(conflict: SyncConflict, streamId: string | null): Promise<PendingPreservation>;
   releasePreservation(plan: PendingPreservation): Promise<void>;
   load(): Promise<Workspace | null>;
   commit(next: Workspace, options?: CommitOptions): Promise<void | CommitOutcome>;
@@ -31,6 +31,7 @@ export interface SyncRepository {
 
 export interface SyncApiPort {
   bootstrap(workspaceId: string): Promise<SyncBootstrap>;
+  recoverSync(input: SyncRecoveryRequest): Promise<SyncBootstrap>;
   registerStream(input: { workspaceId: string; streamId: string; parentStreamId: string; forkAtSeq: number }): Promise<SyncStreamBinding>;
   push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
   pull(workspaceId: string, cursor: string | null, limit?: number): Promise<{
@@ -103,7 +104,7 @@ export class WorkspaceSync {
         return { pushed: 0, applied: 0, pending, stopped: null, note: '同步已暂停；本机事件继续排队，不会被丢弃' };
       }
       const preservation = await this.deps.repo.pendingPreservation();
-      if (preservation) await this.keep(preservation.conflict.id);
+      if (preservation) await this.resolvePlan(preservation);
       const fresh = await this.deps.repo.syncState();
       if (fresh.conflicts.length) return {
         pushed: 0, applied: 0, pending: (await this.deps.repo.pendingOutbox()).length,
@@ -299,6 +300,7 @@ export class WorkspaceSync {
 
     let applied = 0;
     let cursor = state.cursor!;
+    let rebootstrapped = false;
     for (let page = 0; page < 50; page++) {
       let response;
       try {
@@ -306,6 +308,28 @@ export class WorkspaceSync {
       } catch (error) {
         if (error instanceof CloudFailure && error.code === 'CURSOR_EXPIRED') {
           const pending = (await this.deps.repo.pendingOutbox()).length;
+          const fresh = await this.deps.repo.syncState();
+          if (!rebootstrapped && !pending && !fresh.pendingPush && !fresh.conflicts.length && !fresh.needsRebase.length
+            && fresh.cloudVersion !== null && Object.keys(fresh.streams).length) {
+            try {
+              const boot = await this.deps.api.recoverSync({
+                workspaceId: this.deps.workspaceId,
+                cloudVersion: fresh.cloudVersion,
+                streams: Object.entries(fresh.streams).map(([id, head]) => ({
+                  streamId: id as SyncStreamBinding['streamId'], branchId: id as SyncStreamBinding['branchId'],
+                  eventSeq: head.seq, lastEventId: head.eventId,
+                })),
+              });
+              await this.deps.repo.reanchorSync(fresh, boot);
+              state = await this.deps.repo.syncState();
+              cursor = state.cursor!;
+              rebootstrapped = true;
+              continue;
+            } catch (cause) {
+              await this.fail(cause instanceof Error ? cause.message : '重新引导失败');
+              throw cause;
+            }
+          }
           await this.fail(error.message);
           return {
             pushed: 0, applied, pending, stopped: 'cursor',
@@ -333,7 +357,7 @@ export class WorkspaceSync {
         if (!known || change.toSeq > known.seq) {
           streams[change.streamId] = { seq: change.toSeq, eventId: last?.eventId ?? null };
         }
-        if (change.deviceId === this.deps.deviceId && !change.branch?.commonStreamId) { await this.deps.revisions?.through(change.seq); continue; } // 本机自己写的事件，已经在本机
+        // Also verify our own historical pages: deviceId is not proof of the local prefix.
         const outcome = await this.applyChange(change);
         if (outcome !== 'applied' && outcome !== 'empty') {
           await this.deps.repo.saveSyncState({ ...(await this.deps.repo.syncState()), streams });
@@ -444,22 +468,24 @@ export class WorkspaceSync {
 
   async keep(conflictId: string): Promise<void> {
     let plan = await this.deps.repo.pendingPreservation();
-    if (plan && plan.conflict.id !== conflictId) throw new Error('请先恢复已经提交的同一份冲突保留请求');
+    if (plan && (plan.conflict.id !== conflictId || plan.request.decision !== 'keep-branch')) throw new Error('请先恢复已经提交的同一份冲突处理请求，不能切换决定');
     if (!plan) {
       const listed = await this.deps.api.conflicts(this.deps.workspaceId);
       const conflict = listed.conflicts.find((entry) => entry.id === conflictId);
       if (!conflict) throw new Error('这台设备没有该冲突候选');
       plan = await this.deps.repo.preparePreservation(conflict, `brn_${this.deps.newBatchId()}`);
     }
+    await this.resolvePlan(plan);
+  }
+
+  private async resolvePlan(plan: PendingPreservation): Promise<void> {
     let result: ResolveConflictResponse;
+    const request = plan.request;
     try {
-      result = await this.deps.api.resolveConflict(this.deps.workspaceId, conflictId, 'keep-branch', {
-        streamId: plan.request.streamId, baseEventId: plan.request.baseEventId,
-      });
+      result = await this.deps.api.resolveConflict(this.deps.workspaceId, plan.conflict.id, request.decision,
+        request.decision === 'keep-branch' ? { streamId: request.streamId, baseEventId: request.baseEventId } : undefined);
     } catch (error) {
-      if (error instanceof CloudFailure && (error.code === 'BAD_REQUEST' || error.code === 'STORAGE_QUOTA')) {
-        await this.deps.repo.releasePreservation(plan);
-      }
+      if (error instanceof CloudFailure && (error.code === 'BAD_REQUEST' || error.code === 'STORAGE_QUOTA')) await this.deps.repo.releasePreservation(plan);
       throw error;
     }
     for (const [index, entry] of (result.history?.events ?? []).entries()) {
@@ -475,13 +501,29 @@ export class WorkspaceSync {
     if (!outcome.ok) throw new Error(outcome.error);
   }
 
-  /** 明确放弃本机这批候选：云端保留另一台设备的版本，本机不再推送该分支。 */
+  /** 明确放弃这条离线候选：请求先持久化，验证后原子恢复云端历史，原候选留在 staging。 */
   async discard(conflictId: string): Promise<void> {
-    if (await this.deps.repo.pendingPreservation()) throw new Error('已有保留请求尚未完成，请用「立即同步」恢复同一请求，不能切换为放弃');
-    const resolved = await this.deps.api.resolveConflict(this.deps.workspaceId, conflictId, 'discard');
-    await this.deps.repo.discardConflict(resolved.conflict.streamId, {
-      seq: resolved.stream.eventSeq, eventId: resolved.stream.lastEventId,
-    });
+    let plan = await this.deps.repo.pendingPreservation();
+    if (plan && (plan.conflict.id !== conflictId || plan.request.decision !== 'discard')) throw new Error('已有保留请求尚未完成，请用「立即同步」恢复同一请求，不能切换为放弃');
+    if (!plan) {
+      const listed = await this.deps.api.conflicts(this.deps.workspaceId);
+      const state = await this.deps.repo.syncState();
+      const conflict = listed.conflicts.find((entry) => entry.id === conflictId
+        && (entry.deviceId === this.deps.deviceId || state.conflicts.some((held) => held.id === entry.id)));
+      if (!conflict) throw new Error('这台设备没有该冲突候选');
+      plan = await this.deps.repo.preparePreservation(conflict, null);
+    }
+    await this.resolvePlan(plan);
+  }
+
+  /** 显式恢复旧客户端已经 discard、但还停在 needsRebase 的原候选。未知替换历史不猜测。 */
+  async rebase(streamId: string): Promise<void> {
+    const state = await this.deps.repo.syncState();
+    if (!state.needsRebase.includes(streamId)) throw new Error('该分支没有待恢复的已放弃历史');
+    const { conflicts } = await this.deps.api.conflicts(this.deps.workspaceId);
+    const candidates = conflicts.filter((c) => c.streamId === streamId && c.deviceId === this.deps.deviceId && c.status === 'discarded');
+    if (candidates.length !== 1) throw new Error('无法唯一确认旧放弃候选，完整本机历史保留；不会截断或猜测恢复');
+    await this.discard(candidates[0]!.id);
   }
 }
 

@@ -135,6 +135,19 @@ export const SyncBootstrapSchema = z.object({
 }).strict();
 export type SyncBootstrap = z.infer<typeof SyncBootstrapSchema>;
 
+/** Re-anchor only after the server verifies every previously acknowledged prefix. */
+export const SyncRecoveryRequestSchema = z.object({
+  workspaceId: UuidSchema,
+  cloudVersion: z.string().regex(/^\d+$/).max(20),
+  streams: z.array(SyncStreamBindingSchema).min(1).max(64),
+}).strict().superRefine((value, ctx) => {
+  if (new Set(value.streams.map((s) => s.streamId)).size !== value.streams.length
+    || value.streams.some((s) => s.streamId !== s.branchId || (s.eventSeq === 0) !== (s.lastEventId === null))) {
+    ctx.addIssue({ code: 'custom', message: '恢复前缀身份无效' });
+  }
+});
+export type SyncRecoveryRequest = z.infer<typeof SyncRecoveryRequestSchema>;
+
 export const SyncBranchManifestSchema = z.object({
   streamId: SyncStreamIdSchema,
   label: z.string().min(1).max(60),
@@ -200,8 +213,8 @@ export type SyncConflict = z.infer<typeof SyncConflictSchema>;
 export const SyncConflictListSchema = z.object({ conflicts: z.array(SyncConflictSchema) });
 
 /**
- * `discard` 明确放弃本机候选的推送；`keep-branch` 以稳定的新流 ID 保留候选。
- * 独立分支与恢复回执在同一服务端事务提交，本机先保存完整历史与同一恢复请求。
+ * `discard` 明确采用云端历史，原候选留在本机恢复记录；`keep-branch` 用稳定新流 ID 保留候选。
+ * 两种决定都持久化同一恢复请求和完整本机历史；服务端原子保存一次裁决及完整恢复回执。
  */
 export const ResolveConflictRequestSchema = z.discriminatedUnion('decision', [
   z.object({ workspaceId: UuidSchema, decision: z.literal('discard') }).strict(),

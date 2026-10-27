@@ -5,7 +5,7 @@ import {
 } from '@endless/content';
 import { getOptions, getScenes, projectSession } from '@endless/player';
 import type {
-  CloudImportReceipt, ResolveConflictResponse, SyncBootstrap, SyncChange, SyncConflict, SyncPushReceipt, SyncPushRequest, SyncStreamBinding,
+  CloudImportReceipt, ResolveConflictResponse, SyncBootstrap, SyncRecoveryRequest, SyncChange, SyncConflict, SyncPushReceipt, SyncPushRequest, SyncStreamBinding,
 } from '@endless/cloud-contracts';
 import { CloudFailure } from '../src/cloud/client.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
@@ -24,6 +24,7 @@ import { cloudTestContent as content, cloudTestTime, cloudTestWorkspace } from '
 
 const deployment = crypto.randomUUID();
 const account = crypto.randomUUID();
+const DEVICE_A = crypto.randomUUID(), DEVICE_B = crypto.randomUUID();
 const at = (offset: number) => new Date(Date.parse(cloudTestTime) + offset * 1000);
 
 /** 在当前场景做一步真实交互（有选项先答，再推进），返回新工作区。 */
@@ -46,6 +47,7 @@ interface Recorded {
 
 /** 内存云端：只实现协议，不做学习重放。 */
 class CloudSim {
+  discardReceipts = new Map<string, ResolveConflictResponse>();
   preservationReceipts = new Map<string, ResolveConflictResponse>();
   receipts = new Map<string, { receipt: SyncPushReceipt }>();
   origins: SyncStreamBinding[] = [];
@@ -59,7 +61,7 @@ class CloudSim {
   conflictRecords = new Map<string, SyncConflict>();
   version = 1;
   /** 谁在推：真实服务端从会话取设备，这里由测试显式指定。 */
-  pusher = 'device-a';
+  pusher = DEVICE_A;
 
   seed(streams: SyncStreamBinding[]) {
     this.origins = structuredClone(streams);
@@ -79,6 +81,16 @@ class CloudSim {
       cursor: String(this.changes.length), streams: this.bindings(),
       origin: { cursor: '0', streams: this.origins },
     };
+  }
+
+  async recoverSync(input: SyncRecoveryRequest): Promise<SyncBootstrap> {
+    if (BigInt(input.cloudVersion) > BigInt(this.version)) throw new CloudFailure('BASIS_CHANGED', 409, '云端版本回滚');
+    for (const prefix of input.streams) {
+      const head = this.streams.get(prefix.streamId);
+      const id = prefix.eventSeq ? this.eventIds.get(prefix.streamId)?.[prefix.eventSeq - 1] : null;
+      if (!head || head.seq < prefix.eventSeq || id !== prefix.lastEventId) throw new CloudFailure('BASIS_CHANGED', 409, '历史前缀不一致');
+    }
+    return this.bootstrap(input.workspaceId);
   }
 
   async push(input: SyncPushRequest) {
@@ -159,7 +171,7 @@ class CloudSim {
     };
   }
 
-  async conflicts() { return { conflicts: [...this.conflictRecords.values()].filter((conflict) => conflict.status === 'open') }; }
+  async conflicts() { return { conflicts: [...this.conflictRecords.values()] }; }
 
   async resolveConflict(_workspaceId: string, conflictId: string, decision: 'discard' | 'keep-branch' = 'discard', preservation?: { streamId: string; baseEventId: string | null }): Promise<ResolveConflictResponse> {
     const conflict = this.conflictRecords.get(conflictId)!;
@@ -196,15 +208,24 @@ class CloudSim {
       this.conflictRecords.set(conflictId, response.conflict);
       return response;
     }
+    const cached = this.discardReceipts.get(conflictId);
+    if (cached) return structuredClone(cached);
     conflict.status = 'discarded';
     conflict.resolvedAt = new Date().toISOString();
     const head = this.streams.get(conflict.streamId)!;
-    return {
-      conflict,
+    const stream: SyncStreamBinding = { streamId: conflict.streamId, branchId: conflict.streamId, eventSeq: head.seq, lastEventId: head.lastEventId };
+    const source = copy.branches[0]!;
+    const result: ResolveConflictResponse = {
+      conflict: structuredClone(conflict),
       stream: {
         streamId: conflict.streamId, branchId: conflict.streamId, eventSeq: head.seq, lastEventId: head.lastEventId,
       } as SyncStreamBinding,
+      history: { stream, branch: { streamId: source.id, label: source.label, parentBranchId: null, forkAtEventCount: null,
+        adopted: source.adopted, catalog: source.session.catalog, createdAt: source.createdAt, commonStreamId: null, commonPrefixSeq: 0 },
+        events: this.changes.filter((c) => c.streamId === conflict.streamId).flatMap((c) => c.events) },
     };
+    this.discardReceipts.set(conflictId, structuredClone(result));
+    return result;
   }
 }
 
@@ -281,15 +302,15 @@ describe('事务内 Outbox：身份与前缀', () => {
     const deviceB = await device(new IDBFactory(), workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const a = engine(deviceA, workspaceId, 'device-a', api);
-    const b = engine(deviceB, workspaceId, 'device-b', api);
+    const a = engine(deviceA, workspaceId, DEVICE_A, api);
+    const b = engine(deviceB, workspaceId, DEVICE_B, api);
     await a.sync.run();
     await b.sync.run();
     const left = await play(deviceA, 1, 0);
     const right = await play(deviceB, 2, 1, 500);
-    api.pusher = 'device-a';
+    api.pusher = DEVICE_A;
     await a.sync.run();
-    api.pusher = 'device-b';
+    api.pusher = DEVICE_B;
     expect((await b.sync.run()).stopped).toBe('conflict');
     const conflict = (await deviceB.syncState()).conflicts[0]!;
     api.conflictRecords.get(conflict.id)!.events = api.conflictRecords.get(conflict.id)!.events.slice(0, 1);
@@ -307,7 +328,7 @@ describe('事务内 Outbox：身份与前缀', () => {
     expect((await deviceB.pendingOutbox()).map((entry) => entry.eventId)).toEqual(localIds.slice(1));
     expect((await b.sync.run()).stopped).toBeNull();
     expect(await deviceB.pendingOutbox()).toEqual([]);
-    api.pusher = 'device-a';
+    api.pusher = DEVICE_A;
     expect((await a.sync.run()).stopped).toBeNull();
     expect((await deviceA.load())!.branches.find((branch) => branch.id === retained.id)?.session.events).toEqual(events(right));
   });
@@ -318,18 +339,18 @@ describe('事务内 Outbox：身份与前缀', () => {
     const repository = await device(factory, workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const { sync } = engine(repository, workspaceId, 'device-b', api);
+    const { sync } = engine(repository, workspaceId, DEVICE_B, api);
     await sync.run();
     const right = await play(repository, 1, 1, 500);
     const left = step(copy, 0, 0);
-    api.pusher = 'device-a';
+    api.pusher = DEVICE_A;
     const leftEvents = await Promise.all(events(left).map(async (event, index) => ({
       eventId: crypto.randomUUID(), seq: index + 1, at: event.at, event: event as never,
       command: { type: event.type, scene: event.scene, ...(event.type === 'advance' ? { skip: event.skip } : event.type === 'answer' ? { choice: event.choice } : {}) } as never,
       digest: await cloudDigest(event),
     })));
     await api.push({ workspaceId, batchId: crypto.randomUUID(), baseVersion: '1', streams: [{ streamId, baseSeq: 0, baseEventId: null, events: leftEvents }] });
-    api.pusher = 'device-b';
+    api.pusher = DEVICE_B;
     await sync.run();
     const id = (await repository.syncState()).conflicts[0]!.id;
     const original = api.resolveConflict.bind(api);
@@ -339,6 +360,7 @@ describe('事务内 Outbox：身份与前缀', () => {
     };
     await expect(sync.keep(id)).rejects.toThrow('响应丢失');
     const pending = (await repository.pendingPreservation())!;
+    if (pending.request.decision !== 'keep-branch') throw new Error('expected keep request');
     expect(pending.request.streamId).toMatch(/^brn_/);
     await expect(sync.discard(id)).rejects.toThrow('不能切换为放弃');
     const blocked = await new SessionCommitter(repository, right.identity.repositoryRevision).commit(step(right, 0, 600));
@@ -347,7 +369,7 @@ describe('事务内 Outbox：身份与前缀', () => {
     await repository.close();
     const reopened = new WorkspaceRepository(factory, cloudNamespace(deployment, account, workspaceId));
     api.resolveConflict = original;
-    const recovered = engine(reopened, workspaceId, 'device-b', api);
+    const recovered = engine(reopened, workspaceId, DEVICE_B, api);
     const before = await reopened.load();
     const outbox = await reopened.pendingOutbox();
     const put = IDBObjectStore.prototype.put;
@@ -365,7 +387,7 @@ describe('事务内 Outbox：身份与前缀', () => {
     expect(await reopened.pendingPreservation()).toEqual(pending);
     expect((await recovered.sync.run()).stopped).toBeNull();
     expect((await reopened.load())!.branches).toHaveLength(2);
-    expect((await reopened.load())!.branches.some((branch) => branch.id === pending.request.streamId)).toBe(true);
+    expect((await reopened.load())!.branches.some((branch) => branch.id === (pending.request.decision === 'keep-branch' ? pending.request.streamId : null))).toBe(true);
     expect(api.preservationReceipts.size).toBe(1);
     expect(await reopened.pendingPreservation()).toBeNull();
   });
@@ -376,7 +398,7 @@ describe('事务内 Outbox：身份与前缀', () => {
     const repository = await device(factory, workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const { sync } = engine(repository, workspaceId, 'device-a', api);
+    const { sync } = engine(repository, workspaceId, DEVICE_A, api);
     await sync.run();
     await play(repository, 1, 0);
     const ids = (await repository.pendingOutbox()).map((entry) => entry.eventId);
@@ -392,7 +414,7 @@ describe('事务内 Outbox：身份与前缀', () => {
     const reopened = new WorkspaceRepository(factory, cloudNamespace(deployment, account, workspaceId));
     const sent: SyncPushRequest[] = [];
     api.push = async (input) => { sent.push(input); return original(input); };
-    const recovered = engine(reopened, workspaceId, 'device-a', api);
+    const recovered = engine(reopened, workspaceId, DEVICE_A, api);
     expect((await recovered.sync.run()).stopped).toBeNull();
     expect(sent).toEqual([pending]);
     expect(api.changes).toHaveLength(1);
@@ -416,11 +438,11 @@ describe('事务内 Outbox：身份与前缀', () => {
     const id = crypto.randomUUID();
     const api = new CloudSim();
     api.conflictRecords.set(id, {
-      id, workspaceId, streamId, deviceId: 'device-a', reason: 'stream-head-changed',
+      id, workspaceId, streamId, deviceId: DEVICE_A, reason: 'stream-head-changed',
       status: 'open', baseSeq: 0, cloudSeq: 1, createdAt: cloudTestTime, resolvedAt: null,
       events: await Promise.all(pending.map(async (entry) => ({ ...entry, digest: await cloudDigest(entry.event) }))),
     });
-    const { sync } = engine(repository, workspaceId, 'device-a', api);
+    const { sync } = engine(repository, workspaceId, DEVICE_A, api);
     const before = await repository.load();
     await expect(sync.keep(id)).rejects.toThrow('容量');
     expect(await repository.load()).toEqual(before);
@@ -442,12 +464,12 @@ describe('事务内 Outbox：身份与前缀', () => {
     const id = crypto.randomUUID();
     const api = new CloudSim();
     api.conflictRecords.set(id, {
-      id, workspaceId, streamId, deviceId: 'device-a', reason: 'stream-head-changed',
+      id, workspaceId, streamId, deviceId: DEVICE_A, reason: 'stream-head-changed',
       status: 'open', baseSeq: 0, cloudSeq: 1, createdAt: cloudTestTime, resolvedAt: null,
       events: await Promise.all(pending.map(async (entry) => ({ ...entry, digest: await cloudDigest(entry.event) }))),
     });
     api.resolveConflict = async () => { throw new CloudFailure('STORAGE_QUOTA', 409, '云端分支容量不足'); };
-    const { sync } = engine(repository, workspaceId, 'device-a', api);
+    const { sync } = engine(repository, workspaceId, DEVICE_A, api);
     await expect(sync.keep(id)).rejects.toThrow('容量不足');
     expect(await repository.load()).toEqual(before);
     expect(await repository.pendingOutbox()).toEqual(pending);
@@ -538,13 +560,13 @@ describe('同步驱动：双设备往返', () => {
     const api = new CloudSim();
     api.seed(seed());
     const repositoryA = await device(new IDBFactory(), workspaceId);
-    const a = engine(repositoryA, workspaceId, 'device-a', api);
+    const a = engine(repositoryA, workspaceId, DEVICE_A, api);
     await a.sync.run();
     const played = await play(repositoryA, 1, 0);
-    api.pusher = 'device-a';
+    api.pusher = DEVICE_A;
     await a.sync.run();
     const repositoryB = await device(new IDBFactory(), workspaceId);
-    const b = engine(repositoryB, workspaceId, 'device-b', api);
+    const b = engine(repositoryB, workspaceId, DEVICE_B, api);
     expect((await b.sync.run()).stopped).toBeNull();
     expect(events((await repositoryB.load())!)).toEqual(events(played));
     expect(await repositoryB.pendingOutbox()).toEqual([]);
@@ -557,20 +579,20 @@ describe('同步驱动：双设备往返', () => {
     const deviceB = await device(new IDBFactory(), workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const a = engine(deviceA, workspaceId, 'device-a', api);
-    const b = engine(deviceB, workspaceId, 'device-b', api);
+    const a = engine(deviceA, workspaceId, DEVICE_A, api);
+    const b = engine(deviceB, workspaceId, DEVICE_B, api);
 
     // 两台设备先各自建立云端绑定（游标 0），再离线阅读
     await a.sync.run();
     await b.sync.run();
     const playedA = await play(deviceA, 1, 0);
-    api.pusher = 'device-a';
+    api.pusher = DEVICE_A;
     const pushedA = await a.sync.run();
     expect(pushedA.stopped).toBeNull();
     expect(pushedA.pushed).toBe(events(playedA).length);
     expect(await deviceA.pendingOutbox()).toEqual([]);
 
-    api.pusher = 'device-b';
+    api.pusher = DEVICE_B;
     const pulledB = await b.sync.run();
     expect(pulledB.applied).toBe(1);
     expect(events((await deviceB.load())!)).toEqual(events(playedA));
@@ -580,11 +602,11 @@ describe('同步驱动：双设备往返', () => {
     expect(projectSession(reopened.session, reopened.library).episodes[reopened.session.current]!.cursor).toBeGreaterThan(0);
 
     const playedB = await play(deviceB, 1, 1, 100);
-    api.pusher = 'device-b';
+    api.pusher = DEVICE_B;
     expect((await b.sync.run()).stopped).toBeNull();
     expect(await deviceB.pendingOutbox()).toEqual([]);
 
-    api.pusher = 'device-a';
+    api.pusher = DEVICE_A;
     const pulledA = await a.sync.run();
     expect(pulledA.applied).toBe(1);
     expect(events((await deviceA.load())!)).toEqual(events(playedB));
@@ -597,8 +619,8 @@ describe('同步驱动：双设备往返', () => {
     const deviceB = await device(new IDBFactory(), workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const a = engine(deviceA, workspaceId, 'device-a', api);
-    const b = engine(deviceB, workspaceId, 'device-b', api);
+    const a = engine(deviceA, workspaceId, DEVICE_A, api);
+    const b = engine(deviceB, workspaceId, DEVICE_B, api);
     // 两台设备先各自建立云端绑定（前缀 0），然后离线阅读
     await a.sync.run();
     await b.sync.run();
@@ -606,9 +628,9 @@ describe('同步驱动：双设备往返', () => {
     const right = await play(deviceB, 1, 1, 500);
     expect(events(left)[0]!.at).not.toBe(events(right)[0]!.at);
 
-    api.pusher = 'device-a';
+    api.pusher = DEVICE_A;
     expect((await a.sync.run()).stopped).toBeNull();
-    api.pusher = 'device-b';
+    api.pusher = DEVICE_B;
     const rejected = await b.sync.run();
     expect(rejected.stopped).toBe('conflict');
     expect(rejected.pushed).toBe(0);
@@ -623,18 +645,23 @@ describe('同步驱动：双设备往返', () => {
     // 显式放弃：B 不再推送该分支，本机内容保留
     await b.sync.discard(state.conflicts[0]!.id);
     expect(await deviceB.pendingOutbox()).toEqual([]);
-    expect((await deviceB.syncState()).needsRebase).toContain(streamId);
-    expect(events((await deviceB.load())!)).toEqual(events(right));
+    expect((await deviceB.syncState()).needsRebase).toEqual([]);
+    expect(events((await deviceB.load())!)).toEqual(events(left));
+    const snapshot = await deviceB.rawSnapshot() as any;
+    const retained = snapshot.staging.find((value: any) => value.plan?.request.decision === 'discard');
+    expect(retained.plan.workspace).toEqual(right);
+    expect(retained.plan.identities.filter(Boolean).length).toBe(events(right).length);
+    expect(JSON.stringify(snapshot)).toContain(JSON.stringify(events(right)[0]!.at));
     const next = await b.sync.run();
-    expect(next.stopped).toBe('prefix');
-    expect(next.note).toContain('停止推送');
+    expect(next.stopped).toBeNull();
+    expect(events((await deviceB.load())!)).toEqual(events(left));
   });
 
   it('暂停时只排队不推送；恢复后按原身份补发', async () => {
     const repository = await device(new IDBFactory(), crypto.randomUUID());
     const api = new CloudSim();
     api.seed(seed());
-    const { sync } = engine(repository, crypto.randomUUID(), 'device-a', api);
+    const { sync } = engine(repository, crypto.randomUUID(), DEVICE_A, api);
     await sync.run();
     await sync.setPaused(true);
     await play(repository, 1, 0);
@@ -655,13 +682,13 @@ describe('同步驱动：双设备往返', () => {
     const repository = await device(new IDBFactory(), workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const { sync } = engine(repository, workspaceId, 'device-a', api);
+    const { sync } = engine(repository, workspaceId, DEVICE_A, api);
     await sync.run();
     const played = await play(repository, 1, 0);
     const state = await repository.syncState();
     await repository.saveSyncState({ ...state, cursor: '999' });
 
-    const { sync: expiring } = engine(repository, workspaceId, 'device-a', new ExpiringCloud());
+    const { sync: expiring } = engine(repository, workspaceId, DEVICE_A, new ExpiringCloud());
     const report = await expiring.pullOnce();
     expect(report.stopped).toBe('cursor');
     expect(report.pending).toBeGreaterThan(0);
@@ -670,13 +697,211 @@ describe('同步驱动：双设备往返', () => {
     // 本机历史原样保留：没有被"重新引导"抹掉
     expect(events((await repository.load())!)).toEqual(events(played));
   });
+
+  it('游标换代后保留已确认身份与业务历史，重读旧页并继续另一设备的事件', async () => {
+    const workspaceId = crypto.randomUUID();
+    const repo = await device(new IDBFactory(), workspaceId);
+    const api = new CloudSim(); api.seed(seed());
+    const { sync } = engine(repo, workspaceId, DEVICE_A, api);
+    await sync.run();
+    await play(repo, 1, 0);
+    await sync.run();
+    const before = (await repo.load())!, confirmed = await repo.syncState();
+    const remote = await device(new IDBFactory(), workspaceId);
+    const other = engine(remote, workspaceId, DEVICE_B, api).sync;
+    await other.run(); await play(remote, 1, 0, 100);
+    api.pusher = DEVICE_B; await other.run();
+    await repo.saveSyncState({ ...confirmed, cursor: 'expired' });
+    const pull = api.pull.bind(api);
+    vi.spyOn(api, 'pull').mockImplementation((id, cursor, limit) => {
+      if (cursor === 'expired') return Promise.reject(new CloudFailure('CURSOR_EXPIRED', 409, '换代'));
+      return pull(id, cursor, limit);
+    });
+    expect((await sync.run()).stopped).toBeNull();
+    const after = (await repo.load())!;
+    expect(events(after)).toEqual(events((await remote.load())!));
+    expect(events(after).slice(0, events(before).length)).toEqual(events(before));
+    expect((await repo.syncState()).streams[streamId]!.seq).toBe(events(after).length);
+    expect(await repo.pendingOutbox()).toEqual([]);
+  });
+
+  it('恢复重定位 CAS 拒绝并发离线追加、状态竞争与落库失败，原游标不变', async () => {
+    const workspaceId = crypto.randomUUID();
+    const repo = await device(new IDBFactory(), workspaceId);
+    const api = new CloudSim(); api.seed(seed());
+    const { sync } = engine(repo, workspaceId, DEVICE_A, api); await sync.run();
+    const state = await repo.syncState(), boot = await api.bootstrap(workspaceId);
+    const put = IDBObjectStore.prototype.put;
+    const fail = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, value, key) {
+      if (this.name === 'sync' && key === 'sync') { this.transaction.abort(); throw new Error('synthetic'); }
+      return put.call(this, value, key!);
+    });
+    await expect(repo.reanchorSync(state, boot)).rejects.toThrow(); fail.mockRestore();
+    expect(await repo.syncState()).toEqual(state);
+    await repo.saveSyncState({ ...state, paused: true });
+    await expect(repo.reanchorSync(state, boot)).rejects.toThrow('另一窗口');
+    const fresh = await repo.syncState(); await play(repo, 1, 0);
+    await expect(repo.reanchorSync(fresh, boot)).rejects.toThrow('未同步事件');
+    expect((await repo.pendingOutbox()).length).toBeGreaterThan(0);
+  });
+
+  it('云端不能证明已确认前缀时不重定位；自己的旧页也必须逐条验证', async () => {
+    const workspaceId = crypto.randomUUID();
+    const repo = await device(new IDBFactory(), workspaceId);
+    const api = new CloudSim(); api.seed(seed());
+    const { sync } = engine(repo, workspaceId, DEVICE_A, api);
+    await sync.run(); await play(repo, 1, 0); await sync.run();
+    const before = (await repo.load())!;
+    await repo.saveSyncState({ ...(await repo.syncState()), cursor: 'expired' });
+    const pull = api.pull.bind(api);
+    vi.spyOn(api, 'pull').mockImplementation((id, cursor, limit) => cursor === 'expired'
+      ? Promise.reject(new CloudFailure('CURSOR_EXPIRED', 409, '换代')) : pull(id, cursor, limit));
+    const recover = vi.spyOn(api, 'recoverSync').mockRejectedValue(new CloudFailure('BASIS_CHANGED', 409, '历史回滚'));
+    await expect(sync.run()).rejects.toThrow('历史回滚');
+    expect((await repo.syncState()).cursor).toBe('expired');
+    expect(await repo.load()).toEqual(before);
+    recover.mockRestore();
+    api.changes[0]!.events[0]!.digest = '0'.repeat(64);
+    expect((await sync.run()).stopped).toBe('replay');
+    expect(await repo.load()).toEqual(before);
+  });
+});
+
+describe('显式采用云端历史：discard 恢复', () => {
+  async function conflicting() {
+    const workspaceId = crypto.randomUUID(), factory = new IDBFactory();
+    const a = await device(new IDBFactory(), workspaceId), b = await device(factory, workspaceId);
+    const api = new CloudSim(); api.seed(seed());
+    const leftSync = engine(a, workspaceId, DEVICE_A, api).sync, sync = engine(b, workspaceId, DEVICE_B, api).sync;
+    await leftSync.run(); await sync.run();
+    const left = await play(a, 1, 0), right = await play(b, 2, 1, 500);
+    api.pusher = DEVICE_A; await leftSync.run();
+    api.pusher = DEVICE_B; expect((await sync.run()).stopped).toBe('conflict');
+    const id = (await b.syncState()).conflicts[0]!.id;
+    return { a, b, api, sync, id, workspaceId, factory, left, right };
+  }
+
+  it('丢响应后刷新恢复同一决定；写入失败不丢候选，成功后保留全部原身份并可继续阅读推送', async () => {
+    const f = await conflicting();
+    const old = await play(f.b, 1, 1, 700), pending = await f.b.pendingOutbox();
+    const original = f.api.resolveConflict.bind(f.api), calls: unknown[] = [];
+    f.api.resolveConflict = async (...args) => { calls.push(args); await original(...args); throw new CloudFailure('NETWORK', 0, '丢失放弃响应'); };
+    await expect(f.sync.discard(f.id)).rejects.toThrow('丢失放弃响应');
+    const plan = (await f.b.pendingPreservation())!;
+    expect(plan.request.decision).toBe('discard');
+    expect(await f.b.pendingOutbox()).toEqual(pending);
+    expect(await f.b.load()).toEqual(old);
+    expect((await new SessionCommitter(f.b, old.identity.repositoryRevision).commit(
+      applyPlayerCommand(content, old, { type: 'select', episode: 'pilot-2' }, at(800)))).ok).toBe(false);
+    await expect(f.sync.keep(f.id)).rejects.toThrow('不能切换决定');
+    await f.b.close();
+    const reopened = new WorkspaceRepository(f.factory, cloudNamespace(deployment, account, f.workspaceId));
+    const sync = engine(reopened, f.workspaceId, DEVICE_B, f.api).sync;
+    f.api.resolveConflict = async (...args) => { calls.push(args); return original(...args); };
+    const put = IDBObjectStore.prototype.put;
+    const failure = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, value, key) {
+      if (this.name === 'sync' && key === 'sync') throw new DOMException('synthetic quota', 'QuotaExceededError');
+      return put.call(this, value, key!);
+    });
+    try { await expect(sync.run()).rejects.toThrow('保存失败'); } finally { failure.mockRestore(); }
+    expect(await reopened.load()).toEqual(old); expect(await reopened.pendingOutbox()).toEqual(pending);
+    expect(await reopened.pendingPreservation()).toEqual(plan);
+    expect((await sync.run()).stopped).toBeNull();
+    expect(calls).toEqual([calls[0], calls[0], calls[0]]);
+    expect(events((await reopened.load())!)).toEqual(events(f.left));
+    const raw = await reopened.rawSnapshot() as any;
+    const backup = raw.staging.find((v: any) => v.plan?.request.decision === 'discard');
+    expect(backup.plan.workspace).toEqual(old); expect(backup.plan.identities.map((v: any) => v.eventId)).toEqual(pending.map((v) => v.eventId));
+    expect(raw.staging.filter((v: any) => v.value?.streamId === streamId).map((v: any) => v.value).sort((a: any, b: any) => a.seq - b.seq)).toEqual(pending);
+    expect(await reopened.pendingPreservation()).toBeNull(); expect(await reopened.pendingOutbox()).toEqual([]);
+    await play(reopened, 1, 0, 900);
+    expect((await reopened.pendingOutbox()).every((v) => !pending.some((p) => p.eventId === v.eventId))).toBe(true);
+    expect((await sync.run()).stopped).toBeNull(); expect(await reopened.pendingOutbox()).toEqual([]);
+  });
+
+  it('正文即使摘要自洽也需通过原生重放；未知恢复 sidecar 保留且停止，不清理原历史', async () => {
+    const f = await conflicting(), before = await f.b.load(), pending = await f.b.pendingOutbox();
+    const original = f.api.resolveConflict.bind(f.api);
+    const changed = vi.spyOn(f.api, 'resolveConflict').mockImplementationOnce(async (...args) => {
+      const result = structuredClone(await original(...args)), first = result.history!.events[0]!;
+      first.event.scene = 'forged-scene'; first.command.scene = 'forged-scene'; first.digest = await cloudDigest(first.event);
+      return result;
+    });
+    await expect(f.sync.discard(f.id)).rejects.toThrow(); changed.mockRestore();
+    expect(await f.b.load()).toEqual(before); expect(await f.b.pendingOutbox()).toEqual(pending);
+    const held = (await f.b.pendingPreservation())!;
+    const db = await new Promise<IDBDatabase>((resolve) => { const r = f.factory.open(f.b.namespace, 2); r.onsuccess = () => resolve(r.result); });
+    await new Promise<void>((resolve) => { const tx = db.transaction('sync', 'readwrite');
+      tx.objectStore('sync').put({ ...held, request: { ...held.request, protocol: 'unknown' } }, 'preservation'); tx.oncomplete = () => resolve(); });
+    const raw = await f.b.rawSnapshot();
+    await expect(f.sync.run()).rejects.toThrow('不受支持'); expect(await f.b.rawSnapshot()).toEqual(raw);
+    db.close();
+  });
+
+  it('两个标签页不能为同一候选持久化不同决定，竞争失败不替换原请求', async () => {
+    const f = await conflicting();
+    const other = new WorkspaceRepository(f.factory, f.b.namespace), conflict = f.api.conflictRecords.get(f.id)!;
+    const attempts = await Promise.allSettled([f.b.preparePreservation(conflict, null), other.preparePreservation(conflict, `brn_${crypto.randomUUID()}`)]);
+    expect(attempts.filter((v) => v.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter((v) => v.status === 'rejected')).toHaveLength(1);
+    expect(f.api.discardReceipts.size).toBe(0); expect(f.api.preservationReceipts.size).toBe(0);
+    expect(await f.b.load()).toEqual(f.right);
+    await other.close();
+  });
+
+  it('未知推送先恢复原批次；已保留冲突决定时不能再排入一个竞争推送', async () => {
+    const f = await conflicting(), state = await f.b.syncState(), conflict = f.api.conflictRecords.get(f.id)!;
+    const batch: SyncPushRequest = { workspaceId: f.workspaceId, batchId: crypto.randomUUID(), baseVersion: '1',
+      streams: [{ streamId, baseSeq: 0, baseEventId: null, events: conflict.events }] };
+    await f.b.saveSyncState({ ...state, pendingPush: batch });
+    await expect(f.sync.discard(f.id)).rejects.toThrow('结果未知的推送');
+    expect(await f.b.pendingPreservation()).toBeNull(); expect(f.api.discardReceipts.size).toBe(0);
+    await f.b.saveSyncState(state); await f.b.preparePreservation(conflict, null);
+    const before = await f.b.rawSnapshot();
+    await expect(f.b.saveSyncState({ ...state, pendingPush: batch })).rejects.toThrow('尚未保存');
+    expect(await f.b.rawSnapshot()).toEqual(before);
+  });
+
+  it('有后续分支依赖时在发请求前拒绝放弃，完整候选与事件身份保留', async () => {
+    const f = await conflicting(); await forkAt(f.b, 1);
+    const before = await f.b.load(), pending = await f.b.pendingOutbox();
+    await expect(f.sync.discard(f.id)).rejects.toThrow('仍引用候选历史');
+    expect(f.api.discardReceipts.size).toBe(0); expect(await f.b.load()).toEqual(before); expect(await f.b.pendingOutbox()).toEqual(pending);
+    expect(await f.b.pendingPreservation()).toBeNull();
+  });
+
+  it('重新登录的设备可处理本机已知旧候选，不能据此选择其他设备的未知候选', async () => {
+    const f = await conflicting(), renewed = engine(f.b, f.workspaceId, crypto.randomUUID(), f.api).sync;
+    const foreign = { ...f.api.conflictRecords.get(f.id)!, id: crypto.randomUUID(), deviceId: crypto.randomUUID() };
+    f.api.conflictRecords.set(foreign.id, foreign);
+    const before = await f.b.rawSnapshot();
+    await expect(renewed.discard(foreign.id)).rejects.toThrow('没有该冲突候选');
+    expect(await f.b.rawSnapshot()).toEqual(before);
+    await renewed.discard(f.id);
+    expect(events((await f.b.load())!)).toEqual(events(f.left));
+    expect(await f.b.pendingOutbox()).toEqual([]);
+  });
+
+  it('旧 discard/needsRebase 只在可唯一验证原候选时显式恢复，未知替换历史不截断', async () => {
+    const f = await conflicting(), conflict = f.api.conflictRecords.get(f.id)!;
+    conflict.status = 'discarded'; conflict.resolvedAt = new Date().toISOString();
+    const db = await new Promise<IDBDatabase>((resolve) => { const r = f.factory.open(f.b.namespace, 2); r.onsuccess = () => resolve(r.result); });
+    const oldState = await f.b.syncState();
+    await new Promise<void>((resolve) => { const tx = db.transaction(['sync', 'outbox'], 'readwrite'); tx.objectStore('outbox').clear();
+      tx.objectStore('sync').put({ ...oldState, conflicts: [], needsRebase: [streamId] }, 'sync'); tx.oncomplete = () => resolve(); });
+    await f.sync.rebase(streamId);
+    expect(events((await f.b.load())!)).toEqual(events(f.left)); expect((await f.b.syncState()).needsRebase).toEqual([]);
+    await f.b.saveSyncState({ ...(await f.b.syncState()), needsRebase: ['unknown-stream'] });
+    const raw = await f.b.rawSnapshot(); await expect(f.sync.rebase('unknown-stream')).rejects.toThrow('无法唯一确认');
+    expect(await f.b.rawSnapshot()).toEqual(raw); db.close();
+  });
 });
 
 describe('同步状态可见性', () => {
   it('同步面板的状态来自本机存储，不伪造「已同步」', async () => {
     const workspaceId = crypto.randomUUID();
     const repository = await device(new IDBFactory(), workspaceId);
-    const { sync } = engine(repository, workspaceId, 'device-a');
+    const { sync } = engine(repository, workspaceId, DEVICE_A);
     const fresh = await sync.status();
     expect(fresh).toMatchObject({ pending: 0 });
     expect(fresh.state.lastSyncedAt).toBeNull();
@@ -709,7 +934,7 @@ describe('分叉流注册：本机新建分支', () => {
     const repository = await device(new IDBFactory(), workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const driver = engine(repository, workspaceId, 'device-a', api);
+    const driver = engine(repository, workspaceId, DEVICE_A, api);
 
     await driver.sync.run();
     const root = await play(repository, 2, 0);
@@ -738,7 +963,7 @@ describe('分叉流注册：本机新建分支', () => {
     const repository = await device(new IDBFactory(), workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const driver = engine(repository, workspaceId, 'device-a', api);
+    const driver = engine(repository, workspaceId, DEVICE_A, api);
 
     await driver.sync.run();
     const root = await play(repository, 2, 0);
@@ -767,7 +992,7 @@ describe('分叉流注册：本机新建分支', () => {
     const repository = await device(new IDBFactory(), workspaceId);
     const api = new CloudSim();
     api.seed(seed());
-    const driver = engine(repository, workspaceId, 'device-a', api);
+    const driver = engine(repository, workspaceId, DEVICE_A, api);
 
     await driver.sync.run();
     await play(repository, 1, 0);

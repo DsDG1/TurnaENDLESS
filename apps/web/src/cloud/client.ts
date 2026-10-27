@@ -14,7 +14,7 @@ import {
   type ActivateImportRequest, type ChallengeResponse, type CloudCapabilities, type CloudErrorCode,
   type CloudImportPreview, type CloudImportReceipt, type CloudWorkspace, type Device,
   type InstallWorkspaceRequest, type MeResponse, type VerifyRequest, type VerifyResponse,
-  type WorkspaceInstallation, type SyncBootstrap, type SyncPushRequest, type SyncPushReceipt,
+  type WorkspaceInstallation, type SyncBootstrap, type SyncRecoveryRequest, type SyncPushRequest, type SyncPushReceipt,
   type SyncPullResponse, type SyncConflict, type SyncStreamBinding, type DeviceStreamState,
   type PutDeviceStreamStateRequest, type RegisterStreamRequest, type ResolveConflictResponse,
 } from '@endless/cloud-contracts';
@@ -121,6 +121,7 @@ export interface CloudApiPort {
   workspacePackage(workspaceId: string): Promise<{ receipt: CloudImportReceipt; workspace: unknown }>;
   install(workspaceId: string, input: InstallWorkspaceRequest, key: string): Promise<WorkspaceInstallation>;
   bootstrap(workspaceId: string): Promise<SyncBootstrap>;
+  recoverSync(input: SyncRecoveryRequest): Promise<SyncBootstrap>;
   registerStream(input: RegisterStreamRequest): Promise<SyncStreamBinding>;
   push(input: SyncPushRequest): Promise<{ receipt: SyncPushReceipt }>;
   pull(workspaceId: string, cursor: string | null, limit?: number): Promise<SyncPullResponse>;
@@ -235,6 +236,12 @@ export class CloudApi implements CloudApiPort {
 
   async bootstrap(workspaceId: string) {
     return parse(SyncBootstrapSchema, await request(this.fetcher, `/sync/bootstrap?workspaceId=${encodeURIComponent(workspaceId)}`));
+  }
+
+  async recoverSync(input: SyncRecoveryRequest) {
+    return parse(SyncBootstrapSchema, await request(this.fetcher, '/sync/recover', {
+      method: 'POST', contentType: 'application/json', body: JSON.stringify(input),
+    }));
   }
 
   /** 注册本机新建分支的事件流：只声明父流与分叉点，前缀由服务端复制。 */

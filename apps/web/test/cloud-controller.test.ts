@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
-import { buildBackup, deriveCloudCopy, parseBackup, type Workspace } from '@endless/content';
+import { applyPlayerCommand, buildBackup, deriveCloudCopy, parseBackup, type Workspace } from '@endless/content';
 import type {
   CloudCapabilities, CloudImportPreview, CloudImportReceipt, MeResponse, WorkspaceInstallation,
 } from '@endless/cloud-contracts';
@@ -327,5 +327,36 @@ describe('云副本阅读入口', () => {
     await h.controller.refresh();
     expect(h.controller.getState().me).toBeNull();
     expect(h.controller.readingHash(workspaceId)).toBeNull();
+  });
+});
+
+describe('会话边界清理内存视图，保留持久候选', () => {
+  for (const mode of ['logout', 'expired', 'account', 'deployment', 'device'] as const) it(`${mode} 不沿用旧同步目标、安装视图或导入请求`, async () => {
+    const h = harness({ signedIn: true });
+    await h.controller.refresh(); await h.controller.claim(workspaceId);
+    const repo = new WorkspaceRepository(h.factory, cloudNamespace(deployment, account, workspaceId));
+    const old = (await repo.load())!;
+    const progressed = applyPlayerCommand(cloudTestContent, old, { type: 'advance', scene: 's1', skip: false });
+    await repo.commit({ ...progressed, identity: { ...progressed.identity, repositoryRevision: old.identity.repositoryRevision + 1 } });
+    await h.controller.openSync(workspaceId);
+    expect(h.controller.getState().sync?.pending).toBe(1);
+    const before = await repo.rawSnapshot();
+    if (mode === 'logout') await h.controller.logout();
+    else if (mode === 'expired') {
+      vi.mocked(h.api.me).mockRejectedValueOnce(new CloudFailure('UNAUTHENTICATED', 401, 'expired'));
+      await h.controller.refresh();
+    } else {
+      const next: MeResponse = structuredClone(me);
+      if (mode === 'account') next.account.id = crypto.randomUUID();
+      else if (mode === 'deployment') next.context.deploymentId = crypto.randomUUID();
+      else next.device.id = crypto.randomUUID();
+      next.context.localNamespace = `endless-cloud:${next.context.deploymentId}:${next.account.id}`;
+      vi.mocked(h.api.me).mockResolvedValueOnce(next);
+      await h.controller.refresh();
+    }
+    expect(h.controller.getState()).toMatchObject({ sync: null, installed: [], preview: null, receipt: null, installation: null });
+    expect(await h.controller.runSync()).toBe(false);
+    expect(await repo.rawSnapshot()).toEqual(before);
+    expect(await repo.pendingOutbox()).toHaveLength(1); await repo.close();
   });
 });

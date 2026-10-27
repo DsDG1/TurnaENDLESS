@@ -51,7 +51,7 @@ const state = (patch: Partial<CloudState> = {}): CloudState => ({
 const actions: CloudActions = {
   refresh: vi.fn(), login: vi.fn(), verify: vi.fn(), logout: vi.fn(),
   preview: vi.fn(), confirm: vi.fn(), claim: vi.fn(), open: vi.fn(),
-  openSync: vi.fn(), sync: vi.fn(), pauseSync: vi.fn(), discardConflict: vi.fn(), keepConflict: vi.fn(), exportConflict: vi.fn(),
+  openSync: vi.fn(), sync: vi.fn(), pauseSync: vi.fn(), discardConflict: vi.fn(), keepConflict: vi.fn(), rebaseBranch: vi.fn(), exportConflict: vi.fn(),
 };
 
 const render = (patch: Partial<CloudState> = {}, backup: () => unknown = () => ({ format: 'endless-backup' })) =>
@@ -101,8 +101,8 @@ describe('云端页面状态', () => {
 
     const claimed = render({ status: 'signed-in', me, workspaces: workspaceList, installed: [workspaceId] });
     expect(claimed).toContain('>打开云端副本</button>');
-    expect(claimed).toContain('同步阅读进度、展示信息、回收站和归档');
-    expect(claimed).toContain('采用修订尚未接入');
+    expect(claimed).toContain('同步阅读进度、展示信息、回收站、归档和已确认的内容修订');
+    expect(claimed).not.toContain('采用修订尚未接入');
     expect(claimed).toContain('云端生成、额度与付费都还没实现');
   });
 

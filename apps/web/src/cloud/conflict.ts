@@ -1,24 +1,47 @@
 import { bridge, parseWorkspace, type Content, type Workspace } from '@endless/content';
 import { stableStringify } from '@endless/esl';
-import type { ResolveConflictRequest, ResolveConflictResponse, SyncConflict } from '@endless/cloud-contracts';
+import { ResolveConflictRequestSchema, SyncConflictSchema, SyncPlayerEventSchema, UuidSchema, type ResolveConflictRequest, type ResolveConflictResponse, type SyncConflict } from '@endless/cloud-contracts';
 import type { SidecarEntry } from './outbox.js';
 
 export interface PendingPreservation {
   conflict: SyncConflict;
-  request: Extract<ResolveConflictRequest, { decision: 'keep-branch' }>;
+  request: ResolveConflictRequest;
   workspace: Workspace;
   identities: (SidecarEntry | null)[];
 }
 
 const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(b);
 
-export function checkPreservation(workspace: Workspace, conflict: SyncConflict) {
+export function readPreservation(raw: unknown, workspaceId: string): PendingPreservation | null {
+  if (raw === undefined || raw === null) return null;
+  const value = raw as PendingPreservation;
+  try {
+    if (!value || Object.keys(value).sort().join() !== ['conflict', 'identities', 'request', 'workspace'].sort().join()) throw new Error();
+    const request = ResolveConflictRequestSchema.parse(value.request), conflict = SyncConflictSchema.parse(value.conflict);
+    const workspace = parseWorkspace(value.workspace), source = workspace.branches.find((b) => b.id === conflict.streamId);
+    if (request.workspaceId !== workspaceId || conflict.workspaceId !== workspaceId || !source || !Array.isArray(value.identities)
+      || value.identities.length !== source.session.events.length) throw new Error();
+    for (const [i, identity] of value.identities.entries()) {
+      if (identity === null) { if (i >= conflict.baseSeq) throw new Error(); continue; }
+      if (Object.keys(identity).sort().join() !== 'event,eventId' || !UuidSchema.safeParse(identity.eventId).success
+        || !same(SyncPlayerEventSchema.parse(identity.event), source.session.events[i])) throw new Error();
+    }
+    return { request, conflict, workspace, identities: value.identities };
+  } catch { throw new Error('冲突处理请求或事件身份不受支持，原始记录保留，不能重置或改换决定'); }
+}
+
+export function checkPreservation(workspace: Workspace, conflict: SyncConflict, discard = false) {
   const branch = workspace.branches.find((entry) => entry.id === conflict.streamId);
-  if (!branch || conflict.reason !== 'stream-head-changed' || conflict.status !== 'open') {
+  if (!branch || conflict.reason !== 'stream-head-changed' || (conflict.status !== 'open' && !(discard && conflict.status === 'discarded'))) {
     throw new Error('该候选不是可保留的离线分叉；完整本机历史保留');
   }
-  if (workspace.branches.length >= 64 || branch.session.events.length > 10_000) {
+  if ((!discard && workspace.branches.length >= 64) || branch.session.events.length > 10_000) {
     throw new Error('分支或历史超过当前恢复容量，完整冲突包已隔离保留；不会删除历史腾空间');
+  }
+  if (discard && (workspace.branches.some((b) => b.parentBranchId === branch.id && (b.forkAtEventCount ?? 0) > conflict.baseSeq)
+    || workspace.checkpoints.some((c) => c.branchId === branch.id && c.eventPrefix.count > conflict.baseSeq)
+    || workspace.volumes.some((v) => v.derivedFrom.branchId === branch.id && v.derivedFrom.eventCount > conflict.baseSeq))) {
+    throw new Error('本机分叉、检查点或归档仍引用候选历史；完整历史保留，请先处理这些依赖或选择保留独立分支');
   }
   if (workspace.tickets.some((ticket) => ticket.status === 'reserved' || ticket.status === 'submitted')) {
     throw new Error('生成任务进行中，不能处理分支冲突');
@@ -39,20 +62,33 @@ export function preservedWorkspace(plan: PendingPreservation, result: ResolveCon
   const { history, preserved } = result;
   const { conflict, request } = plan;
   const source = plan.workspace.branches.find((branch) => branch.id === conflict.streamId)!;
-  if (!history || !preserved || result.conflict.id !== conflict.id || result.conflict.status !== 'preserved'
+  const discard = request.decision === 'discard';
+  if (!history || result.conflict.id !== conflict.id || result.conflict.status !== (discard ? 'discarded' : 'preserved')
+    || !same({ ...result.conflict, status: conflict.status, resolvedAt: conflict.resolvedAt }, conflict)
     || !same(result.conflict.events, conflict.events) || !same(result.stream, history.stream)
-    || history.stream.streamId !== source.id || preserved.streamId !== request.streamId
+    || result.conflict.workspaceId !== request.workspaceId || result.conflict.streamId !== conflict.streamId
+    || result.conflict.baseSeq !== conflict.baseSeq || result.conflict.deviceId !== conflict.deviceId
+    || history.stream.streamId !== source.id || history.stream.branchId !== source.id
     || history.branch.streamId !== source.id
     || history.branch.catalog !== source.session.catalog || !same(history.branch.adopted, source.adopted)
     || history.events.length !== history.stream.eventSeq
     || (history.events.at(-1)?.eventId ?? null) !== history.stream.lastEventId
-    || preserved.eventSeq !== conflict.baseSeq + conflict.events.length
-    || preserved.lastEventId !== conflict.events.at(-1)?.eventId) {
-    throw new Error('云端保留回执与本机恢复请求不一致，完整本机历史保留');
+    || (!discard && (!preserved || request.decision !== 'keep-branch' || preserved.streamId !== request.streamId
+      || preserved.eventSeq !== conflict.baseSeq + conflict.events.length
+      || preserved.lastEventId !== conflict.events.at(-1)?.eventId)) || (discard && preserved)) {
+    throw new Error('云端冲突处理回执与本机恢复请求不一致，完整本机历史保留');
   }
   for (let index = 0; index < conflict.baseSeq; index++) {
-    if (!same(history.events[index]?.event, source.session.events[index])) throw new Error('共同前缀不一致，不能恢复主线');
+    if (!same(history.events[index]?.event, source.session.events[index])
+      || (plan.identities[index] && plan.identities[index]!.eventId !== history.events[index]?.eventId)) throw new Error('共同前缀不一致，不能恢复主线');
   }
+  if (discard) {
+    const checked = parseWorkspace({ ...plan.workspace, branches: plan.workspace.branches.map((b) => b.id === source.id
+      ? { ...b, session: { ...b.session, revision: b.session.revision + 1, events: history.events.map((e) => e.event) } } : b) });
+    for (const b of checked.branches) bridge(content, checked, b.id);
+    return checked;
+  }
+  if (request.decision !== 'keep-branch') throw new Error('冲突处理协议不受支持，完整历史保留');
   for (const { event } of history.events) {
     const owner = source.adopted.find((adopted) => plan.workspace.revisions.some((revision) =>
       revision.id === adopted.revisionId && revision.episodeId === event.episode));

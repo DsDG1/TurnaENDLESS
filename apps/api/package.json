@@ -10,11 +10,12 @@
     "worker:cloud": "tsx src/cloud/worker.ts",
     "test:cloud": "vitest run test/cloud",
     "test:cloud:https": "vitest run test/cloud/https.test.ts",
+    "test:cloud:browser": "pnpm -C ../.. build && vitest run --config test/cloud-browser/vitest.config.ts",
     "migrate:cloud": "tsx src/cloud/db/migrate.ts",
     "bootstrap:cloud": "tsx src/cloud/db/bootstrap.ts",
     "start": "tsx --env-file-if-exists=.env src/main.ts",
     "preview": "tsx --env-file-if-exists=.env src/main.ts",
-    "typecheck": "tsc --noEmit -p .",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p test/cloud-browser",
     "test": "vitest run"
   },
   "dependencies": {

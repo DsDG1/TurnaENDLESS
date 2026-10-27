@@ -58,7 +58,7 @@ export function CloudReadBanner({ view, syncing, onSync, exitHref, branches = []
       </div>
       {view.stopped && <p className="error-text" role="alert">{STOP_TEXT[view.stopped]}</p>}
       {view.needsRebase > 0 && <p className="error-text" role="alert">
-        有 {view.needsRebase} 个分支的本机历史被整体替换过，已停止推送。本机事件没有删除。
+        有 {view.needsRebase} 个分支的本机历史被整体替换过，已停止推送。本机事件没有删除。到「云端副本」页可接受云端并恢复推送。
       </p>}
       {view.note && <p className="generation-phase" role="status">{view.note}</p>}
       {revisions?.pending && <section className="surface" aria-label="修订请求状态">

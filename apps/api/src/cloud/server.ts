@@ -3,7 +3,7 @@ import {
   ChallengeRequestSchema, CreateWorkspaceRequestSchema, IdempotencyKeySchema,
   LEGACY_PROVIDER_KEY_HEADER, VerifyRequestSchema, type CloudCapabilities,
   CLOUD_API_PREFIX, PrepareObjectRequestSchema, ActivateImportRequestSchema, InstallWorkspaceRequestSchema, type Device,
-  SyncPushRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema, RegisterStreamRequestSchema, MetadataCommandSchema, LifecycleCommandSchema, ArchiveCommandSchema, RevisionPreviewRequestSchema, RevisionAdoptionCommandSchema,
+  SyncPushRequestSchema, SyncRecoveryRequestSchema, ResolveConflictRequestSchema, PutDeviceStreamStateRequestSchema, RegisterStreamRequestSchema, MetadataCommandSchema, LifecycleCommandSchema, ArchiveCommandSchema, RevisionPreviewRequestSchema, RevisionAdoptionCommandSchema,
 } from '@endless/cloud-contracts';
 import type { CloudPool } from './db/client.js';
 import type { Mailer } from './mail.js';
@@ -281,6 +281,12 @@ export function createCloudServer(options: CloudServerOptions) {
           const body = SyncPushRequestSchema.safeParse(await readJsonBody(request));
           if (!body.success) throw badRequest('同步请求格式无效或超出批次限制');
           return { status: 200, body: await sync.push(auth, body.data) };
+        } },
+      { method: 'POST', access: 'session', pattern: /^\/sync\/recover$/,
+        handle: async ({ request, auth }) => {
+          const body = SyncRecoveryRequestSchema.safeParse(await readJsonBody(request));
+          if (!body.success) throw badRequest('阅读同步恢复格式无效');
+          return { status: 200, body: await sync.bootstrap(auth, body.data.workspaceId, body.data) };
         } },
       { method: 'GET', access: 'session', pattern: /^\/sync\/pull$/,
         handle: async ({ url, auth }) => {

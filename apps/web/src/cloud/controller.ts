@@ -111,6 +111,16 @@ export class CloudController {
     for (const listener of this.listeners) listener(this.state);
   }
 
+  /** Drop only account-scoped memory and connections. Durable Outbox/candidates remain in their namespace. */
+  private async clearScope() {
+    const repository = this.engineRepository;
+    this.engine = null; this.engineWorkspace = null; this.engineRepository = null;
+    this.previewKey = this.previewDigest = this.activateKey = null;
+    this.patch({ me: null, devices: [], workspaces: [], installed: [], sync: null,
+      challenge: null, preview: null, receipt: null, installation: null });
+    await repository?.close().catch(() => {});
+  }
+
   private failureOf(error: unknown): CloudFailureView {
     if (error instanceof CloudFailure) {
       return {
@@ -133,6 +143,7 @@ export class CloudController {
     } catch (error) {
       const failure = this.failureOf(error);
       if (failure.code === 'UNAUTHENTICATED') {
+        await this.clearScope();
         this.patch({ status: 'signed-out', me: null, devices: [], workspaces: [], phase: '' });
       }
       this.patch({ failure, phase: failure.code === 'UNAUTHENTICATED' ? '会话已失效，请重新登录；本机内容不受影响' : '' });
@@ -143,6 +154,8 @@ export class CloudController {
   }
 
   private async loadAccount(me: MeResponse) {
+    const old = this.state.me;
+    if (!old || old.account.id !== me.account.id || old.context.deploymentId !== me.context.deploymentId || old.device.id !== me.device.id) await this.clearScope();
     const [devices, workspaces] = await Promise.all([this.deps.api.devices(), this.deps.api.workspaces()]);
     this.patch({ me, devices, workspaces, installed: await this.installedWorkspaces(me, workspaces) });
   }
@@ -180,11 +193,13 @@ export class CloudController {
         capabilities = await this.deps.api.capabilities();
       } catch (error) {
         // 连能力都读不到：明确落在「不可用」，不能停在「读取中」让人以为还在干活
+        await this.clearScope();
         this.patch({ status: 'unavailable', capabilities: null, me: null, devices: [], workspaces: [] });
         throw error;
       }
       this.patch({ capabilities });
       if (!capabilities.features.accounts || !capabilities.features.sessions) {
+        await this.clearScope();
         this.patch({ status: 'unavailable', me: null, devices: [], workspaces: [] });
         return '这个部署没有启用云端账号';
       }
@@ -195,6 +210,7 @@ export class CloudController {
         return '';
       } catch (error) {
         if (error instanceof CloudFailure && error.code === 'UNAUTHENTICATED') {
+          await this.clearScope();
           this.patch({ status: 'signed-out', me: null, devices: [], workspaces: [] });
           return '';
         }
@@ -233,6 +249,7 @@ export class CloudController {
   async logout(): Promise<boolean> {
     return this.run('正在退出…', async () => {
       await this.deps.api.logout();
+      await this.clearScope();
       this.patch({
         status: 'signed-out', me: null, devices: [], workspaces: [], challenge: null,
         preview: null, receipt: null, installation: null,
@@ -386,7 +403,19 @@ export class CloudController {
       const engine = await this.engineFor(workspaceId);
       await engine.discard(conflictId);
       await engine.refreshConflicts();
-      this.patch({ sync: await this.view(engine, '已放弃本机这批事件；云端保留另一台设备的版本') });
+      this.patch({ sync: await this.view(engine, '已采用云端历史；本机原候选和事件身份保留在恢复记录中') });
+      return '';
+    });
+  }
+
+  /** 显式恢复旧客户端已放弃的候选，验证后原子接收完整云端历史。 */
+  async rebaseBranch(streamId: string): Promise<boolean> {
+    const workspaceId = this.state.sync?.workspaceId;
+    if (!workspaceId) return false;
+    return this.run('正在接受云端历史…', async () => {
+      const engine = await this.engineFor(workspaceId);
+      await engine.rebase(streamId);
+      this.patch({ sync: await this.view(engine, '已恢复云端历史；本机原候选保留在恢复记录中') });
       return '';
     });
   }
