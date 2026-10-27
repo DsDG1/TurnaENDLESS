@@ -8,6 +8,8 @@ SMTP delivery uses the real encrypted mail outbox and MailWorker with a loopback
 
 Each journey receives its own disposable PostgreSQL cluster and browser. This keeps extra renewal/fresh-device logins from consuming another case's persisted IP quota; production rate limits are unchanged.
 
+The generated episode is genuinely completed before revision preview/adoption. The journey verifies that its obligation stays fulfilled, the original device's completion time remains intact, and both an existing peer and a fresh installation rebuild the adoption-time inventory. Archive assertions wait for the real applied HTTP receipt and the subsequent atomic browser commit; they are correctness checks, not target-device performance thresholds.
+
 The same-origin HTTPS gateway serves an immutable snapshot of the actual production assets. Its certificate is temporary and trusted only by these browser contexts. A context-scoped asset relay fetches the same bytes through the context's certificate exception because Chromium's service-worker loader does not inherit the page exception. `/api/*` always passes through to the real server; the relay never supplies cloud business responses. Offline asset misses fail, so the cold reload exercises the actual service-worker cache. No system trust or global TLS settings change.
 
 Failure screenshots go to a unique `out/cloud-browser-*` directory. Build and other preview suites should run sequentially: a preview serving `dist` during a rebuild can observe missing assets. No production credentials, real mail, model calls, payments or user data are used.

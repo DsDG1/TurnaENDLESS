@@ -79,7 +79,7 @@ export class RevisionSync {
   available = false;
   private catalog: RevisionCatalog | null = null;
   constructor(private readonly repo: WorkspaceRepository,
-    private readonly api: Pick<CloudApiPort, 'revisionCatalog' | 'revisionPreview' | 'revisionAdopt'>,
+    private readonly api: Pick<CloudApiPort, 'revisionCatalog' | 'revisionPreview' | 'revisionAdopt'> & Partial<Pick<CloudApiPort, 'readingSnapshot'>>,
     private readonly content: Content, private readonly workspaceId: string) {}
 
   async resume() {
@@ -103,13 +103,23 @@ export class RevisionSync {
     this.catalog = await validateCatalog(raw, this.workspaceId, state.installed);
     this.available = true;
   }
-  async through(readingSeq: number) {
+  async through(readingSeq: number): Promise<boolean> {
     if (!this.catalog) throw new Error('尚未取得可验证的修订目录');
     if (!Number.isSafeInteger(readingSeq) || readingSeq < 0) throw new Error('阅读同步屏障无效，原件保留');
     const installed = (await this.repo.revisionState()).installed.length;
     for (const registration of this.catalog.registrations.slice(installed)) {
       if (registration.readingChangeSeq > readingSeq) break;
+      if (registration.readingContext) {
+        if (!this.api.readingSnapshot) throw new Error('当前服务缺少完整阅读上下文恢复，原修订与请求保留');
+        const state = await this.repo.syncState();
+        const snapshot = await this.api.readingSnapshot({ workspaceId: this.workspaceId, cloudVersion: state.cloudVersion ?? '0',
+          streams: Object.entries(state.streams).map(([id, h]) => ({ streamId: id, branchId: id, eventSeq: h.seq, lastEventId: h.eventId })) });
+        await this.repo.acceptReadingSnapshot(this.content, state, snapshot);
+        await this.prepare();
+        return true;
+      }
       await this.repo.revisionAction(this.content, { install: registration, readingSeq });
     }
+    return false;
   }
 }

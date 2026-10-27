@@ -4,6 +4,7 @@ import { applyPlayerCommand, bridge, checked, switchBranch } from './workspace.j
 import { parseWorkspace } from './application-contract.js';
 import { adoptRevision, previewRevision } from './revision.js';
 import { ContentRevisionSchema, type Content, type Workspace } from './index.js';
+import { deriveReadingObligations } from './reading-obligations.js';
 
 const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(b);
 const fail = (): never => { throw new Error('阅读快照的内容、前缀或原生重放不一致，完整本机数据保留'); };
@@ -55,9 +56,11 @@ export async function rebuildCloudReading(content: Content, raw: ReadingSnapshot
     const h = history(id), branch = workspace.branches.find((b) => b.id === id)!;
     if (count > h.events.length || count < branch.session.events.length) fail();
     for (const e of h.events.slice(branch.session.events.length, count)) {
+      const length = workspace.branches.find((b) => b.id === id)!.session.events.length;
       workspace = applyPlayerCommand(content, switchBranch(workspace, id), { type: 'select', episode: e.event.episode }, new Date(e.at));
       workspace = applyPlayerCommand(content, workspace, e.command, new Date(e.at));
-      if (!same(workspace.branches.find((b) => b.id === id)!.session.events.at(-1), e.event)) fail();
+      const replayed = workspace.branches.find((b) => b.id === id)!.session.events;
+      if (replayed.length !== length + 1 || !same(replayed.at(-1), e.event)) fail();
     }
   };
   const ensure = (id: string, version: number): void => {
@@ -93,6 +96,22 @@ export async function rebuildCloudReading(content: Content, raw: ReadingSnapshot
   for (const r of catalog.registrations) {
     const a = r.artifact, binding = a.binding, revision = ContentRevisionSchema.parse(a.revision);
     if (await digest(generationSource) !== binding.sourceDigest) fail();
+    if (r.readingContext) {
+      const heads = r.readingContext.heads;
+      if (new Set(heads.map((h) => h.streamId)).size !== heads.length) fail();
+      const inventory: unknown[] = [];
+      for (const head of heads) {
+        if (head.streamId !== head.branchId) fail();
+        eventsTo(head.streamId, head.eventSeq, r.version);
+        const h = history(head.streamId), b = workspace.branches.find((b) => b.id === head.streamId)!;
+        if ((h.events[head.eventSeq - 1]?.eventId ?? null) !== head.lastEventId) fail();
+        inventory.push({ manifest: { ...h.branch, adopted: b.adopted }, head: { count: head.eventSeq, lastEventId: head.lastEventId },
+          events: h.events.slice(0, head.eventSeq).map((e) => ({ seq: e.seq, id: e.eventId, digest: e.digest })) });
+      }
+      if (workspace.branches.length !== heads.length || await digest(inventory) !== binding.inventoryDigest
+        || !heads.some((h) => h.streamId === binding.streamId && h.eventSeq === binding.eventCount && h.lastEventId === binding.lastEventId)) fail();
+      workspace = { ...workspace, obligations: deriveReadingObligations(content, { ...workspace, obligations: generationSource.obligations }) };
+    }
     eventsTo(binding.streamId, binding.eventCount, r.version);
     if ((history(binding.streamId).events[binding.eventCount - 1]?.eventId ?? null) !== binding.lastEventId) fail();
     const entry = workspace.entries.find((e) => e.id === revision.contentId) ?? fail();
@@ -120,9 +139,10 @@ export async function rebuildCloudReading(content: Content, raw: ReadingSnapshot
         headRevisionId: revision.id, updatedAt: r.entry.updatedAt } : e) };
   }
   for (const h of histories.values()) eventsTo(h.stream.streamId, h.events.length, catalog.version + 1);
+  workspace = { ...workspace, obligations: deriveReadingObligations(content, { ...workspace, obligations: generationSource.obligations }) };
   for (const h of histories.values()) {
     const b = workspace.branches.find((b) => b.id === h.stream.streamId)!;
-    if (!same(b.adopted, h.branch.adopted) || b.label !== h.branch.label || b.createdAt !== h.branch.createdAt
+    if (!same(b.session.events, h.events.map((e) => e.event)) || !same(b.adopted, h.branch.adopted) || b.label !== h.branch.label || b.createdAt !== h.branch.createdAt
       || b.parentBranchId !== h.branch.parentBranchId || b.forkAtEventCount !== h.branch.forkAtEventCount || b.session.catalog !== h.branch.catalog) fail();
     bridge(content, workspace, b.id);
   }

@@ -2,11 +2,12 @@ import { candidateFor, emptyRevisions, parseRevisions, revisionFrozen, validateP
 import { RevisionAdoptionReceiptSchema, RevisionPreviewRequestSchema, RevisionRegistrationSchema, type RevisionPreviewReceipt, type RevisionAdoptionReceipt, type RevisionRegistration } from '@endless/cloud-contracts';
 import {
   ContentRevisionSchema, ContractError, describeUnsupportedSave, parseWorkspace,
+  assertReadingObligationProgress, retainReadingCompletionTimes,
   buildVolume, bridge, rebuildCloudReading, validateArchiveProjection, type Content, type Workspace, type WorkspaceIdentity,
 } from '@endless/content';
 import { MetadataReceiptSchema, MetadataSnapshotSchema, ResolveConflictRequestSchema, SyncBootstrapSchema, type SyncBootstrap, type MetadataReceipt, type MetadataSnapshot, type CloudImportReceipt, type ResolveConflictResponse, type SyncConflict, type SyncPushReceipt, type WorkspaceInstallation } from '@endless/cloud-contracts';
 import { stableStringify } from '@endless/esl';
-import { CLOUD_LIMITS, ReadingSnapshotSchema, type ReadingSnapshot } from '@endless/cloud-contracts';
+import { CLOUD_LIMITS, ReadingSnapshotSchema, SyncPlayerEventSchema, UuidSchema, type ReadingSnapshot } from '@endless/cloud-contracts';
 import { ArchiveCommandSchema, ArchiveReceiptSchema, type ArchiveCommand, type ArchiveReceipt } from '@endless/cloud-contracts';
 import { acceptArchiveReceipt, archivePositions, emptyArchives, initialArchives, nativeArchiveState, parseArchives, rememberArchives, type ArchiveView } from './cloud/archives.js';
 import { LifecycleReceiptSchema, ManagementBootstrapSchema, ManagementPullSchema, type LifecycleReceipt, type ManagementBootstrap, type ManagementPull } from '@endless/cloud-contracts';
@@ -1175,6 +1176,29 @@ export class WorkspaceRepository {
     });
   }
 
+  /** Bounded identity lookup also verifies already-present historical pages; equal text is not identity. */
+  async eventIdentities(streamId: string, startSeq: number, count: number): Promise<(SidecarEntry | null)[]> {
+    this.requireSync();
+    if (!Number.isSafeInteger(startSeq) || startSeq < 1 || !Number.isSafeInteger(count) || count < 0 || count > CLOUD_LIMITS.eventsPerBatch) throw new Error('事件身份读取范围无效');
+    const db = await this.db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('eventIds', 'readonly');
+      const requests = Array.from({ length: count }, (_, i) => tx.objectStore('eventIds').get(sidecarKey(streamId, startSeq + i)));
+      tx.oncomplete = () => {
+        try {
+          resolve(requests.map((r) => {
+            if (r.result === undefined) return null;
+            const row = r.result as SidecarEntry;
+            if (!row || Object.keys(row).sort().join() !== 'event,eventId' || !UuidSchema.safeParse(row.eventId).success
+              || !sameMetadata(SyncPlayerEventSchema.parse(row.event), row.event)) throw new Error('未知事件身份保留，不能覆盖');
+            return row;
+          }));
+        } catch (cause) { reject(cause); }
+      };
+      tx.onabort = tx.onerror = () => reject(new Error('事件身份读取失败，原记录保留'));
+    });
+  }
+
   /** Re-anchor the cursor without replacing business rows, identities, commands or acknowledged heads. */
   async reanchorSync(expected: CloudSyncState, raw: SyncBootstrap): Promise<void> {
     this.requireSync();
@@ -1273,7 +1297,7 @@ export class WorkspaceRepository {
       if (h && (!Number.isInteger(seq) || seq < 1 || r.value.eventId !== h.events[seq - 1]?.eventId || !sameMetadata(r.value.event, h.events[seq - 1]?.event))) throw new Error('快照事件身份与本机记录不同，原件保留');
     }
     const seed = parseWorkspace(snapshot.source), previously = revisions.installed.at(-1)?.obligations ?? seed.obligations;
-    if (!sameMetadata(original.obligations, previously)) throw new Error('本机义务与已验证登记不同，不能用快照覆盖');
+    assertReadingObligationProgress(content, original, previously);
     const additions = catalog.slice(revisions.installed.length);
     const pending = revisions.pending;
     const own = pending?.confirmation ? additions.find((r) => r.commandId === pending.confirmation!.commandId) : undefined;
@@ -1298,7 +1322,8 @@ export class WorkspaceRepository {
       const held = original.branches.find((old) => old.id === b.id);
       return held ? { ...b, session: { ...b.session, revision: held.session.revision + 1, current: held.session.current, largeText: held.session.largeText } } : b;
     }).concat(original.branches.filter((b) => !byId.has(b.id)));
-    const workspace = parseWorkspace({ ...original, entries: metadataEntries(entries, display), revisions: remote.revisions, obligations: remote.obligations,
+    const workspace = parseWorkspace({ ...original, activeBranchId: own?.stream.streamId ?? original.activeBranchId,
+      entries: metadataEntries(entries, display), revisions: remote.revisions, obligations: retainReadingCompletionTimes(original.obligations, remote.obligations),
       branches, management, identity: { ...original.identity, repositoryRevision: original.identity.repositoryRevision + 1 } });
     for (const b of workspace.branches) bridge(content, workspace, b.id);
     revisions = { ...revisions, installed: catalog, pending: own ? null : pending };

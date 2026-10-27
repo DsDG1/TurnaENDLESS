@@ -60,6 +60,10 @@ export const RevisionRegistrationSchema = z.object({
     createdAt: z.string().datetime(), waivedAt: z.string().datetime().nullable() }).strict()).max(500),
   display: MetadataEntrySchema, stream: SyncStreamBindingSchema,
   prefixEventIds: z.array(UuidSchema).max(10_000).optional(),
+  /** New registrations bind the complete reading inventory at adoption. Old records stay byte-for-byte legacy. */
+  readingContext: z.object({ format: z.literal('cloud-revision-reading-context/1'),
+    heads: z.array(SyncStreamBindingSchema).min(1).max(64),
+  }).strict().optional(),
 }).strict();
 export type RevisionRegistration = z.infer<typeof RevisionRegistrationSchema>;
 export const RevisionCatalogSchema = z.object({

@@ -213,6 +213,25 @@ describe('C3 actual cloud API + PG + production browser (isolated loopback HTTPS
       await page.getByRole('button', { name: '保留本机修改并重新提交', exact: true }).click();
       await syncReader(page, namespace); await syncReader(other, namespace);
       expect((await snapshot(other, namespace)).meta.entries.find((e: any) => e.id === entryId).display.title).toBe(localTitle);
+      stage = 'complete real reading before revision';
+      await page.locator('.episode-card').filter({ hasText: localTitle }).getByRole('button', { name: /(?:播放|查看)第 \d 集/ }).click();
+      for (let i = 0; i < 25 && await page.getByRole('heading', { name: '这一段已读完。', exact: true }).count() === 0; i++) {
+        const active = (await snapshot(page, namespace)).meta.activeBranchId;
+        const choices = page.locator('.answer-option');
+        if (await choices.count() && await choices.first().isEnabled()) {
+          const count = (await snapshot(page, namespace)).branches.find((b: any) => b.id === active).session.events.length;
+          await choices.first().click();
+          await expect.poll(async () => (await snapshot(page, namespace)).branches.find((b: any) => b.id === active).session.events.length).toBe(count + 1);
+        }
+        const count = (await snapshot(page, namespace)).branches.find((b: any) => b.id === active).session.events.length;
+        await page.getByRole('button', { name: /^(继续|看完这一集)$/ }).click();
+        await expect.poll(async () => (await snapshot(page, namespace)).branches.find((b: any) => b.id === active).session.events.length).toBe(count + 1);
+      }
+      await page.getByRole('heading', { name: '这一段已读完。', exact: true }).waitFor();
+      await syncReader(page, namespace); await syncReader(other, namespace);
+      const completedObligations = (await snapshot(page, namespace)).meta.obligations;
+      expect(completedObligations.every((o: any) => o.waivedAt !== null)).toBe(true);
+      await page.goto(`${fixture.origin}${readHash}`); await syncReader(page, namespace);
       const beforeRevision = await snapshot(page, namespace);
       stage = 'real revision preview/adopt';
       const originalRevision = source.revisions.find((r) => r.origin !== 'bundled')!;
@@ -243,6 +262,8 @@ describe('C3 actual cloud API + PG + production browser (isolated loopback HTTPS
       const adopted = await snapshot(page, namespace), adoptedB = await snapshot(other, namespace);
       const registration = adopted.revision.installed[0];
       expect(adoptedB.revision.installed).toEqual([registration]);
+      expect(adopted.meta.obligations).toEqual(completedObligations);
+      expect(adoptedB.meta.obligations.map((o: any) => ({ ...o, waivedAt: o.waivedAt !== null }))).toEqual(completedObligations.map((o: any) => ({ ...o, waivedAt: true })));
       expect(adoptedB.meta.activeBranchId).toBe(root);
       for (const before of beforeRevision.branches) expect(adopted.branches.find((v: any) => v.id === before.id).session.events).toEqual(before.session.events);
       for (const state of [adopted, adoptedB]) {
@@ -260,8 +281,11 @@ describe('C3 actual cloud API + PG + production browser (isolated loopback HTTPS
       await page.goto(`${fixture.origin}${readHash}/library`); await syncReader(page, namespace);
       await page.getByLabel('归档名称', { exact: true }).fill(`Volume ${decision}`);
       await page.getByRole('checkbox', { name: revisedTitle, exact: true }).check();
+      const archivedResponse = page.waitForResponse((r) => r.url().endsWith('/api/cloud/v1/sync/archives') && r.request().method() === 'POST');
       await page.getByRole('button', { name: '提交归档请求', exact: true }).click();
-      await expect.poll(async () => (await snapshot(page, namespace)).objects.filter((o: any) => o.kind === 'volume').length).toBe(1);
+      const archived = await archivedResponse;
+      expect(archived.status()).toBe(200); expect(await archived.json()).toMatchObject({ outcome: 'applied' });
+      await expect.poll(async () => (await snapshot(page, namespace)).objects.filter((o: any) => o.kind === 'volume').length, { timeout: 15_000 }).toBe(1);
       await syncReader(page, namespace); await syncReader(other, namespace);
       const volume = (await snapshot(page, namespace)).objects.find((o: any) => o.kind === 'volume');
       expect((await snapshot(other, namespace)).objects.find((o: any) => o.kind === 'volume')).toEqual(volume);

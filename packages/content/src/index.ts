@@ -518,3 +518,4 @@ export function createContent(lexiconText: string) {
 
 export type Content = ReturnType<typeof createContent>;
 export { rebuildCloudReading } from './cloud-reading.js';
+export { assertReadingObligationProgress, deriveReadingObligations, retainReadingCompletionTimes } from './reading-obligations.js';

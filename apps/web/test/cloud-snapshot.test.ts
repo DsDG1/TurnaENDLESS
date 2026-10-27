@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { adoptRevision, applyPlayerCommand, bridge, buildBackup, deriveCloudCopy, previewRevision, rebuildCloudReading, updateDisplay,
+import { adoptRevision, applyPlayerCommand, assertReadingObligationProgress, bridge, buildBackup, deriveCloudCopy,
+  deriveReadingObligations, previewRevision, rebuildCloudReading, retainReadingCompletionTimes, updateDisplay,
   type ContentRevision, type Workspace } from '@endless/content';
 import type { CloudImportReceipt, ReadingSnapshot, RevisionRegistration } from '@endless/cloud-contracts';
-import { getScenes } from '@endless/player';
+import { getOptions, getScenes } from '@endless/player';
 import { cloudTestContent as content, cloudTestTime, cloudTestWorkspace } from '../../../packages/content/test/cloud-fixture.js';
 import { cloudDigest, cloudNamespace } from '../src/cloud/local.js';
 import { commandOfEvent } from '../src/cloud/outbox.js';
@@ -11,6 +12,7 @@ import { WorkspaceRepository } from '../src/storage.js';
 import { SessionCommitter } from '../src/session-writer.js';
 import { WorkspaceSync } from '../src/cloud/sync.js';
 import { CloudFailure } from '../src/cloud/client.js';
+import { RevisionSync } from '../src/cloud/revisions.js';
 
 const time = new Date('2026-10-27T09:00:00.000Z');
 function read(workspace: Workspace) {
@@ -18,6 +20,16 @@ function read(workspace: Workspace) {
   workspace = applyPlayerCommand(content, workspace, { type: 'select', episode: revision.episodeId });
   const scene = getScenes(bridge(content, workspace).library.episodes.find((e) => e.id === revision.episodeId)!)[0]!;
   return applyPlayerCommand(content, workspace, { type: 'advance', scene: scene.id, skip: false }, time);
+}
+function finishGenerated(workspace: Workspace, skip = false, at = time) {
+  const revision = workspace.revisions.find((r) => r.origin === 'generated')!;
+  workspace = applyPlayerCommand(content, workspace, { type: 'select', episode: revision.episodeId });
+  for (const scene of getScenes(bridge(content, workspace).library.episodes.find((e) => e.id === revision.episodeId)!)) {
+    if (getOptions(scene).length) workspace = applyPlayerCommand(content, workspace,
+      { type: 'answer', scene: scene.id, choice: getOptions(scene).findIndex((o) => o.correct) }, at);
+    workspace = applyPlayerCommand(content, workspace, { type: 'advance', scene: scene.id, skip }, at);
+  }
+  return workspace;
 }
 async function fixture() {
   const workspaceId = crypto.randomUUID(), factory = new IDBFactory();
@@ -30,7 +42,7 @@ async function fixture() {
     validationBinding: 'c'.repeat(64), copyPolicy: 'endless-cloud-copy/1', contentIds: source.entries.map((e) => e.id),
     revisionIds: source.revisions.map((r) => r.id), seedContentIds: source.entries.filter((e) => e.sourceKind === 'bundled').map((e) => e.id) };
   await repo.installCloudCopy(source, receipt, crypto.randomUUID());
-  const ids = source.branches[0]!.session.events.map(() => crypto.randomUUID());
+  const ids: string[] = source.branches[0]!.session.events.map(() => crypto.randomUUID());
   async function snapshot(workspace = read(source), registrations: RevisionRegistration[] = []): Promise<ReadingSnapshot> {
     const histories = await Promise.all(workspace.branches.map(async (b) => {
       const inherited = registrations.find((r) => r.stream.streamId === b.id && r.artifact.mode === 'fork')?.prefixEventIds;
@@ -77,6 +89,76 @@ async function fixture() {
 async function resign(s: ReadingSnapshot) { const { digest: _, ...body } = s; return { ...s, digest: await cloudDigest(body) }; }
 
 describe('裁剪后完整阅读快照：原生重建与原子接收', () => {
+  it('真实读完整集后允许快照恢复，已完成义务与原时间保留，不因导入时尚未完成而拒绝', async () => {
+    const f = await fixture(), finished = finishGenerated(f.source);
+    expect(finished.obligations[0]!.waivedAt).toBe(time.toISOString());
+    expect((await new SessionCommitter(f.repo, 0).commit(finished)).ok).toBe(true);
+    const queued = await f.repo.pendingOutbox();
+    for (const e of queued) f.ids[e.seq - 1] = e.eventId;
+    const snapshot = await f.snapshot(finished), head = snapshot.histories[0]!.stream;
+    await f.repo.acknowledgePush({ batchId: crypto.randomUUID(), workspaceId: f.workspaceId, changeSeq: 3,
+      cloudVersion: '5', applied: queued.length, duplicate: 0, streams: [head] }, queued.map((e) => `${e.streamId}:${e.seq}`));
+    const before = (await f.repo.load())!;
+    await f.repo.acceptReadingSnapshot(content, await f.repo.syncState(), snapshot);
+    expect((await f.repo.load())!.obligations).toEqual(before.obligations);
+    expect((await f.repo.load())!.branches[0]!.session.events).toEqual(before.branches[0]!.session.events);
+    const earlier = finishGenerated(f.source, false, new Date(time.getTime() - 60_000));
+    const both = { ...before, obligations: f.source.obligations, branches: [...before.branches,
+      { ...earlier.branches[0]!, id: `brn_${crypto.randomUUID()}`, label: '另一合法阅读分支' }] };
+    const derived = deriveReadingObligations(content, both);
+    expect(deriveReadingObligations(content, { ...both, branches: [...both.branches].reverse() })).toEqual(derived);
+    expect(derived).toEqual(earlier.obligations);
+    expect(() => assertReadingObligationProgress(content, before, f.source.obligations)).not.toThrow();
+    expect(retainReadingCompletionTimes(before.obligations, derived)).toEqual(before.obligations);
+    await f.repo.close();
+  });
+
+  it('跳过推进到末尾不能伪造已完成义务；快照拒绝且原始记录完整保留', async () => {
+    const f = await fixture(), snapshot = await f.snapshot(finishGenerated(f.source, true));
+    const installation = await f.repo.cloudInstallation();
+    const forged = { ...f.source, obligations: f.source.obligations.map((o) => ({ ...o, waivedAt: time.toISOString() })) };
+    expect((await new SessionCommitter(f.repo, 0).commit(forged)).ok).toBe(true);
+    const before = await f.repo.rawSnapshot();
+    await expect(f.repo.acceptReadingSnapshot(content, await f.repo.syncState(), snapshot)).rejects.toThrow('真实完成阅读');
+    expect(await f.repo.rawSnapshot()).toEqual(before); expect(await f.repo.cloudInstallation()).toEqual(installation);
+    await f.repo.close();
+  });
+
+  it('读取带完整库存的修订时原子重建并续拉新截止点，不把旧页游标覆盖回去', async () => {
+    const f = await fixture(), finished = finishGenerated(f.source), before = await f.snapshot(finished), revised = await f.revision(finished);
+    const r = revised.registration;
+    r.readingContext = { format: 'cloud-revision-reading-context/1', heads: before.histories.map((h) => h.stream) };
+    r.artifact.binding.inventoryDigest = await cloudDigest(before.histories.map((h) => ({ manifest: h.branch,
+      head: { count: h.stream.eventSeq, lastEventId: h.stream.lastEventId }, events: h.events.map((e) => ({ seq: e.seq, id: e.eventId, digest: e.digest })) })));
+    const { digest: _, ...artifact } = r.artifact; r.artifact.digest = await cloudDigest(artifact);
+    const snapshot = await f.snapshot(revised.workspace, [r]);
+    const premature = structuredClone(snapshot), bad = premature.revisionCatalog.registrations[0]!;
+    const head = bad.readingContext!.heads[0]!, h = premature.histories.find((h) => h.stream.streamId === head.streamId)!;
+    head.eventSeq--; head.lastEventId = h.events[head.eventSeq - 1]!.eventId;
+    bad.artifact.binding.eventCount = head.eventSeq; bad.artifact.binding.lastEventId = head.lastEventId;
+    bad.artifact.binding.inventoryDigest = await cloudDigest([{ manifest: h.branch, head: { count: head.eventSeq, lastEventId: head.lastEventId },
+      events: h.events.slice(0, head.eventSeq).map((e) => ({ seq: e.seq, id: e.eventId, digest: e.digest })) }]);
+    const { digest: badDigest, ...badArtifact } = bad.artifact; bad.artifact.digest = await cloudDigest(badArtifact);
+    premature.revisionCatalog.digest = await cloudDigest(premature.revisionCatalog.registrations);
+    const original = await f.repo.rawSnapshot();
+    await expect(f.repo.acceptReadingSnapshot(content, await f.repo.syncState(), await resign(premature))).rejects.toThrow();
+    expect(await f.repo.rawSnapshot()).toEqual(original);
+    const state = await f.repo.syncState();
+    await f.repo.saveSyncState({ ...state, cursor: 'old-page', cloudVersion: '1', streams: { [f.source.activeBranchId]: {
+      seq: f.source.branches[0]!.session.events.length, eventId: f.ids[f.source.branches[0]!.session.events.length - 1]! } } });
+    const api = { readingSnapshot: vi.fn().mockResolvedValue(snapshot), recoverSync: vi.fn(), push: vi.fn(), registerStream: vi.fn(), conflicts: vi.fn(), resolveConflict: vi.fn(), bootstrap: vi.fn(),
+      revisionPreview: vi.fn(), revisionAdopt: vi.fn(), revisionCatalog: async () => snapshot.revisionCatalog,
+      pull: vi.fn().mockResolvedValueOnce({ fromChangeSeq: 0, changeSeq: 1, changes: [], nextCursor: 'old-page-1', hasMore: false, cloudVersion: '2' })
+        .mockResolvedValue({ fromChangeSeq: 3, changeSeq: 3, changes: [], nextCursor: snapshot.cursor, hasMore: false, cloudVersion: '5' }) };
+    const driver = new WorkspaceSync({ repo: f.repo, content, workspaceId: f.workspaceId, deviceId: crypto.randomUUID(), digest: cloudDigest,
+      newBatchId: () => crypto.randomUUID(), api, revisions: new RevisionSync(f.repo, api, content, f.workspaceId) });
+    expect((await driver.run()).stopped).toBeNull();
+    expect(api.pull.mock.calls.map((args) => args[1])).toEqual(['old-page', snapshot.cursor]);
+    expect((await f.repo.syncState()).cursor).toBe(snapshot.cursor);
+    expect((await f.repo.load())!.obligations).toEqual(finished.obligations);
+    expect((await f.repo.revisionState()).installed).toEqual([r]);
+    await f.repo.close();
+  });
   it('保留本机展示候选/偏好/义务，并在一次事务安装全部身份与快照截止点', async () => {
     const f = await fixture(), entry = f.source.entries.find((e) => e.sourceKind === 'generated')!;
     const writer = new SessionCommitter(f.repo, 0);
@@ -117,9 +199,12 @@ describe('裁剪后完整阅读快照：原生重建与原子接收', () => {
   it('重算所有摘要也不能绕过原件、事件命令、前缀身份或原生修订验收', async () => {
     const f = await fixture(), snapshot = await f.snapshot(), before = await f.repo.rawSnapshot();
     const command = structuredClone(snapshot); command.histories[0]!.events.at(-1)!.command = { type: 'reveal', scene: 'forged' };
+    const duplicate = structuredClone(snapshot), history = duplicate.histories[0]!;
+    history.events.push({ ...history.events.at(-1)!, seq: history.events.length + 1, eventId: crypto.randomUUID() });
+    history.stream.eventSeq++; history.stream.lastEventId = history.events.at(-1)!.eventId;
     const source = structuredClone(snapshot); (source.source as Workspace).profile.id = `pro_${crypto.randomUUID()}`;
     source.sourceDigest = await cloudDigest(source.source);
-    for (const candidate of [command, source]) {
+    for (const candidate of [command, duplicate, source]) {
       await expect(f.repo.acceptReadingSnapshot(content, await f.repo.syncState(), await resign(candidate))).rejects.toThrow();
       expect(await f.repo.rawSnapshot()).toEqual(before);
     }

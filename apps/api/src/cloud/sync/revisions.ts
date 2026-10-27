@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { stableStringify } from '@endless/esl';
 import {
-  adoptRevision, bridge, checked, ContentRevisionSchema, previewRevision,
+  adoptRevision, bridge, checked, ContentRevisionSchema, deriveReadingObligations, previewRevision,
   type Branch, type Content, type ContentRevision, type Workspace,
 } from '@endless/content';
 import { libraryLoader, replayEvents } from '@endless/player';
@@ -159,6 +159,7 @@ export class RevisionPreviewService {
             [ctx.accountId, input.workspaceId, preview.request.streamId, count])).rows.map((r) => r.event_id) : [];
           registration = RevisionRegistrationSchema.parse({ format: 'cloud-revision-registration/1', version: catalog.version + 1,
             readingChangeSeq: Number(readingHead?.change_seq ?? 0),
+            readingContext: { format: 'cloud-revision-reading-context/1', heads: inventory.heads },
             prefixEventIds,
             commandId: input.commandId, previewRequestId: input.previewRequestId, artifact: current.artifact,
             entry: { contentId: entry.id, revisionIds: entry.revisionIds, headRevisionId: entry.headRevisionId, updatedAt: entry.updatedAt },
@@ -295,7 +296,8 @@ export class RevisionPreviewService {
         }
       }
     } catch { throw new Rejected('history'); }
-    return { workspace, digest: sha(identities) };
+    return { workspace: { ...workspace, obligations: deriveReadingObligations(this.content!, workspace) }, digest: sha(identities),
+      heads: streams.rows.map((s) => ({ streamId: s.stream_id, branchId: s.stream_id, eventSeq: Number(s.event_seq), lastEventId: s.last_event_id })) };
   }
 
   private compile(input: RevisionPreviewRequest, held: Reservation, workspace: Workspace,

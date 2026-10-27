@@ -199,6 +199,31 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     expect((await request('/sync/snapshot', 'POST', JSON.parse(body), '')).status).toBe(401);
   });
 
+  it('真实完成阅读后再修订绑定完整库存，完成义务不被重新创建，快照原生重建保留旧记录', async () => {
+    const f = await revisionPreview();
+    let finished = applyPlayerCommand(content, f.local, { type: 'select', episode: f.revision.episodeId });
+    const at = new Date('2026-10-27T10:00:00.000Z');
+    for (const scene of getScenes(bridge(content, finished).library.episodes.find((e) => e.id === f.revision.episodeId)!)) {
+      if (getOptions(scene).length) finished = applyPlayerCommand(content, finished,
+        { type: 'answer', scene: scene.id, choice: getOptions(scene).findIndex((o) => o.correct) }, at);
+      finished = applyPlayerCommand(content, finished, { type: 'advance', scene: scene.id, skip: false }, at);
+    }
+    const base = f.input.baseSeq, events = entries(finished, base);
+    const pushed = await sync.push(a, { workspaceId: f.workspaceId, batchId: randomUUID(), baseVersion: '1',
+      streams: [{ streamId: f.input.streamId, baseSeq: base, baseEventId: f.input.baseEventId, events }] });
+    const input = { ...f.input, baseSeq: base + events.length, baseEventId: events.at(-1)!.eventId };
+    const preview = await sync.management.revisionPreviews.submit(a, input);
+    expect(preview.outcome).toBe('ready'); if (preview.outcome !== 'ready') return;
+    const result = await sync.management.revisionPreviews.adopt(a, { protocol: 'cloud-revision-adoption/1', workspaceId: f.workspaceId,
+      commandId: randomUUID(), previewRequestId: input.requestId, artifactDigest: preview.artifact.digest });
+    expect(result.outcome).toBe('applied'); if (result.outcome !== 'applied') return;
+    expect(result.registration.obligations).toEqual(finished.obligations);
+    expect(result.registration.readingContext?.heads).toEqual(pushed.receipt.streams);
+    const snapshot = await sync.snapshot(second, { workspaceId: f.workspaceId, cloudVersion: '0', streams: [] });
+    expect(snapshot.revisionCatalog.registrations).toEqual([result.registration]);
+    expect(snapshot.histories.find((h) => h.stream.streamId === f.input.streamId)!.events.slice(base)).toEqual(events);
+  });
+
   it('快照与推送竞争时库存/水位属于同一提交，截止点后的事件不会漏拉', async () => {
     const local = cloudTestWorkspace(), { workspaceId, bootstrap } = await imported(local);
     const all = entries(play(local, { limit: 2 })), streamId = streamOf(local);
@@ -218,11 +243,14 @@ describe('C3 增量同步：真实 PostgreSQL', () => {
     const local = cloudTestWorkspace(), { workspaceId } = await imported(local);
     const all = entries(play(local, { limit: 1 }));
     await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: '1', streams: [{ streamId: streamOf(local), baseSeq: 0, baseEventId: null, events: all }] });
+    const repeated = { ...all[0]!, seq: 2, eventId: randomUUID() };
+    await sync.push(a, { workspaceId, batchId: randomUUID(), baseVersion: '1', streams: [{ streamId: streamOf(local), baseSeq: 1, baseEventId: all[0]!.eventId, events: [repeated] }] });
+    await expect(sync.snapshot(second, { workspaceId, cloudVersion: '0', streams: [] })).rejects.toMatchObject({ code: 'CONTENT_REJECTED' });
     await withClient(fixture.cluster.adminDsn, (q) => q.query("UPDATE event_objects SET command = '{\"type\":\"reveal\",\"scene\":\"forged\"}' WHERE workspace_id = $1", [workspaceId]));
     await expect(sync.snapshot(second, { workspaceId, cloudVersion: '0', streams: [] })).rejects.toMatchObject({ code: 'CONTENT_REJECTED' });
     await withClient(fixture.cluster.adminDsn, (q) => q.query('UPDATE sync_streams SET event_seq = 10001 WHERE workspace_id = $1', [workspaceId]));
     await expect(sync.snapshot(second, { workspaceId, cloudVersion: '0', streams: [] })).rejects.toMatchObject({ code: 'STORAGE_QUOTA' });
-    expect((await fixture.app.withTenant(a.accountId, (q) => q.query('SELECT event_id FROM event_objects WHERE workspace_id = $1', [workspaceId]))).rows).toHaveLength(1);
+    expect((await fixture.app.withTenant(a.accountId, (q) => q.query('SELECT event_id FROM event_objects WHERE workspace_id = $1', [workspaceId]))).rows).toHaveLength(2);
   });
 
   async function revisionPreview(local = cloudTestWorkspace(true)) {

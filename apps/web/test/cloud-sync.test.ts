@@ -558,6 +558,38 @@ describe('事务内 Outbox：身份与前缀', () => {
 });
 
 describe('同步驱动：双设备往返', () => {
+  it('正文相同但命令不再产生新事件时明确拒绝，不把未落库事件算进已确认流头', async () => {
+    const workspaceId = crypto.randomUUID(), api = new CloudSim(); api.seed(seed());
+    const a = await device(new IDBFactory(), workspaceId), b = await device(new IDBFactory(), workspaceId);
+    const left = engine(a, workspaceId, DEVICE_A, api), right = engine(b, workspaceId, DEVICE_B, api);
+    await left.sync.run(); await right.sync.run();
+    await play(a, 1, 0); await left.sync.run(); await right.sync.run();
+    const before = await b.load(), ids = (await b.rawSnapshot() as any).eventIds, state = await b.syncState();
+    const previous = api.changes.at(-1)!, entry = previous.events.at(-1)!;
+    const repeated = { ...entry, seq: entry.seq + 1, eventId: crypto.randomUUID() };
+    api.changes.push({ ...previous, seq: previous.seq + 1, batchId: crypto.randomUUID(), fromSeq: previous.toSeq,
+      toSeq: previous.toSeq + 1, events: [repeated] });
+    api.streams.set(streamId, { seq: repeated.seq, lastEventId: repeated.eventId }); api.version++;
+    expect((await right.sync.run()).stopped).toBe('replay');
+    expect(await b.load()).toEqual(before);
+    expect((await b.syncState()).streams).toEqual(state.streams);
+    expect((await b.syncState()).cursor).toBe(state.cursor);
+    expect((await b.rawSnapshot() as any).eventIds).toEqual(ids);
+    api.changes[api.changes.length - 1] = { ...api.changes.at(-1)!, fromSeq: 0, toSeq: entry.seq,
+      events: [{ ...entry, eventId: crypto.randomUUID() }] };
+    expect((await right.sync.run()).stopped).toBe('prefix');
+    expect(await b.load()).toEqual(before);
+    expect((await b.syncState()).streams).toEqual(state.streams);
+    expect((await b.syncState()).cursor).toBe(state.cursor);
+    expect((await b.rawSnapshot() as any).eventIds).toEqual(ids);
+    api.changes[api.changes.length - 1] = { ...api.changes.at(-1)!, fromSeq: 0, toSeq: entry.seq + 1, events: [entry] };
+    expect((await right.sync.run()).stopped).toBe('replay');
+    expect(await b.load()).toEqual(before);
+    expect((await b.syncState()).streams).toEqual(state.streams);
+    expect((await b.syncState()).cursor).toBe(state.cursor);
+    expect((await b.rawSnapshot() as any).eventIds).toEqual(ids);
+    await a.close(); await b.close();
+  });
   it('另一设备已有云端进度后才首次打开副本，仍从导入基线拉取，不跳到当前游标', async () => {
     const workspaceId = crypto.randomUUID();
     const api = new CloudSim();

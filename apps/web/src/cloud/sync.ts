@@ -4,7 +4,7 @@ import { CLOUD_LIMITS, type ReadingSnapshot, type ReadingSnapshotRequest, type R
 import { SessionCommitter, type CommitOptions, type CommitOutcome } from '../session-writer.js';
 import { preservedWorkspace, type PendingPreservation } from './conflict.js';
 import { CloudFailure } from './client.js';
-import { commandOfEvent, emptySyncState, outgoing, type CloudSyncState, type OutboxEntry } from './outbox.js';
+import { commandOfEvent, emptySyncState, outgoing, type CloudSyncState, type OutboxEntry, type SidecarEntry } from './outbox.js';
 
 /**
  * 增量同步驱动（计划 §8.3–8.7）。不依赖 React，全部副作用可注入。
@@ -19,6 +19,7 @@ import { commandOfEvent, emptySyncState, outgoing, type CloudSyncState, type Out
 export interface SyncRepository {
   syncState(): Promise<CloudSyncState>;
   pendingOutbox(): Promise<OutboxEntry[]>;
+  eventIdentities(streamId: string, startSeq: number, count: number): Promise<(SidecarEntry | null)[]>;
   saveSyncState(state: CloudSyncState): Promise<void>;
   reanchorSync(expected: CloudSyncState, boot: SyncBootstrap): Promise<void>;
   acceptReadingSnapshot(content: Content, expected: CloudSyncState, snapshot: ReadingSnapshot, seedCursor?: string): Promise<void>;
@@ -50,7 +51,7 @@ export interface SyncDeps {
   workspaceId: string;
   deviceId: string;
   digest(value: unknown): Promise<string>;
-  revisions?: { prepare(): Promise<void>; through(seq: number): Promise<void> };
+  revisions?: { prepare(): Promise<void>; through(seq: number): Promise<void | boolean> };
   newBatchId(): string;
   now?(): Date;
 }
@@ -314,7 +315,12 @@ export class WorkspaceSync {
     let applied = 0;
     let cursor = state.cursor!;
     let rebootstrapped = false;
-    for (let page = 0; page < 50; page++) {
+    const through = async (seq: number) => {
+      if (!await this.deps.revisions?.through(seq)) return false;
+      state = await this.deps.repo.syncState(); cursor = state.cursor!;
+      return true;
+    };
+    pages: for (let page = 0; page < 50; page++) {
       let response;
       try {
         response = await this.deps.api.pull(this.deps.workspaceId, cursor, CLOUD_LIMITS.listPageDefault);
@@ -363,18 +369,15 @@ export class WorkspaceSync {
       if (this.deps.revisions) {
         await this.deps.revisions.prepare();
         const from = response.fromChangeSeq ?? (response.changes[0] ? response.changes[0].seq - 1 : undefined);
-        if (from !== undefined) await this.deps.revisions.through(from);
+        if (from !== undefined && await through(from)) continue pages;
       }
       const streams: CloudSyncState['streams'] = { ...state.streams };
       for (const change of response.changes) {
-        await this.deps.revisions?.through(change.seq - 1);
+        if (await through(change.seq - 1)) continue pages;
         // 无论谁写的，服务端的流头都成为本机新的已确认前缀；
         // 否则重放别人的变更之后就再也接不上自己的推送。
         const last = change.events[change.events.length - 1];
         const known = streams[change.streamId];
-        if (!known || change.toSeq > known.seq) {
-          streams[change.streamId] = { seq: change.toSeq, eventId: last?.eventId ?? null };
-        }
         // Also verify our own historical pages: deviceId is not proof of the local prefix.
         const outcome = await this.applyChange(change);
         if (outcome !== 'applied' && outcome !== 'empty') {
@@ -382,10 +385,11 @@ export class WorkspaceSync {
           await this.fail(stopText[outcome]);
           return { pushed: 0, applied, pending: (await this.deps.repo.pendingOutbox()).length, stopped: outcome, note: stopText[outcome] };
         }
+        if (!known || change.toSeq > known.seq) streams[change.streamId] = { seq: change.toSeq, eventId: last?.eventId ?? null };
         if (outcome === 'applied') applied++;
-        await this.deps.revisions?.through(change.seq);
+        if (await through(change.seq)) continue pages;
       }
-      if (response.changeSeq !== undefined) await this.deps.revisions?.through(response.changeSeq);
+      if (response.changeSeq !== undefined && await through(response.changeSeq)) continue pages;
       cursor = response.nextCursor;
       const fresh = await this.deps.repo.syncState();
       const merged = { ...fresh.streams };
@@ -401,8 +405,16 @@ export class WorkspaceSync {
 
   /** 重放一条云端变更：逐条执行命令并对齐正文，任何不一致都停手，不写坏本机历史。 */
   private async applyChange(change: SyncChange): Promise<'applied' | 'empty' | 'prefix' | 'replay' | 'ticket'> {
-    const stored = await this.deps.repo.load();
+    if (change.toSeq !== change.fromSeq + change.events.length
+      || change.events.some((e, i) => e.seq !== change.fromSeq + i + 1)) return 'replay';
+    const [stored, identities, sync] = await Promise.all([this.deps.repo.load(),
+      this.deps.repo.eventIdentities(change.streamId, change.fromSeq + 1, change.events.length), this.deps.repo.syncState()]);
     if (!stored) return 'prefix';
+    for (const [i, entry] of change.events.entries()) {
+      const known = identities[i], head = sync.streams[change.streamId];
+      if ((known && (known.eventId !== entry.eventId || stableStringify(known.event) !== stableStringify(entry.event)))
+        || (head?.seq === entry.seq && head.eventId !== entry.eventId)) return 'prefix';
+    }
     let workspace = stored;
     let applied = 0;
     if (!workspace.branches.some((branch) => branch.id === change.streamId)) {
@@ -447,7 +459,8 @@ export class WorkspaceSync {
       }
       const last = next.branches.find((candidate) => candidate.id === change.streamId)?.session.events.at(-1);
       // 事件正文是权威：重放不出来就不是同一条历史，不能"大致相同"地接受
-      if (!last || stableStringify(last) !== stableStringify(entry.event)) return applied ? 'replay' : 'prefix';
+      if (next.branches.find((candidate) => candidate.id === change.streamId)!.session.events.length !== entry.seq
+        || !last || stableStringify(last) !== stableStringify(entry.event)) return 'replay';
       workspace = next;
       applied++;
     }
