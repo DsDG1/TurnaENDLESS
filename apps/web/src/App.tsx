@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { episodeCompletion, getOptions, getScenes, type Episode, type Library, type PlayerView } from '@endless/player';
-import { creativeSeries, materialBackgrounds, materialCharacters, materialProps, type CreativeSeriesId } from '@endless/content';
+import { creativeSeries, materialBackgrounds, materialCharacters, materialProps, type CreativeSeriesId, type FillerCard } from '@endless/content';
 import { BACKDROP_LABEL_BY_ID, CHARACTER_LABEL_BY_ID, Character, PROP_LABEL_BY_ID, PropArt, SeriesArt, StoryArt } from './components/art.js';
 import { Brand, Icon, type IconName } from './components/icons.js';
 import { SceneRenderer } from './components/scenes.js';
 import { EntryMenu, LibraryPage } from './components/library.js';
+import { IntermissionBridge } from './components/intermission.js';
 import { EditionPage } from './edition/page.js';
 import { CloudRoute, CloudReadBanner, PlayerScope, cloudEnabled, cloudHash, parseRoute, type AppRoute, type Page } from './integration.js';
 import { downloadSession } from './downloads.js';
@@ -73,7 +74,7 @@ function GenerationPanel({ player, onGenerate }: { player: Player; onGenerate():
     <div className="button-row"><button className="button button-dark" aria-busy={player.generating}
       disabled={player.generating || player.saving || (!player.ticket && (!player.readyForGeneration || !player.canUseModel))}
       onClick={onGenerate}><Icon name="spark" size={17} />{player.generating ? 'AI 正在续写…' : player.ticket ? '恢复生成任务' : 'AI 生成下一集'}</button>
-      <span className="generation-note">一份新内容，手动生成，不会自动连播。</span>
+      <span className="generation-note">一份新内容，默认手动生成；开启幕间的「连续流转」后，读完会自动续写。</span>
       {player.ticket && <button className="text-button" onClick={() => void player.cancelGeneration()}>停止等待（不终止服务端调用）</button>}</div>
     {player.phase && <p className="generation-phase" role="status">{player.phase}</p>}
   </section>;
@@ -170,6 +171,7 @@ function StoryApp({ route, player }: { route: AppRoute; player: Player }) {
   const [installOpen, setInstallOpen] = useState(false);
   const [reviewIndex, setReviewIndex] = useState<number | null>(null);
   const heading = useRef<HTMLElement>(null);
+  const autoTriggeredEpisode = useRef<string | null>(null);
   const session = player.session;
   const view = player.view;
   const library = player.library;
@@ -205,18 +207,153 @@ function StoryApp({ route, player }: { route: AppRoute; player: Player }) {
     document.title = `${page === 'watch' ? episode.title : page === 'progress' ? '阅读记录' : page === 'settings' ? '偏好设置' : page === 'library' ? '内容管理' : page === 'edition' ? 'Edition 专题' : page === 'cloud' ? '云端副本' : '故事频道'} · ENDLESS`;
   }, [page, episode.title]);
 
+  // 连续流转默认关闭：自动连播与自动续写都必须由用户显式开启（AI 任务保持用户触发）
+  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('endless-auto-advance') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleAutoAdvance = () => {
+    setAutoAdvanceEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('endless-auto-advance', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    if (t) touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - touchStartRef.current.x;
+    const dy = t.clientY - touchStartRef.current.y;
+    const dt = Date.now() - touchStartRef.current.time;
+    touchStartRef.current = null;
+
+    if (dt > 600) return;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+
+    if ((dy < -45 && absY > absX) || (dx < -45 && absX > absY)) {
+      if (scene && canAdvance) {
+        void advance();
+      } else if (!scene && nextEpisodeId) {
+        void select({ id: nextEpisodeId });
+      }
+    } else if ((dy > 45 && absY > absX) || (dx > 45 && absX > absY)) {
+      if (scene) {
+        if (reviewIndex !== null && reviewIndex > 0) setReviewIndex(reviewIndex - 1);
+        else if (reviewIndex === null && cursor > 0) setReviewIndex(cursor - 1);
+      } else if (!scene) {
+        setReviewIndex(scenes.length - 1);
+      }
+    }
+  };
+
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (page !== 'watch' || !scene || player.busy || reviewIndex !== null || state.answer || document.querySelector('dialog[open]')) return;
-      if (event.altKey || event.ctrlKey || event.metaKey || (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]'))) return;
-      if (/^[1-4]$/.test(event.key) && getOptions(scene)[Number(event.key) - 1]) {
-        event.preventDefault();
-        void player.dispatch({ type: 'answer', scene: scene.id, choice: Number(event.key) - 1 });
+      if (page !== 'watch' || player.busy || document.querySelector('dialog[open]')) return;
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]'))
+      ) {
+        return;
+      }
+
+      // 处于具体场景中
+      if (scene) {
+        // 1-4 选选项
+        if (/^[1-4]$/.test(event.key) && reviewIndex === null && !state.answer) {
+          const opts = getOptions(scene);
+          const choice = Number(event.key) - 1;
+          if (opts[choice]) {
+            event.preventDefault();
+            void player.dispatch({ type: 'answer', scene: scene.id, choice });
+            return;
+          }
+        }
+
+        // Space / Enter / ArrowRight / ArrowDown：卡片翻开或推进
+        if (event.key === ' ' || event.key === 'Enter' || event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+          if (scene.type === 'card' && !state.revealed && reviewIndex === null) {
+            event.preventDefault();
+            void player.dispatch({ type: 'reveal', scene: scene.id });
+            return;
+          }
+          if (canAdvance) {
+            event.preventDefault();
+            void advance();
+            return;
+          }
+        }
+
+        // ArrowLeft / ArrowUp：回退到上一卡
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (reviewIndex !== null && reviewIndex > 0) {
+            setReviewIndex(reviewIndex - 1);
+          } else if (reviewIndex === null && cursor > 0) {
+            setReviewIndex(cursor - 1);
+          }
+          return;
+        }
+      }
+
+      // 处于幕间过渡卡
+      if (!scene) {
+        if (event.key === ' ' || event.key === 'Enter' || event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+          if (nextEpisodeId) {
+            event.preventDefault();
+            void select({ id: nextEpisodeId });
+            return;
+          }
+        }
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          setReviewIndex(scenes.length - 1);
+          return;
+        }
       }
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [page, scene, state.answer, player.busy, reviewIndex, player.dispatch]);
+  }, [page, scene, state.answer, state.revealed, player.busy, reviewIndex, player.dispatch, canAdvance, cursor, scenes.length, nextEpisodeId, select]);
+
+  // 用户显式开启「连续流转」后，读完库内最后一集停留在观看页结算卡时，自动在后台静默生成下一集
+  // （每集只自动触发一次；默认关闭，AI 生成仍以用户手动触发为主）
+  useEffect(() => {
+    if (
+      page === 'watch' &&
+      autoAdvanceEnabled &&
+      !scene &&
+      !nextEpisodeId &&
+      player.readyForGeneration &&
+      player.canUseModel &&
+      !player.generating &&
+      !player.saving &&
+      !player.ticket &&
+      autoTriggeredEpisode.current !== episode.id
+    ) {
+      autoTriggeredEpisode.current = episode.id;
+      void player.generate();
+    }
+  }, [page, autoAdvanceEnabled, scene, nextEpisodeId, player.readyForGeneration, player.canUseModel, player.generating, player.saving, player.ticket, episode.id]);
 
   async function select(selected: { id: string }) {
     if (await player.dispatch({ type: 'select', episode: selected.id })) {
@@ -288,24 +425,29 @@ function StoryApp({ route, player }: { route: AppRoute; player: Player }) {
         {page === 'watch' && <>
           <div className="watch-heading"><button className="text-button back-button" onClick={() => go('home')}><Icon name="back" size={17} />返回频道</button><span>{reviewIndex !== null ? '回看模式 · 不计入记录' : episode.presentation ? `${episode.presentation.series === 'duck_detective' ? 'DUCK DETECTIVE / ' : ''}${episode.presentation.label}` : 'DUCK DETECTIVE / 鸭侦探事务所'}</span><span className="save-status" role="status">{player.saving ? '正在保存…' : player.cloudMode ? (player.cloudSyncing ? '正在同步…' : player.cloudView?.pending ? `待同步 ${player.cloudView.pending} 条` : '已保存到云副本') : '本地自动保存'}<Icon name={player.saving || player.cloudSyncing ? 'clock' : 'check'} size={14} /></span></div>
           <div className="watch-title"><span className="eyebrow">EPISODE {String(episodeNumber + 1).padStart(2, '0')}</span><h1>{episode.title}</h1><span lang="en">{episode.subtitle}</span></div>
-          <div className="watch-grid"><div className="watch-main">
+          <div className="watch-grid"><div className="watch-main" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             {scene ? <section className="scene-card" key={`${episode.id}-${scene.id}-${reviewIndex !== null}`}>
               <div className="scene-card-header"><span><Icon name={scene.type === 'comic' ? 'comic' : scene.type === 'chat' ? 'chat' : 'target'} size={17} />{scene.type === 'comic' ? (episode.presentation && episode.presentation.kind !== 'story' ? '内容正在发生' : '故事正在发生') : scene.type === 'chat' ? '加入这段对话' : '发现一个小线索'}</span><span>{String((reviewIndex ?? cursor) + 1).padStart(2, '0')} / {String(scenes.length).padStart(2, '0')}</span></div>
               <div className="scene-progress" aria-label={`本集第 ${(reviewIndex ?? cursor) + 1} 段，共 ${scenes.length} 段`}>{scenes.map((_, index) => <span key={index} className={index <= (reviewIndex ?? cursor) ? 'filled' : ''} />)}</div>
               <SceneRenderer scene={scene} state={state} glossary={library.glossary} presentation={episode.presentation}
                 readingItems={[...new Set(episode.ast.targets.filter((target) => target.sceneId === scene.id && /^(panels|messages)\[/.test(target.path)).map((target) => target.itemId))]}
                 busy={player.saving} review={reviewIndex !== null} onAnswer={(choice) => void player.dispatch({ type: 'answer', scene: scene.id, choice })} onReveal={() => void player.dispatch({ type: 'reveal', scene: scene.id })} />
-              <div className="scene-actions"><span className="keyboard-note">{scene.type === 'comic' ? '读完了就继续往下看。' : reviewIndex !== null ? '回看不会改写记录。' : state.answer ? '你的选择已保存。' : '也可按数字键 1–4 选择'}</span><div>{!canAdvance && <button className="text-button skip-button" disabled={player.saving} onClick={() => void advance(true)}>先跳过</button>}<button className="button button-dark" disabled={player.saving || !canAdvance} onClick={() => void advance()}>{reviewIndex !== null ? '继续回看' : cursor === scenes.length - 1 ? '看完这一集' : '继续'}<Icon name="arrow" size={17} /></button></div></div>
+              <div className="scene-actions"><span className="keyboard-note">{scene.type === 'comic' ? '读完了按 Space / Enter 继续往下看。' : reviewIndex !== null ? '回看不会改写记录。' : state.answer ? '你的选择已保存，按 Space / Enter 继续。' : scene.type === 'card' && !state.revealed ? '按 Space / Enter 翻开卡片。' : '按 1–4 选择，选完按 Space 继续'}</span><div>{!canAdvance && <button className="text-button skip-button" disabled={player.saving} onClick={() => void advance(true)}>先跳过</button>}<button className="button button-dark" disabled={player.saving || !canAdvance} onClick={() => void advance()}>{reviewIndex !== null ? '继续回看' : cursor === scenes.length - 1 ? '看完这一集' : '继续'}<Icon name="arrow" size={17} /></button></div></div>
             </section> : <>
-              <section className="surface completion-card"><span className="completion-symbol"><Icon name="check" size={36} /></span><span className="eyebrow">DONE</span><h2>这一段已读完。</h2><p>读完一段，进度就保存一次。下次可以接着看。</p>
-                <div className="completion-stats"><Stat icon="comic" value={Object.values(view.episodes[episode.id]?.scenes ?? {}).filter((s) => s.completed).length} label="读完的片段" /><Stat icon="chat" value={Object.values(view.episodes[episode.id]?.scenes ?? {}).filter((s) => s.answer).length} label="互动尝试" /></div>
-                <div className="completion-buttons">{nextEpisodeId
-                  ? <button className="button button-dark" disabled={player.busy} onClick={() => void select({ id: nextEpisodeId })}>去看下一集<Icon name="arrow" size={17} /></button>
-                  : <button className="button button-dark" onClick={() => go('progress')}>查看阅读记录<Icon name="arrow" size={17} /></button>}
-                  <button className="button button-outline" onClick={() => setReviewIndex(0)}><Icon name="repeat" size={16} />回看本集</button></div>
-                <span className="completion-note">已保存的内容可以随时回看；AI 新内容需要联网生成。</span>
-              </section>
-              {!player.cloudMode && (player.readyForGeneration || player.ticket) && <GenerationPanel player={player} onGenerate={() => void generate()} />}
+              <IntermissionBridge
+                episode={episode}
+                episodeNumber={episodeNumber}
+                view={view}
+                library={library}
+                nextEpisodeId={nextEpisodeId}
+                player={player}
+                autoAdvanceEnabled={autoAdvanceEnabled}
+                onToggleAutoAdvance={toggleAutoAdvance}
+                onSelectNext={() => nextEpisodeId && void select({ id: nextEpisodeId })}
+                onReview={() => setReviewIndex(0)}
+                onGenerate={() => void generate()}
+              />
+              {!player.cloudMode && !player.generating && (player.readyForGeneration || player.ticket) && !nextEpisodeId && <GenerationPanel player={player} onGenerate={() => void generate()} />}
             </>}
             <p className="watch-bottom-note"><Icon name="leaf" size={15} />{player.cloudMode ? '每次继续都会排队一条同步事件；断网时先存在本机。' : '进度自动保存在这台设备上。'}</p>
           </div><aside className="story-rail"><div className="rail-channel"><div className="rail-characters">{seriesOf(episode).cast.slice(0, 3).map((kind) => <Character key={kind} kind={kind} />)}</div><span className="eyebrow">YOUR STORY CHANNEL</span><h3>{isPilotStory(episode) ? <>认真办案，找出线索。</> : <>{seriesOf(episode).label}<br />慢慢读内容。</>}</h3><p>{isPilotStory(episode) ? '跟着角色、看看线索，再给出你的回应。' : '跟着内容读，再给出你的回应。'}</p><span className="subtle-badge">日常难度 · A1–A2</span></div><div className="rail-note"><span className="eyebrow">TODAY</span><div className="rail-today"><strong>{today}</strong><span>段内容，已读完</span></div><p>进度会自动保存在此设备。随时停下，下次再继续。</p></div><div className="rail-tip"><Icon name="book" size={18} /><p>需要时可以看提示。看过提示的作答只记为练习，不计入复习。</p></div></aside></div>

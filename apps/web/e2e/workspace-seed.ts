@@ -190,5 +190,5 @@ export async function playDoc(page: Page, document: { batch: { scenes: any[] } }
     await expect(advance).toBeEnabled();
     await advance.click();
   }
-  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /第 \d+ 集阅读达成/ })).toBeVisible();
 }

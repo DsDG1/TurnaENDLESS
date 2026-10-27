@@ -85,6 +85,21 @@ describe('buffer-sim（K4）', () => {
     const { markdown } = sweepBuffer({ batches: 10 });
     expect(markdown).toContain('假设值');
   });
+
+  it('v4 规格（单批 12 卡 + 3 集预制 + B3 派生填空）下卡顿率大幅降低至可用区间', () => {
+    const v4 = sweepBuffer({
+      persona: 'P1',
+      buffers: [2],
+      prefetched: [3],
+      batches: 30,
+      cardsPerBatch: 14,
+      derivePerBatch: 1,
+      genMedianMs: 48_000,
+      genSigma: 0.25,
+      seed: 42,
+    });
+    expect(v4.results[0]!.stallProbabilityWithDerive).toBeLessThanOrEqual(0.05);
+  });
 });
 
 describe('实测时延读取（calls.jsonl）', () => {

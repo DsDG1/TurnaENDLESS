@@ -21,6 +21,7 @@ import {
 import { materialAssetCatalog, materialEntityExists, materialEntityRows, materialItemPictures, materialProps, materialCharacters, materialBackgrounds } from './materials.js';
 import { tokenize } from '@endless/esl';
 import { compileDraft as compileCreativeDraft, DRAFT_PROTOCOL, type CreativeTarget, type CreativeTask, type DraftResult } from './creative.js';
+import { deriveFillerCard, type FillerCard } from './deriver.js';
 
 export * from './creative-policy.js';
 export * from './materials.js';
@@ -32,6 +33,7 @@ export * from './generation-prefix.js';
 export * from './lifecycle.js';
 export * from './revision.js';
 export * from './workspace.js';
+export * from './deriver.js';
 /**
  * Edition 是独立契约的第二种模式：命名空间导出，避免与 ENDLESS 的 ID/摘要/校验
  * 名称冲突，也让「旧验收器不接受 Edition 文档」在类型层面可见。
@@ -511,7 +513,25 @@ export function createContent(lexiconText: string) {
     });
   }
 
-  return { pilot, lexicon, pilotContext, historyKey, snapshot, stateContext, plan, planCreative, compileDraft, verifyCreation, creativeContext, creativePresentation, learningIssues, learningNotes, validatePlayable, exerciseScenes, restore, accept, validatePathsCreative };
+  /**
+   * 零延迟派生填缝卡：在等待 AI 生成时即时生成 1 道基于前文原句的挖空填词互动。
+   */
+  function deriveFiller(session: PlayerSession, library: Library, options?: { wrongItems?: string[] }): FillerCard | null {
+    const wrong = session.events
+      .filter((e): e is import('@endless/player').PlayerEvent & { type: 'answer'; choice: number } => e.type === 'answer')
+      .map((e) => {
+        const episode = library.episodes.find((ep) => ep.id === e.episode);
+        const scene = episode ? getScenes(episode).find((s) => s.id === e.scene) : null;
+        const optionsList = scene ? getOptions(scene) : [];
+        const isWrong = optionsList[e.choice] && !optionsList[e.choice]?.correct;
+        const item = scene && 'evidence' in scene && scene.evidence?.item ? scene.evidence.item : undefined;
+        return isWrong && item ? item : null;
+      })
+      .filter((item): item is string => !!item);
+    return deriveFillerCard(library, lexicon, { wrongItems: options?.wrongItems ?? wrong });
+  }
+
+  return { pilot, lexicon, pilotContext, historyKey, snapshot, stateContext, plan, planCreative, compileDraft, verifyCreation, creativeContext, creativePresentation, learningIssues, learningNotes, validatePlayable, exerciseScenes, deriveFiller, restore, accept, validatePathsCreative };
 }
 
 export type Content = ReturnType<typeof createContent>;

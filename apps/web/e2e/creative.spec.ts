@@ -139,7 +139,7 @@ async function playEpisode(page: Page, document: GeneratedEpisode, kind: string,
     await expect(advance).toBeEnabled();
     await advance.click();
   }
-  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /第 \d+ 集阅读达成/ })).toBeVisible();
   await page.goto('/');
 }
 
@@ -248,7 +248,7 @@ test('v4 混合内容流：四个系列连续生成、实际交互、来源标�
   const fourthCard = page.locator('.episode-card-6');
   await expect(fourthCard).toBeVisible();
   await fourthCard.click();
-  await expect(page.locator('.completion-card')).toBeVisible();
+  await expect(page.locator('.intermission-bridge')).toBeVisible();
   const review = page.getByRole('button', { name: '回看本集', exact: true });
   await expect(review).toBeEnabled();
   await review.click();

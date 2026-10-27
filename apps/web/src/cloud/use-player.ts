@@ -462,7 +462,7 @@ export function useCloudPlayer(cloud: CloudPlayerOptions) {
     workspace, session, view, library, loading, failure, notice, saving, dispatch,
     api: null, apiError: '', refreshApi: unavailable, generate: unavailable, generating: false, phase: '', ticket: null,
     cancelGeneration: unavailable, readyForGeneration: false, apiKey: '', setApiKey: (_key: string) => { }, canUseModel: false,
-    learningNotes, nextWords: [], runtime, obligations,
+    learningNotes, nextWords: [], runtime, obligations, fillerCard: null,
     entries: play?.view.entries ?? workspace?.entries ?? [], branches: play?.view.branches ?? workspace?.branches ?? [], volumes: play?.view.volumes ?? workspace?.volumes ?? [], activeBranchId: play?.branch.id ?? workspace?.activeBranchId,
     loadCloudDraft: (id: string) => repository.current?.lookupCloudDraft(id) ?? Promise.resolve(null),
     switchBranchTo: (id: string) => manage(ws => switchBranch(ws, id)),

@@ -29,7 +29,10 @@ const blocking = ISSUE_CODES.filter((c) => c.startsWith('E-'));
 const advisory = ISSUE_CODES.filter((c) => c.startsWith('W-'));
 
 describe('方案的校验码表与 ISSUE_CODES 一致', () => {
-  const doc = read(join('docs', 'experiments', 'exp-00-director-loop.md'));
+  const docPath = existsSync(join(REPO_ROOT, 'docs', 'experiments', 'exp-00-director-loop.md'))
+    ? join('docs', 'experiments', 'exp-00-director-loop.md')
+    : join('docs', 'archive', 'experiments', 'exp-00-director-loop.md');
+  const doc = read(docPath);
   const inDoc = codesInTable(doc);
   const inCode = new Set<string>(ISSUE_CODES);
 
@@ -79,10 +82,10 @@ describe('文档引用的源码路径都真实存在', () => {
     join('docs', 'README.md'),
     join('docs', 'research', 'oss-reuse.md'),
     join('docs', 'research', 'reference-borrowing-plan.md'),
-    join('docs', 'experiments', 'exp-00-director-loop.md'),
-    join('docs', 'experiments', 'exp-00-results.md'),
-    join('docs', 'experiments', 'exp-00-audit-fixes.md'),
-    join('docs', 'experiments', 'exp-00-goal-readiness-audit.md'),
+    join('docs', 'archive', 'experiments', 'exp-00-director-loop.md'),
+    join('docs', 'archive', 'experiments', 'exp-00-results.md'),
+    join('docs', 'archive', 'experiments', 'exp-00-audit-fixes.md'),
+    join('docs', 'archive', 'experiments', 'exp-00-goal-readiness-audit.md'),
   ];
 
   it('没有任何文档写着不存在的源文件', () => {

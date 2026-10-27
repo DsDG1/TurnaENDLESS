@@ -47,7 +47,7 @@ test('真实作答、提示、恢复和回看不会重复刷记录', async ({ pa
   await page.getByRole('button', { name: '3. under', exact: true }).click();
   await expect(page.getByText('这次是练习，不推进间隔复习记录。')).toBeVisible();
   await page.getByRole('button', { name: '看完这一集' }).click();
-  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /第 \d+ 集阅读达成/ })).toBeVisible();
   await page.getByRole('button', { name: '回看本集' }).click();
   for (let i = 0; i < 3; i++) await page.getByRole('button', { name: '继续回看' }).click();
   await page.goto('/#progress');
@@ -62,7 +62,7 @@ test('跳过不伪造学习记录，偏好在刷新后保留', async ({ page }) 
   await expect(page.getByRole('button', { name: '继续', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '先跳过' }).click();
   await page.getByRole('button', { name: '先跳过' }).click();
-  await expect(page.getByRole('heading', { name: '这一段已读完。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /第 \d+ 集阅读达成/ })).toBeVisible();
   await page.goto('/#progress');
   await expect(page.locator('.stat').filter({ hasText: '答题次数' }).locator('strong')).toHaveText('0');
   await page.goto('/#settings');
