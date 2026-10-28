@@ -582,3 +582,5 @@ C3/C4 整体出口仍未过，Edition 云同步与 C4-05/06/07、目标设备性
 验证：`pnpm -C packages/generation test` 2 项通过（提示词字节 sha256 golden：系统 309 字符、首轮 3682、修复轮 3864，与拆分前逐字节一致）；`apps/api` 生成相关 40 项通过（v4 8、端口 5、legacy/集成 11、jobs 14、provider 2）；API 非云测试 110 项、Web 190 项、其余包 315 项通过；`pnpm check:boundaries` 8 类源码图通过，`pnpm typecheck` 全仓通过。默认 `pnpm build` 第一次在 Web rolldown 阶段失败且无可读诊断，随后 `pnpm -C apps/web build` 与第二次 `pnpm build` 均通过（0 error，PWA/SW 生成）；没有据此声称已定位首次失败原因。新增的是内部工作区包，没有外部新依赖。
 
 当前会话是管理员 shell，PostgreSQL 拒绝以管理员权限启动（`Execution of PostgreSQL by a user with administrative privileges is not permitted`），7 个真实 PG 云测试文件在 120 秒钩子超时后失败；这是环境限制而非代码回归，因此没有重跑云 PG 套件、`pnpm test:e2e` 或任何真实模型调用。数字不是性能或 provider 验收。
+
+测试夹具护栏（同日）：`test/cloud/embedded-pg.ts` 增加 `assertPostgresCanStart`，在 Windows 管理员会话下于启动前直接失败并给出「改用非管理员终端执行 `pnpm -C apps/api test:cloud`」的提示，不再挂到 120 秒钩子超时。护栏按 `platform`／`probe` 注入，3 项单测覆盖非 Windows、Windows 非管理员、Windows 管理员三条分支；`test/cloud/integration.test.ts` 在本会话从 120 秒超时变为 3.65 秒内报出该提示（18 项跳过），证明护栏生效而不是放宽断言。真实的非管理员运行结果仍需在普通终端复核。

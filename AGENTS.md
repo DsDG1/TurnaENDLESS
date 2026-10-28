@@ -16,6 +16,7 @@
   - `pnpm test:e2e`: Builds cloud profile, runs both cloud and local E2E suites.
   - Standard verification sequence: `pnpm test`, `pnpm typecheck`, `pnpm build`, `pnpm test:e2e`.
 - **Browser Testing**: Playwright Chromium by default (`pnpm -C apps/web exec playwright install chromium`), or Windows PowerShell `$env:PLAYWRIGHT_CHANNEL = "msedge"`.
+- **Cloud PG Suites**: `pnpm -C apps/api test:cloud` requires a **non-elevated** Windows shell — `postgres.exe` refuses to run as administrator. The harness fails fast with the exact message instead of a 120 s hook timeout; if you see it, reopen the terminal without "Run as administrator".
 - **Desktop (Electron)**:
   - Windows x64 test shell (not a signed/installed production release). `pnpm desktop` builds and opens; `pnpm desktop:package` packages to `out/desktop/<timestamp>/` (`latest.json` points to latest). `pnpm desktop:test` tests packaged exe; `pnpm -C apps/desktop test:smoke` checks dev runtime.
   - Runs bundled UI and loopback API at fixed `http://127.0.0.1:4175` (occupied port is an error, never select another origin or attach). Single-instance, sandboxed, no renderer Node/IPC bridge, utility process for API. Initialization/storage failure returns safe 503 without resetting files.
