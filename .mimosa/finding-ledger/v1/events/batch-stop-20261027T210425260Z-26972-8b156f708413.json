@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20261027T210425260Z-26972-8b156f708413",
+  "runId": "20261027T210425260Z-26972-8b156f708413",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "64ed837971c0249ebbcbf856f586d4f1064b1ad2",
+  "diffHash": "38b62ecf97d798a74777eb5823ae44c6e955b18156f019d4a5c5e7c4f8aff16b",
+  "rulesVersion": "unavailable",
+  "sessionHash": "250302d87c63eeb67eea5a59bf6371e2d7f5fc3ee8afdbcea149a2c4dc08d2bf",
+  "reportRef": ".mimosa/reports/task-review-session_99c2a6a3b9ae1f542e5382b230787d4d-20261027T210425260Z-26972-8b156f708413.json",
+  "events": [],
+  "observedFindingIds": [],
+  "verifiedFiles": [
+    {
+      "file": "packages/content/src/deriver.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "packages/content/src/index.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "apps/web/src/components/intermission.tsx",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "apps/web/src/App.tsx",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "apps/web/src/use-player.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "apps/web/src/cloud/use-player.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "packages/content/test/deriver.test.ts",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "apps/web/test/feed-flow.test.tsx",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-10-27T21:04:25.859Z"
+}
