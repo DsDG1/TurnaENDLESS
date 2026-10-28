@@ -25,6 +25,7 @@
     "@endless/content": "workspace:*",
     "@endless/director": "workspace:*",
     "@endless/esl": "workspace:*",
+    "@endless/generation": "workspace:*",
     "@endless/player": "workspace:*",
     "nodemailer": "10.1.7",
     "pg": "8.23.1",

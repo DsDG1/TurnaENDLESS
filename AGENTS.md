@@ -42,7 +42,8 @@
   - Persisted events depend on exact content contract. Changes to IDs, options, effects, or target items require explicit catalog-version/migration decision; never reinterpret history silently.
   - Keep experiment prompts, freeze discipline, and run artifacts independent of application.
 - **Creative Protocol (v4 / ENDLESS-DRAFT/1)**:
-  - `learningVersion: 4` uses compact draft protocol (`apps/api/src/creative-prompts.ts`, `packages/content/src/creative-policy.ts` — correctness-critical, do not re-author). Model writes draft (@comic/@chat/@post/@choice/@quiz/@card/@fact/@example), @kind (story/daily/social/knowledge), and @series. Never executable JSON.
+  - `learningVersion: 4` uses compact draft protocol (`packages/generation/src/prompts.ts`, `packages/content/src/creative-policy.ts` — correctness-critical, do not re-author; prompt bytes are locked by sha256 golden). Model writes draft (@comic/@chat/@post/@choice/@quiz/@card/@fact/@example), @kind (story/daily/social/knowledge), and @series. Never executable JSON.
+  - Execution goes through the side-effect-free port `runCreativeGeneration` in `packages/generation` (frozen `plannedAt`/`batchId` in, attempt records out); `apps/api/src/generate.ts` is only the local adapter (422 mapping, `ai-<requestId>`). Cloud workers must use the port, never the local jobs/generate entry.
   - Compiled by `packages/content/src/creative.ts`: program-assigned scene IDs, lexicon refs, material refs, deterministic answer positions, evidence, creation metadata. Quiz/card/fact/example constructed from lexicon or truly-read lines.
   - Required `creation` binding records protocol/draft/kind/series/sources; re-compiled and compared on accept/restore (forged sources, switches, tampered text rejected even with recomputed hashes).
   - Versions 1-3 stay legacy (`plan()` defaults to 3); stored batches never upgraded in place.

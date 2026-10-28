@@ -567,4 +567,18 @@ C3/C4 整体出口仍未过，Edition 云同步与 C4-05/06/07、目标设备性
 
 验证：`pnpm test` 全仓通过（Web 186、API 264，含真实 PG）；新增 3 个存储隔离保护用例通过。`pnpm typecheck`、`pnpm build`、实际 API 命令内 `pnpm build:cloud` 均通过。默认本机浏览器 40 项通过（端口 43273，`out/isolation-local-20261027-1`），云研发浏览器 56 项通过（43272，`out/isolation-cloud-20261027-1`）；实际 API + PG 双设备完整旅程 2 项通过。`pnpm -C apps/desktop build` 通过，未启动、打包或签名桌面应用。本机/cloud 主包为 1,104.62/1,282.41 kB，PWA/SW 生成，原有大 chunk 警告仍在；不是设备性能验收。类型配置与合成存储错误文案回归修复后才记最终通过，未放宽回滚断言。本段记录的是提交前当次结果；提交 `7f21427` 之后未重跑。
 
-详细接缝、命令与边界见 `docs/cloud-isolation-review.md` §7；桌面规划在 2026-10-27 更新为 v1.15/§25.19，2026-10-28 更新为 v1.16（只改状态与勾选，不改范围）。API 水位仍为 15、邮件 Worker 为 2；无新依赖、数据迁移、真实模型/邮件/存储供应商/支付或公网操作。云生成/计费/导出和 Edition 云同步未开放，C4-05/06/07、C3/C4 总出口与 C5–C9 不变；I-05 留在 C5 前置。代码已随 `7f21427` 提交并推送。
+详细接缝、命令与边界见 `docs/cloud-isolation-review.md` §7；桌面规划在 2026-10-27 更新为 v1.15/§25.19，2026-10-28 更新为 v1.16（只改状态与勾选，不改范围）与 v1.17（I-05 端口）。API 水位仍为 15、邮件 Worker 为 2；无新依赖、数据迁移、真实模型/邮件/存储供应商/支付或公网操作。云生成/计费/导出和 Edition 云同步未开放，C4-05/06/07、C3/C4 总出口与 C5–C9 不变；I-05 留在 C5 前置。代码已随 `7f21427` 提交并推送。
+
+### 10.10 无副作用生成执行端口（I-05，2026-10-28）
+
+`packages/generation`（`@endless/generation`）承接 v4 创作执行。`creativeSystem` 与 `buildCreativePrompt` 从 `apps/api/src/creative-prompts.ts` 原字节迁到 `src/prompts.ts`；整稿修复流水线从 `apps/api/src/generate.ts` 移到 `src/creative.ts` 的 `runCreativeGeneration`。`apps/api/src/creative-prompts.ts` 只剩重新导出。
+
+端口不读时钟、文件、环境变量、请求上下文或任务库：计划时间 `plannedAt`、稳定批次 ID `batchId`、尝试与 token 上限都由请求传入；文档 `generatedAt` 直接取 `plannedAt`，排队或重试不会把计划改成执行时刻。端口用中性 LLM 接口（`complete` + `modelId`，只要求 `text` 与 token 用量），不 import `@endless/director`；director 客户端按结构注入，计量装饰器把延迟、缓存命中、请求哈希等额外字段原样透传，本机 director 集成不变。
+
+失败以 `GenerationFailureError`（`category` + `codes` + 安全文案）抛出，不带 HTTP 状态、任务记录或草稿正文；本机 `createGenerator` 再映射成 422 `ApiError`，标签表只有 `src/failure.ts` 一份。每轮外部调用后产生 `GenerationAttemptRecord`（序号、阶段、ok、按轮 token、错误码），供 C5 在任何持久化之前写 attempt；传输异常原样抛出、不自动重试，也不伪造成功。
+
+仍属本机：`apps/api/src/generate.ts` 保留 `createLegacyGenerator`（v1–3 旧契约）与本机 422/任务记录语义；本机 `createGenerator` 只做「冻结时间 + `ai-<requestId>` + 错误映射」。云端 Worker 直接用端口，不能 import 本机 `generate.ts`／`jobs.ts`。本切片不新增 C5 能力：`capabilities.generation` 仍为 false，没有任务表、队列、额度或 Worker。
+
+验证：`pnpm -C packages/generation test` 2 项通过（提示词字节 sha256 golden：系统 309 字符、首轮 3682、修复轮 3864，与拆分前逐字节一致）；`apps/api` 生成相关 40 项通过（v4 8、端口 5、legacy/集成 11、jobs 14、provider 2）；API 非云测试 110 项、Web 190 项、其余包 315 项通过；`pnpm check:boundaries` 8 类源码图通过，`pnpm typecheck` 全仓通过。默认 `pnpm build` 第一次在 Web rolldown 阶段失败且无可读诊断，随后 `pnpm -C apps/web build` 与第二次 `pnpm build` 均通过（0 error，PWA/SW 生成）；没有据此声称已定位首次失败原因。新增的是内部工作区包，没有外部新依赖。
+
+当前会话是管理员 shell，PostgreSQL 拒绝以管理员权限启动（`Execution of PostgreSQL by a user with administrative privileges is not permitted`），7 个真实 PG 云测试文件在 120 秒钩子超时后失败；这是环境限制而非代码回归，因此没有重跑云 PG 套件、`pnpm test:e2e` 或任何真实模型调用。数字不是性能或 provider 验收。

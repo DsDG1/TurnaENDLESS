@@ -34,6 +34,7 @@ Web 组合根 → 本机或云适配 → 各自存储／网络端口
 - `@endless/content`：原生内容、创作规则、完整工作区、学习证据、生成计划时间及独立 Edition 命名空间；不导入云适配、云协议或 `apps/*`。
 - `@endless/content/cloud`：导入校验、云历史适配、快照原生重建、阅读目录与叶验证；只向原生核心及纯协议依赖，不持有 HTTP、IDB、数据库、秘密或进程生命周期。
 - `@endless/cloud-contracts`：纯网络信封及限额，外部依赖仅 `zod`；不依赖 content、应用、Node 内置模块或云 SDK。财务与账号不能渗入播放器类型。
+- `@endless/generation`：v4 创作执行端口（提示词、计量、失败分类、整稿修复循环）；只依赖 content／esl／player，不依赖 director、本机 jobs、HTTP、数据库或进程生命周期。本机与未来云端 Worker 都直接用它，各自在外层实现任务持久化与错误映射。
 - `apps/api/src/cloud`：云组合根和服务端适配；不得 import 同 app 中的本机入口、文件任务库、Edition SQLite 或 provider 配置。云配置从专用环境加载，不自动读取本机 `.env`。
 - 本机 API／桌面服务不得通过直接 import、barrel、动态 import、类型 import 或包内相对路径进入云目录／cloud-contracts。测试夹具可显式使用双方协议，不是运行时依赖豁免。
 - Web 是允许接线双方的应用组合层，显式云 profile 接入双方；默认本机 profile 只接游客 Hook 和本机 API。共享 UI 的 `Player` 联合仅为 type import，运行时图与产物模块另行检查；不能把展示类型联合当作原生核心反向依赖的豁免。
@@ -76,9 +77,9 @@ Web 组合根 → 本机或云适配 → 各自存储／网络端口
 | I-02 | 已拆：`storage.ts` 游客适配与 `cloud/repository.ts` 云适配，共享 `storage/{database,records,commit-policy}.ts` | 共用原生 CAS/票据规则仍在各自事务内执行；游客不解析 sidecar，遇到未知附加行拒绝且保留；云业务/身份/Outbox/目录仍在同事务 |
 | I-03 | 已拆：`use-player.ts` 与 `cloud/use-player.ts`，不同 Scope 组件在命名空间改变时重建 | 游客 Hook 依赖图包含类型也不进入云；云 Hook 不 import 本机 API 或游客仓库；ReadingRuntime 只表达实际已验证的阅读数据，不伪造完整 save |
 | I-04 | 已拆：默认 local 与显式 cloud 构建/预览/测试目录，实际模块守卫 | 本机构建拒绝云运行模块；本机深链不打开云库；云构建必须在模块证据中包含实际客户端、仓库与 Hook；PWA id/scope 保持 |
-| I-05 | C5 前抽无副作用生成执行适配，C6/C7 再接额度与渠道 | 提示词字节 golden、冻结计划时间、attempt 未知结果与恢复验收；没有真实调用不声称 provider 已验收 |
+| I-05 | 已做（2026-10-28）：`@endless/generation` 承接 v4 执行端口，本机只留适配器；C6/C7 再按此接额度与渠道 | 提示词字节 golden 2 项、冻结计划时间与 attempt 记录、传输失败不重试、失败分类不含 HTTP 语义；端口只认结构 LLM 接口，不 import director/本机 jobs。没有真实调用，不声称 provider 已验收 |
 
-I-02–I-04 的代码和证据属于 2026-10-27 同日续作，已随 `7f21427` 提交并推送；不是凭 I-01 推定完成。当前不新增 `apps/cloud-api`／支付空包，不搬迁历史数据，也不改变已有持久化协议或 schema 水位。I-05 留在 C5 前置范围，不在隔离重构中顺带实现云生成、账本或支付。
+I-02–I-04 的代码和证据属于 2026-10-27 同日续作，已随 `7f21427` 提交并推送；I-05 于 2026-10-28 落地为 `@endless/generation`，证据见 `cloud-baseline.md` §10.10。两者都不是凭 I-01 推定完成。当前不新增 `apps/cloud-api`／支付空包，不搬迁历史数据，也不改变已有持久化协议或 schema 水位。I-05 只抽执行端口，不顺带实现云生成、账本或支付。
 
 接入放行同时要求：依赖方向检查、现有测试、生产 PWA 本机离线路径、实际云 API 双设备路径，以及新接缝的故障回滚证据。任何一个失败，保留原件和当前回执，修复后复核；通过关闭云写入停止影响，不删除 IDB、回退数据库历史或释放未知任务来“回滚”。独立发布和正式能力开放仍分别受 C0–C9 出口约束。
 
